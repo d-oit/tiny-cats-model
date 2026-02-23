@@ -82,3 +82,20 @@ Or via GitHub UI: **Settings** → **Secrets and variables** → **Actions**
 1. **Never merge if CI fails** - Required checks must pass
 2. **Run locally first** - Use verify script before push
 3. **Use concurrency** - Cancels stale runs automatically
+4. **Follow complete workflow** - See git-workflow skill for fix loop
+
+## Integration with Complete CI Fix Workflow
+
+When CI fails after push:
+
+1. **Check status**: `gh run list`
+2. **Identify failures**: `gh run view <run-id>`
+3. **Determine skill**:
+   - Lint → `@skill code-quality`
+   - Test → `@skill testing-workflow`
+   - Type → `@skill code-quality`
+   - Workflow → `@skill gh-actions`
+4. **Spawn specialist** - Agent fixes and pushes
+5. **Loop** - Repeat until all pass
+
+See `plans/ADR-006-ci-fix-workflow.md` for full workflow details.

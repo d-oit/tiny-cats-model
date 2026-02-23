@@ -5,6 +5,9 @@ Training entrypoint for the cats classifier.
 Usage:
     python src/train.py data/cats
     python src/train.py data/cats --epochs 20 --batch-size 64 --backbone resnet34
+
+Modal GPU training:
+    modal run src/train.py
 """
 
 from __future__ import annotations
@@ -18,6 +21,8 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
+
+import modal
 
 # Add project root to path for relative imports when run directly
 sys.path.insert(0, str(Path(__file__).parent))
@@ -97,6 +102,34 @@ def validate(
     return total_loss / total, correct / total
 
 
+stub = modal.App("tiny-cats-model")
+
+
+@stub.function(gpu="T4", timeout=3600)
+def train_modal(
+    data_dir: str = "/root/tiny-cats-model/data/cats",
+    epochs: int = 10,
+    batch_size: int = 32,
+    lr: float = 1e-4,
+    backbone: str = "resnet18",
+    output: str = "/outputs/cats_model.pt",
+    num_workers: int = 2,
+    pretrained: bool = True,
+) -> dict:
+    """Modal function for GPU training."""
+    train(
+        data_dir=data_dir,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        backbone=backbone,
+        output=output,
+        num_workers=num_workers,
+        pretrained=pretrained,
+    )
+    return {"status": "completed", "output": output}
+
+
 def train(
     data_dir: str,
     epochs: int = 10,
@@ -151,6 +184,30 @@ def train(
 
     print(f"Training complete. Best val accuracy: {best_val_acc:.4f}")
     print(f"Model saved to: {output}")
+
+
+@stub.local_entrypoint()
+def main(
+    data_dir: str = "/root/tiny-cats-model/data/cats",
+    epochs: int = 10,
+    batch_size: int = 32,
+    lr: float = 1e-4,
+    backbone: str = "resnet18",
+    output: str = "/outputs/cats_model.pt",
+    num_workers: int = 2,
+    pretrained: bool = True,
+):
+    """Local entrypoint for Modal CLI."""
+    train_modal.remote(
+        data_dir=data_dir,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        backbone=backbone,
+        output=output,
+        num_workers=num_workers,
+        pretrained=pretrained,
+    )
 
 
 if __name__ == "__main__":

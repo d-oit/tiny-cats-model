@@ -95,7 +95,7 @@ Enhance the tiny-cats-model project with comprehensive agent skills and 2026 bes
 
 ## Deliverables Created
 
-### Skills (7 total)
+### Skills (8 total)
 | Skill | LOC | Purpose |
 |-------|-----|---------|
 | cli-usage | ~115 | Training, evaluation, dataset commands |
@@ -105,6 +105,7 @@ Enhance the tiny-cats-model project with comprehensive agent skills and 2026 bes
 | code-quality | ~115 | Linting, formatting, type checking |
 | security | ~124 | Secrets, credentials, safe practices |
 | model-training | ~121 | Training, hyperparameters, Modal |
+| goap | ~150 | GOAP/ADR planning and management |
 
 ### Documentation
 - `AGENTS.md` - Updated with 2026 best practices
@@ -113,6 +114,49 @@ Enhance the tiny-cats-model project with comprehensive agent skills and 2026 bes
 - `plans/ADR-002-ci-workflow-optimization.md` - CI optimization decision
 - `plans/ADR-003-agents-md-structure.md` - AGENTS.md structure decision
 - `plans/ADR-004-frontend-cat-model-update.md` - Frontend update proposal
+- `plans/ADR-005-ci-pipeline-fixes.md` - CI pipeline fixes
+- `plans/ADR-006-ci-fix-workflow.md` - Complete CI fix workflow
+
+---
+
+## Phase 6: Complete CI/CD Fix Workflow
+
+### Atomic Commit-to-Fix Loop
+
+```
+1. git commit → git push
+2. gh run list → get run-id
+3. gh run view <id> → identify failures
+4. FOR EACH failure:
+   a. Analyze error type → determine skill needed
+   b. Spawn specialist agent with @skill
+   c. Agent fixes → commits → pushes
+   d. Repeat from step 2 until all pass
+5. NEVER skip: each fix must go through full cycle
+```
+
+### Specialist Agent Mapping
+
+| Failure Type | Skill | Agent Task |
+|--------------|-------|------------|
+| Lint error | `code-quality` | Fix style issues |
+| Test failure | `testing-workflow` | Debug and fix tests |
+| Type error | `code-quality` | Add type hints |
+| CI config | `gh-actions` | Fix workflow YAML |
+| Model/training | `model-training` | Fix training code |
+| Security | `security` | Fix vulnerability |
+| New feature | Multiple | Spawn coordinator |
+
+### 2026 Best Practices Integration
+
+Before implementing fixes:
+1. Use `websearch` for latest solutions
+2. Use `codesearch` for API patterns
+3. Document findings in ADR if significant
+4. Apply minimal, correct fix
+
+### References
+- ADR-006: Complete CI/CD Fix Workflow
 
 ### CI/CD
 - `.github/workflows/ci.yml` - Optimized with concurrency, timeouts, modern caching
