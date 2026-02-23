@@ -10,8 +10,6 @@ A cats classifier built on tiny vision model infrastructure, following 2026 best
 - Dataset download script (Oxford IIIT Pet compatible)
 - Modal-based GPU training support
 - Full CI via GitHub Actions
-- Agent-ready: AGENTS.md + `.agents/skills/` layout
-- Compatible with Claude Code, Codex, OpenCode, and any AGENTS.md-aware tool
 
 ## Quickstart
 
@@ -70,10 +68,6 @@ modal run src/train.py
 ```
 
 See `modal.yml` for full config. Never commit secrets — use env vars or GitHub Secrets.
-
-## Agent Support
-
-This repo follows [AGENTS.md](https://agents.md/) best practices. AI agents (Claude Code, Codex, OpenCode, etc.) should read `AGENTS.md` and `.agents/skills/` before taking actions.
 
 ## Dataset
 

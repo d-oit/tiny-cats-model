@@ -125,3 +125,11 @@ secrets.yml
 *.tar.gz
 *.zip
 *.whl
+
+# =============================================================================
+# Frontend (Vite + React)
+# =============================================================================
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
