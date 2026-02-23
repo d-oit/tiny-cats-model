@@ -1,0 +1,57 @@
+# modal.yml
+# Modal configuration for GPU-accelerated training.
+# See: https://modal.com/docs
+#
+# IMPORTANT: Never hardcode secrets here.
+# Provide credentials via environment variables:
+#   export MODAL_TOKEN_ID=<your_token_id>
+#   export MODAL_TOKEN_SECRET=<your_token_secret>
+#
+# Usage:
+#   modal run src/train.py
+
+build:
+  python: "3.10"
+  apt_packages:
+    - wget
+    - unzip
+  requirements:
+    - torch>=2.0.0
+    - torchvision>=0.15.0
+    - pillow>=9.0.0
+    - tqdm>=4.65.0
+
+app:
+  name: tiny-cats-model
+  image: pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime
+
+training:
+  # GPU type: use gpu-t4 for cost-efficiency, gpu-a10g for speed
+  gpu: gpu-t4
+  timeout: 3600  # 1 hour max
+  retries: 1
+
+  entrypoint: "python src/train.py data/cats --epochs 20 --backbone resnet18"
+
+  # Environment variables (values injected at runtime, NOT stored here)
+  env:
+    MODAL_TOKEN_ID: ""       # Set via: export MODAL_TOKEN_ID=...
+    MODAL_TOKEN_SECRET: ""   # Set via: export MODAL_TOKEN_SECRET=...
+    DATA_DIR: "data/cats"
+    OUTPUT_PATH: "cats_model.pt"
+
+  # Mount local source code
+  mounts:
+    - local_dir: "."
+      remote_path: "/root/tiny-cats-model"
+
+  # Volume for storing trained model checkpoints
+  volumes:
+    - name: cats-model-outputs
+      mount_path: /outputs
+
+dataset:
+  # Dataset can be downloaded inside Modal via data/download.sh
+  # or pre-uploaded to a Modal volume
+  prepare_cmd: "bash data/download.sh"
+  data_dir: "/root/tiny-cats-model/data/cats"
