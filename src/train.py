@@ -17,12 +17,11 @@ import sys
 import time
 from pathlib import Path
 
+import modal
 import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
-
-import modal
 
 # Add project root to path for relative imports when run directly
 sys.path.insert(0, str(Path(__file__).parent))
@@ -151,7 +150,7 @@ def train(
     )
 
     model = cats_model(
-        num_classes=len(train_loader.dataset.dataset.classes),  # type: ignore[attr-defined]
+        num_classes=len(train_loader.dataset.dataset.classes),  # type: ignore
         backbone=backbone,
         pretrained=pretrained,
     ).to(device)

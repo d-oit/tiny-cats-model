@@ -24,9 +24,19 @@ from model import load_checkpoint
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate cats classifier")
     parser.add_argument("--data-dir", type=str, default="data/cats", help="Path to dataset root")
-    parser.add_argument("--checkpoint", type=str, default="cats_model.pt", help="Path to model checkpoint")
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default="cats_model.pt",
+        help="Path to model checkpoint",
+    )
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size for evaluation")
-    parser.add_argument("--backbone", type=str, default="resnet18", help="Model backbone used during training")
+    parser.add_argument(
+        "--backbone",
+        type=str,
+        default="resnet18",
+        help="Model backbone used during training",
+    )
     return parser.parse_args()
 
 

@@ -4,7 +4,7 @@ Export the trained cats classifier to ONNX format for web inference.
 
 Usage:
     python src/export_onnx.py
-    python src/export_onnx.py --checkpoint checkpoints/best.pt --output frontend/public/models/cats.onnx
+    python src/export_onnx.py --checkpoint PATH --output PATH
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ from model import cats_model
 
 
 def export_onnx(
-    checkpoint_path: str,
-    output_path: str,
+    checkpoint_path: str | Path,
+    output_path: str | Path,
     opset_version: int = 17,
 ) -> None:
     """Export a trained cats classifier to ONNX format.
@@ -29,8 +29,17 @@ def export_onnx(
         output_path: Path where the ONNX model will be saved.
         opset_version: ONNX opset version to use.
     """
-    checkpoint_path = Path(checkpoint_path)
-    output_path = Path(output_path)
+    checkpoint_path = (
+        Path(checkpoint_path)
+        if isinstance(checkpoint_path, str)
+        else checkpoint_path if isinstance(checkpoint_path, str) else checkpoint_path
+    )
+
+    output_path = (
+        Path(output_path)
+        if isinstance(output_path, str)
+        else output_path if isinstance(output_path, str) else output_path
+    )
 
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
