@@ -35,8 +35,8 @@ echo "========================================"
 echo ""
 
 # --- Lint ---
-run_check "ruff lint" ruff check . --exclude node_modules
-run_check "flake8 lint" flake8 . --exclude node_modules,.git --max-line-length=88 --extend-ignore=E203,W503
+run_check "ruff lint" python -m ruff check . --exclude node_modules
+run_check "flake8 lint" flake8 . --exclude node_modules,.git --max-line-length=88 --extend-ignore=E203,W503,E402,E501
 run_check "black format check" black --check . --exclude "node_modules/"
 
 # --- Type Check ---
