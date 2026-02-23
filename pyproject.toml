@@ -84,7 +84,27 @@ skip_glob = ["notebooks/*", ".venv/*"]
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
-exclude = ["notebooks", "build", "dist"]
+exclude = ["notebooks", "build", "dist", "node_modules"]
+
+[[tool.mypy.overrides]]
+module = "torch.*"
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "torchvision.*"
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "PIL.*"
+follow_imports = "skip"
+
+[tool.ruff]
+line-length = 88
+exclude = ["notebooks", "node_modules", ".git"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E203", "E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

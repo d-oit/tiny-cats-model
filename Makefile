@@ -22,14 +22,14 @@ install-dev:
 
 ## lint: Run flake8, black check, isort check, and mypy
 lint:
-	flake8 . --max-line-length=120 --exclude=notebooks,__pycache__,.git
-	black --check --line-length=120 .
+	flake8 . --max-line-length=88 --exclude=notebooks,__pycache__,.git
+	black --check --line-length=88 .
 	isort --check-only .
 	mypy . --ignore-missing-imports --exclude notebooks
 
 ## format: Auto-format code with black and isort
 format:
-	black --line-length=120 .
+	black --line-length=88 .
 	isort .
 
 ## test: Run pytest (no coverage)

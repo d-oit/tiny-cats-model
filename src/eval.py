@@ -23,18 +23,10 @@ from model import load_checkpoint
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate cats classifier")
-    parser.add_argument(
-        "--data-dir", type=str, default="data/cats", help="Path to dataset root"
-    )
-    parser.add_argument(
-        "--checkpoint", type=str, default="cats_model.pt", help="Path to model checkpoint"
-    )
-    parser.add_argument(
-        "--batch-size", type=int, default=32, help="Batch size for evaluation"
-    )
-    parser.add_argument(
-        "--backbone", type=str, default="resnet18", help="Model backbone used during training"
-    )
+    parser.add_argument("--data-dir", type=str, default="data/cats", help="Path to dataset root")
+    parser.add_argument("--checkpoint", type=str, default="cats_model.pt", help="Path to model checkpoint")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for evaluation")
+    parser.add_argument("--backbone", type=str, default="resnet18", help="Model backbone used during training")
     return parser.parse_args()
 
 
@@ -53,7 +45,7 @@ def evaluate(
     print(f"Using device: {device}")
 
     _, val_loader = cats_dataloader(root=data_dir, batch_size=batch_size)
-    class_names = val_loader.dataset.dataset.classes
+    class_names = val_loader.dataset.dataset.classes  # type: ignore[attr-defined]
     num_classes = len(class_names)
 
     model = load_checkpoint(checkpoint, num_classes=num_classes, backbone=backbone)
@@ -79,9 +71,9 @@ def evaluate(
 
     accuracy = correct / total if total > 0 else 0.0
 
-    print(f"\n=== Evaluation Results ===")
-    print(f"Overall accuracy: {accuracy:.4f} ({correct}/{total})")
-    print(f"\nPer-class accuracy:")
+    print("\n=== Evaluation Results ===")
+    print("Overall accuracy: {accuracy:.4f} ({correct}/{total})")
+    print("\nPer-class accuracy:")
     for cls in class_names:
         cls_total = per_class_total[cls]
         cls_correct = per_class_correct[cls]

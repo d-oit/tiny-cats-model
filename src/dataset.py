@@ -12,9 +12,8 @@ Expects ImageFolder-compatible structure:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
 import torchvision.transforms as T
 from torch.utils.data import DataLoader, random_split
@@ -71,9 +70,7 @@ def cats_dataloader(
     """
     root = Path(root)
     if not root.exists():
-        raise FileNotFoundError(
-            f"Dataset root not found: {root}. Run `bash data/download.sh` first."
-        )
+        raise FileNotFoundError(f"Dataset root not found: {root}. Run `bash data/download.sh` first.")
 
     # Full dataset with train transforms (we apply different transforms after split)
     full_dataset = ImageFolder(root, transform=build_transforms(train=True, image_size=image_size))
@@ -83,13 +80,12 @@ def cats_dataloader(
     n_train = n_total - n_val
 
     import torch
+
     generator = torch.Generator().manual_seed(seed)
     train_ds, val_ds = random_split(full_dataset, [n_train, n_val], generator=generator)
 
     # Override val transforms
-    val_ds.dataset = ImageFolder(
-        root, transform=build_transforms(train=False, image_size=image_size)
-    )
+    val_ds.dataset = ImageFolder(root, transform=build_transforms(train=False, image_size=image_size))
 
     train_loader = DataLoader(
         train_ds,
@@ -114,8 +110,4 @@ def cats_dataloader(
 
 def get_class_names(root: str | Path) -> list[str]:
     """Return sorted class names from ImageFolder root."""
-    return sorted(
-        entry.name
-        for entry in Path(root).iterdir()
-        if entry.is_dir() and not entry.name.startswith(".")
-    )
+    return sorted(entry.name for entry in Path(root).iterdir() if entry.is_dir() and not entry.name.startswith("."))

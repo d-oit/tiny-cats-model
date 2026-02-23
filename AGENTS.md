@@ -1,113 +1,82 @@
-# Project: tiny-cats-model
+# tiny-cats-model
 
-This file follows the [AGENTS.md](https://agents.md/) standard for AI agent instructions.
-AI agents (Claude Code, Codex, OpenCode, Copilot, etc.) **must read this file first** before taking any action in this repository.
-
----
-
-## Install & Setup
-
-```bash
-pip install -r requirements.txt
-bash data/download.sh
-```
-
-Dataset will be prepared under `data/cats/`.
+Image classification project for cats vs other objects using PyTorch.
 
 ---
 
-## Training
+## Quick Commands
 
-```bash
-# Local CPU/GPU training
-python src/train.py data/cats
-
-# GPU training via Modal
-export MODAL_TOKEN_ID=<your_token_id>
-export MODAL_TOKEN_SECRET=<your_token_secret>
-modal run src/train.py
-```
-
-Model checkpoint is saved to `cats_model.pt`.
-
----
-
-## Evaluation
-
-```bash
-python src/eval.py
-```
+| Task | Command |
+|------|---------|
+| Install | `pip install -r requirements.txt` |
+| Download data | `bash data/download.sh` |
+| Train | `python src/train.py data/cats` |
+| Evaluate | `python src/eval.py` |
+| Tests | `pytest tests/ -v` |
+| Lint | `ruff check . && flake8 .` |
+| Format | `black .` |
+| Verify | `bash .agents/skills/testing-workflow/verify.sh` |
 
 ---
 
 ## Code Style
 
-- Python code follows **PEP 8**
-- Use `ruff` for linting: `ruff check .`
-- Use `black` for formatting: `black .`
-- Max line length: **88** (black default)
-- Type hints are encouraged but not enforced
-
----
-
-## Tests
-
-```bash
-# Run all tests
-pytest tests/
-
-# Run with verbose output
-pytest tests/ -v
-
-# Run lint check
-flake8 .
-```
-
-All tests must pass before committing.
-
----
-
-## CI
-
-- GitHub Actions workflow: `.github/workflows/train.yml`
-- CI runs on every push and pull_request to `main`
-- CI steps: lint → test → (optional) training proof
-- Do **not** merge if CI fails
-
----
-
-## CLI
-
-Use the following standard commands:
-
-| Task | Command |
-|------|---------|
-| Install deps | `pip install -r requirements.txt` |
-| Download data | `bash data/download.sh` |
-| Train model | `python src/train.py data/cats` |
-| Evaluate | `python src/eval.py` |
-| Run tests | `pytest tests/` |
-| Lint | `ruff check . && flake8 .` |
-| Format | `black .` |
+- **PEP 8** - Python standard
+- **Line length**: 88 chars (black default)
+- **Linting**: `ruff check . --fix`
+- **Formatting**: `black .`
+- **Type hints**: Encouraged
 
 ---
 
 ## Agent Skills
 
-Reusable agent skills are located in `.agents/skills/`. Available skills:
+Location: `.agents/skills/`
 
-- `.agents/skills/testing-workflow/` — verifying CI, tests, and training integration
-- `.agents/skills/gh-actions/` — interacting with CI/CD automation
-- `.agents/skills/cli-usage/` — invoking training and evaluation via CLI
+| Skill | Purpose |
+|-------|---------|
+| `cli-usage` | Training, evaluation, dataset commands |
+| `testing-workflow` | Run tests, lint, verification |
+| `gh-actions` | CI/CD status, triggers, debugging |
+| `git-workflow` | Branch management, commits, PRs |
+| `code-quality` | Linting, formatting, type checking |
+| `security` | Secrets, credentials, safe practices |
+| `model-training` | Training, hyperparameters, Modal |
 
 ---
 
-## Secrets & Security
+## CI/CD
 
-- **Never** hardcode tokens or credentials in code
-- Use environment variables: `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`
-- Store GitHub secrets via: **Settings → Secrets and variables → Actions**
-- Never commit `.env` files or credential files
+- **Workflows**: `.github/workflows/ci.yml`, `train.yml`
+- **Trigger**: push + PR to `main`
+- **Jobs**: lint → test → type-check (parallel)
+- **Never merge if CI fails**
+
+### GitHub CLI Commands
+
+```bash
+# View CI status
+gh run list --repo owner/tiny-cats-model
+gh run view <run-id>
+
+# Re-run failed
+gh run rerun <run-id> --failed
+
+# Trigger workflow
+gh workflow run train.yml
+
+# Set secrets
+gh secret set MODAL_TOKEN_ID --body "xxx"
+```
+
+---
+
+## Security
+
+- **Never hardcode tokens** - Use env vars
+- **Never commit `.env`** - Already gitignored
+- **Use GitHub secrets** - Settings → Secrets → Actions
+- **Required env vars**: `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`
 
 ---
 
@@ -115,29 +84,31 @@ Reusable agent skills are located in `.agents/skills/`. Available skills:
 
 ```
 tiny-cats-model/
-├── data/
-│   ├── cats/              # dataset (gitignored)
-│   └── download.sh        # dataset download/prepare script
-├── src/
-│   ├── train.py           # training entrypoint
-│   ├── eval.py            # evaluation script
-│   ├── dataset.py         # DataLoader factory
-│   └── model.py           # model definition
-├── tests/
-│   └── test_dataset.py
-├── .agents/skills/
-├── .github/workflows/train.yml
-├── AGENTS.md             # this file
-├── modal.yml
-├── requirements.txt
-└── README.md
+├── src/           # train.py, eval.py, model.py, dataset.py
+├── tests/         # test_dataset.py
+├── data/cats/     # dataset (gitignored)
+├── .agents/skills/  # agent automation
+├── .github/workflows/
+├── plans/         # GOAP, ADR documents
+├── AGENTS.md      # this file
+└── modal.yml      # GPU training config
 ```
 
 ---
 
-## Notes for Agents
+## Modal GPU Training
 
-- Always run `pytest tests/` after any code change
-- Never modify `modal.yml` token fields with real values
-- Dataset folder `data/cats/` is gitignored — agents should not try to commit its contents
-- The model checkpoint `cats_model.pt` is also gitignored
+```bash
+export MODAL_TOKEN_ID=xxx
+export MODAL_TOKEN_SECRET=xxx
+modal run src/train.py
+```
+
+---
+
+## Notes
+
+- Run `pytest tests/` after any code change
+- Dataset `data/cats/` is gitignored
+- Model checkpoint `cats_model.pt` is gitignored
+- Max workflow timeout: 10 minutes

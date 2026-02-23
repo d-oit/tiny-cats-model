@@ -7,7 +7,6 @@ These tests do NOT require a real dataset - they test transforms, utilities, and
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -16,8 +15,8 @@ import torch
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from dataset import build_transforms, DEFAULT_IMAGE_SIZE, IMAGENET_MEAN, IMAGENET_STD
-from model import cats_model, count_parameters, SUPPORTED_BACKBONES
+from dataset import DEFAULT_IMAGE_SIZE, IMAGENET_MEAN, IMAGENET_STD, build_transforms
+from model import SUPPORTED_BACKBONES, cats_model, count_parameters
 
 
 class TestBuildTransforms:
@@ -25,18 +24,21 @@ class TestBuildTransforms:
 
     def test_train_transforms_returns_compose(self):
         import torchvision.transforms as T
+
         transform = build_transforms(train=True)
         assert isinstance(transform, T.Compose)
 
     def test_val_transforms_returns_compose(self):
         import torchvision.transforms as T
+
         transform = build_transforms(train=False)
         assert isinstance(transform, T.Compose)
 
     def test_train_transforms_process_image(self):
         """Train transforms should process a PIL image to a tensor."""
-        from PIL import Image
         import numpy as np
+        from PIL import Image
+
         transform = build_transforms(train=True, image_size=64)
         img = Image.fromarray(np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8))
         tensor = transform(img)
@@ -45,8 +47,9 @@ class TestBuildTransforms:
 
     def test_val_transforms_process_image(self):
         """Val transforms should process a PIL image to a tensor."""
-        from PIL import Image
         import numpy as np
+        from PIL import Image
+
         transform = build_transforms(train=False, image_size=64)
         img = Image.fromarray(np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8))
         tensor = transform(img)
@@ -115,5 +118,6 @@ class TestDatasetErrors:
 
     def test_cats_dataloader_missing_dir_raises(self):
         from dataset import cats_dataloader
+
         with pytest.raises(FileNotFoundError):
             cats_dataloader(root="/nonexistent/path/12345")

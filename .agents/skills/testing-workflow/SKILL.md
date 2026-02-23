@@ -1,11 +1,6 @@
 ---
 name: testing-workflow
 description: Use when verifying CI, tests, and training integration. Runs the full test and lint suite and reports results.
-triggers:
-  - "run tests"
-  - "verify ci"
-  - "check tests"
-  - "test pipeline"
 ---
 
 # Skill: testing-workflow
@@ -31,10 +26,13 @@ flake8 . --max-line-length=88 --extend-ignore=E203,W503
 # 2. Format check
 black --check .
 
-# 3. Unit tests
+# 3. Type check
+mypy . --ignore-missing-imports
+
+# 4. Unit tests
 pytest tests/ -v --tb=short
 
-# 4. Module import sanity check
+# 5. Module import sanity check
 python -c "import sys; sys.path.insert(0, 'src'); from model import cats_model; m = cats_model(pretrained=False); print('Model OK')"
 ```
 

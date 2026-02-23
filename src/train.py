@@ -46,7 +46,7 @@ def train_one_epoch(
     loss_fn: nn.Module,
     device: torch.device,
     epoch: int,
-) -> float:
+) -> tuple[float, float]:
     """Run one training epoch. Returns average loss."""
     model.train()
     total_loss = 0.0
@@ -66,10 +66,7 @@ def train_one_epoch(
         total += xb.size(0)
 
         if (batch_idx + 1) % 10 == 0:
-            print(
-                f"  Epoch {epoch} | Batch {batch_idx+1}/{len(loader)} | "
-                f"Loss: {loss.item():.4f}"
-            )
+            print(f"  Epoch {epoch} | Batch {batch_idx+1}/{len(loader)} | " f"Loss: {loss.item():.4f}")
 
     avg_loss = total_loss / total
     accuracy = correct / total
@@ -100,9 +97,16 @@ def validate(
     return total_loss / total, correct / total
 
 
-def train(data_dir: str, epochs: int = 10, batch_size: int = 32, lr: float = 1e-4,
-          backbone: str = "resnet18", output: str = "cats_model.pt",
-          num_workers: int = 2, pretrained: bool = True) -> None:
+def train(
+    data_dir: str,
+    epochs: int = 10,
+    batch_size: int = 32,
+    lr: float = 1e-4,
+    backbone: str = "resnet18",
+    output: str = "cats_model.pt",
+    num_workers: int = 2,
+    pretrained: bool = True,
+) -> None:
     """Full training loop with validation and checkpoint saving."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -114,7 +118,7 @@ def train(data_dir: str, epochs: int = 10, batch_size: int = 32, lr: float = 1e-
     )
 
     model = cats_model(
-        num_classes=len(train_loader.dataset.dataset.classes),
+        num_classes=len(train_loader.dataset.dataset.classes),  # type: ignore[attr-defined]
         backbone=backbone,
         pretrained=pretrained,
     ).to(device)

@@ -1,18 +1,17 @@
 """Tests for the training module."""
-import os
-import tempfile
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
 import pytest
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
+
 from model import cats_model
-from train import (
-    get_optimizer,
-    get_scheduler,
-    train_one_epoch,
-    validate,
-    save_checkpoint,
-    load_checkpoint,
-)
+from train import train_one_epoch, validate
 
 
 @pytest.fixture
@@ -30,71 +29,32 @@ def tiny_loader():
     return DataLoader(ds, batch_size=4)
 
 
-class TestGetOptimizer:
-    """Tests for get_optimizer."""
-
-    def test_returns_adam(self, simple_model):
-        opt = get_optimizer(simple_model, optimizer_name="adam", lr=1e-3)
-        assert isinstance(opt, torch.optim.Adam)
-
-    def test_returns_sgd(self, simple_model):
-        opt = get_optimizer(simple_model, optimizer_name="sgd", lr=1e-2)
-        assert isinstance(opt, torch.optim.SGD)
-
-    def test_returns_adamw(self, simple_model):
-        opt = get_optimizer(simple_model, optimizer_name="adamw", lr=1e-3)
-        assert isinstance(opt, torch.optim.AdamW)
-
-    def test_unsupported_optimizer_raises(self, simple_model):
-        with pytest.raises(ValueError):
-            get_optimizer(simple_model, optimizer_name="rmsprop", lr=1e-3)
-
-    def test_lr_is_set(self, simple_model):
-        lr = 5e-4
-        opt = get_optimizer(simple_model, optimizer_name="adam", lr=lr)
-        assert opt.param_groups[0]["lr"] == lr
-
-
-class TestGetScheduler:
-    """Tests for get_scheduler."""
-
-    def test_returns_steplr(self, simple_model):
-        opt = get_optimizer(simple_model, optimizer_name="adam", lr=1e-3)
-        sched = get_scheduler(opt, scheduler_name="steplr", step_size=5)
-        assert sched is not None
-
-    def test_returns_cosine(self, simple_model):
-        opt = get_optimizer(simple_model, optimizer_name="adam", lr=1e-3)
-        sched = get_scheduler(opt, scheduler_name="cosine", T_max=10)
-        assert sched is not None
-
-    def test_none_scheduler_returns_none(self, simple_model):
-        opt = get_optimizer(simple_model, optimizer_name="adam", lr=1e-3)
-        sched = get_scheduler(opt, scheduler_name=None)
-        assert sched is None
-
-
 class TestTrainOneEpoch:
     """Tests for train_one_epoch."""
 
-    def test_returns_float_loss(self, simple_model, tiny_loader):
-        opt = get_optimizer(simple_model, optimizer_name="adam", lr=1e-3)
-        loss = train_one_epoch(simple_model, tiny_loader, opt, device="cpu")
-        assert isinstance(loss, float)
+    def test_returns_loss_and_accuracy(self, simple_model, tiny_loader):
+        opt = torch.optim.Adam(simple_model.parameters(), lr=1e-3)
+        loss_fn = nn.CrossEntropyLoss()
+        device = torch.device("cpu")
+        result = train_one_epoch(simple_model, tiny_loader, opt, loss_fn, device, epoch=1)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
 
     def test_loss_is_positive(self, simple_model, tiny_loader):
-        opt = get_optimizer(simple_model, optimizer_name="adam", lr=1e-3)
-        loss = train_one_epoch(simple_model, tiny_loader, opt, device="cpu")
+        opt = torch.optim.Adam(simple_model.parameters(), lr=1e-3)
+        loss_fn = nn.CrossEntropyLoss()
+        device = torch.device("cpu")
+        loss, _ = train_one_epoch(simple_model, tiny_loader, opt, loss_fn, device, epoch=1)
         assert loss > 0
 
     def test_model_params_change_after_train(self, simple_model, tiny_loader):
-        opt = get_optimizer(simple_model, optimizer_name="adam", lr=1e-3)
+        opt = torch.optim.Adam(simple_model.parameters(), lr=1e-3)
+        loss_fn = nn.CrossEntropyLoss()
+        device = torch.device("cpu")
         params_before = [p.clone() for p in simple_model.parameters()]
-        train_one_epoch(simple_model, tiny_loader, opt, device="cpu")
+        train_one_epoch(simple_model, tiny_loader, opt, loss_fn, device, epoch=1)
         params_after = list(simple_model.parameters())
-        changed = any(
-            not torch.equal(b, a) for b, a in zip(params_before, params_after)
-        )
+        changed = any(not torch.equal(b, a) for b, a in zip(params_before, params_after))
         assert changed
 
 
@@ -102,37 +62,20 @@ class TestValidate:
     """Tests for validate."""
 
     def test_returns_loss_and_accuracy(self, simple_model, tiny_loader):
-        result = validate(simple_model, tiny_loader, device="cpu")
-        assert "loss" in result
-        assert "accuracy" in result
+        loss_fn = nn.CrossEntropyLoss()
+        device = torch.device("cpu")
+        val_loss, val_acc = validate(simple_model, tiny_loader, loss_fn, device)
+        assert isinstance(val_loss, float)
+        assert isinstance(val_acc, float)
 
     def test_accuracy_between_0_and_1(self, simple_model, tiny_loader):
-        result = validate(simple_model, tiny_loader, device="cpu")
-        assert 0.0 <= result["accuracy"] <= 1.0
+        loss_fn = nn.CrossEntropyLoss()
+        device = torch.device("cpu")
+        _, val_acc = validate(simple_model, tiny_loader, loss_fn, device)
+        assert 0.0 <= val_acc <= 1.0
 
     def test_loss_is_positive(self, simple_model, tiny_loader):
-        result = validate(simple_model, tiny_loader, device="cpu")
-        assert result["loss"] > 0
-
-
-class TestCheckpointing:
-    """Tests for save_checkpoint and load_checkpoint."""
-
-    def test_save_and_load_checkpoint(self, simple_model):
-        opt = get_optimizer(simple_model, optimizer_name="adam", lr=1e-3)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, "ckpt.pth")
-            save_checkpoint(simple_model, opt, epoch=1, path=path)
-            assert os.path.exists(path)
-            new_model = cats_model(num_classes=2, backbone="resnet18", pretrained=False)
-            new_opt = get_optimizer(new_model, optimizer_name="adam", lr=1e-3)
-            epoch = load_checkpoint(new_model, new_opt, path=path)
-            assert epoch == 1
-
-    def test_checkpoint_file_created(self, simple_model):
-        opt = get_optimizer(simple_model, optimizer_name="adam", lr=1e-3)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, "model.pth")
-            save_checkpoint(simple_model, opt, epoch=3, path=path)
-            assert os.path.isfile(path)
-            assert os.path.getsize(path) > 0
+        loss_fn = nn.CrossEntropyLoss()
+        device = torch.device("cpu")
+        val_loss, _ = validate(simple_model, tiny_loader, loss_fn, device)
+        assert val_loss > 0

@@ -1,7 +1,9 @@
 """Tests for the model module."""
+
 import pytest
 import torch
-from model import cats_model, count_parameters, SUPPORTED_BACKBONES
+
+from model import SUPPORTED_BACKBONES, cats_model, count_parameters
 
 
 class TestCatsModel:

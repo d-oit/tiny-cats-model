@@ -7,6 +7,7 @@ triggers:
   - "evaluate"
   - "download dataset"
   - "cli commands"
+  - "modal"
 ---
 
 # Skill: cli-usage

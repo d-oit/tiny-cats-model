@@ -7,7 +7,6 @@ Uses a pretrained ResNet-18 backbone with a custom classification head.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -65,9 +64,7 @@ def cats_model(
             nn.Linear(in_features, num_classes),
         )
     else:
-        raise ValueError(
-            f"Unsupported backbone: {backbone}. Choose from {SUPPORTED_BACKBONES}"
-        )
+        raise ValueError(f"Unsupported backbone: {backbone}. Choose from {SUPPORTED_BACKBONES}")
 
     return model
 
