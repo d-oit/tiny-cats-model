@@ -20,7 +20,10 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 echo "==> Downloading images archive..."
-wget -q --show-progress -O "${TMP_DIR}/images.tar.gz" "${PET_IMAGES_URL}"
+curl -sL -o "${TMP_DIR}/images.tar.gz" "${PET_IMAGES_URL}"
+
+echo "==> Downloading annotations archive..."
+curl -sL -o "${TMP_DIR}/annotations.tar.gz" "${PET_ANNOTS_URL}"
 
 echo "==> Extracting images..."
 tar -xzf "${TMP_DIR}/images.tar.gz" -C "${TMP_DIR}"
