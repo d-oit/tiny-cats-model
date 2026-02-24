@@ -31,12 +31,16 @@ try:
         quantize_static,
     )
 except ImportError as e:
-    raise ImportError("onnxruntime-tools is required. Install with: pip install onnxruntime-tools>=1.15.0") from e
+    raise ImportError(
+        "onnxruntime-tools is required. Install with: pip install onnxruntime-tools>=1.15.0"
+    ) from e
 
 try:
     import onnxruntime as ort
 except ImportError as e:
-    raise ImportError("onnxruntime is required. Install with: pip install onnxruntime>=1.15.0") from e
+    raise ImportError(
+        "onnxruntime is required. Install with: pip install onnxruntime>=1.15.0"
+    ) from e
 
 # ImageNet mean/std for normalization (matches training preprocessing)
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -84,7 +88,9 @@ class CatsCalibrationDataReader(CalibrationDataReader):
         for i in range(self.num_samples):
             # Generate varied synthetic images for better calibration
             np.random.seed(i)
-            img_array = np.random.randint(0, 256, (self.image_size, self.image_size, 3), dtype=np.uint8)
+            img_array = np.random.randint(
+                0, 256, (self.image_size, self.image_size, 3), dtype=np.uint8
+            )
 
             # Add some structure to the images
             if i % 3 == 0:
@@ -167,11 +173,12 @@ def format_size(size_bytes: int) -> str:
     Returns:
         Formatted string (e.g., "45.2 MB").
     """
+    size: float = float(size_bytes)
     for unit in ["B", "KB", "MB", "GB"]:
-        if size_bytes < 1024:
-            return f"{size_bytes:.2f} {unit}"
-        size_bytes /= 1024
-    return f"{size_bytes:.2f} TB"
+        if size < 1024:
+            return f"{size:.2f} {unit}"
+        size /= 1024
+    return f"{size:.2f} TB"
 
 
 def clean_onnx_model(model_path: str | Path, output_path: str | Path) -> Path:
@@ -263,7 +270,9 @@ def validate_accuracy(
 
     for i in range(num_samples):
         np.random.seed(i + 1000)  # Different seed from calibration
-        img_array = np.random.randint(0, 256, (image_size, image_size, 3), dtype=np.uint8)
+        img_array = np.random.randint(
+            0, 256, (image_size, image_size, 3), dtype=np.uint8
+        )
         img = Image.fromarray(img_array, mode="RGB")
         input_tensor = transform(img).unsqueeze(0).numpy().astype(np.float32)
 
@@ -486,7 +495,9 @@ def optimize_onnx(
         if match_rate >= 0.99:
             print(f"  Accuracy validation PASSED (match rate: {match_rate:.1%})")
         else:
-            print(f"  Warning: Accuracy drop may be significant (match rate: {match_rate:.1%})")
+            print(
+                f"  Warning: Accuracy drop may be significant (match rate: {match_rate:.1%})"
+            )
 
     # Summary
     print("\n" + "=" * 60)
@@ -498,7 +509,9 @@ def optimize_onnx(
     if validate and "accuracy_validation" in results:
         acc = results["accuracy_validation"]
         print(f"Prediction match rate: {acc['prediction_match_rate']:.1%}")
-        print(f"Predictions matched: {acc['predictions_matched']}/{acc['total_samples']}")
+        print(
+            f"Predictions matched: {acc['predictions_matched']}/{acc['total_samples']}"
+        )
         print(f"Max output difference: {acc['max_difference']:.6f}")
         print(f"Mean output difference: {acc['mean_difference']:.6f}")
     print(f"Output: {quant_results['output_path']}")
@@ -516,7 +529,9 @@ def optimize_onnx(
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Optimize ONNX model using quantization")
+    parser = argparse.ArgumentParser(
+        description="Optimize ONNX model using quantization"
+    )
     parser.add_argument(
         "--model",
         type=str,

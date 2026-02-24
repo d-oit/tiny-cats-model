@@ -68,6 +68,7 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] Add frontend build to CI pipeline
 - [x] Configure GitHub Pages deployment
 - [x] Write comprehensive README
+- [x] Align quality gate with CI pipeline (ADR-014)
 
 ## Priorities
 1. Dataset preparation (high) - foundation for training
@@ -96,6 +97,7 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] Add logging infrastructure (ADR-010)
 - [x] Add mixed precision training (ADR-010)
 - [x] Add memory management (ADR-010)
+- [x] Align quality gate with CI pipeline (ADR-014)
 - [ ] Train full model on Modal GPU
 - [x] Complete frontend generation canvas
 - [x] Add frontend build to CI pipeline
@@ -142,6 +144,7 @@ Build a cats classifier and generator with web frontend, following the architect
 | Inference | <2s generation | ✅ Benchmark page ready |
 | Frontend | Responsive UI | ✅ Complete |
 | CI | All checks pass | ✅ Build job added |
+| Quality Gate | Local = CI | ✅ ADR-014 implemented |
 
 ## Success Metrics
 - Dataset: 12 cat breeds + other class ready

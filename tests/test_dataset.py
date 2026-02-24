@@ -89,7 +89,9 @@ class TestCatsModel:
         assert out.shape == (1, 12)
 
     def test_mobilenet_builds(self):
-        model = cats_model(num_classes=2, backbone="mobilenet_v3_small", pretrained=False)
+        model = cats_model(
+            num_classes=2, backbone="mobilenet_v3_small", pretrained=False
+        )
         assert model is not None
 
     def test_unsupported_backbone_raises(self):

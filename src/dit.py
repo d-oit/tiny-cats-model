@@ -79,7 +79,11 @@ class Attention(nn.Module):
             Output tensor (B, N, D)
         """
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        qkv = (
+            self.qkv(x)
+            .reshape(B, N, 3, self.num_heads, C // self.num_heads)
+            .permute(2, 0, 3, 1, 4)
+        )
         q, k, v = qkv[0], qkv[1], qkv[2]
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
@@ -134,7 +138,9 @@ class TimestepEmbedder(nn.Module):
         self.frequency_embedding_size = frequency_embedding_size
 
     @staticmethod
-    def timestep_embedding(t: torch.Tensor, dim: int, max_period: int = 10000) -> torch.Tensor:
+    def timestep_embedding(
+        t: torch.Tensor, dim: int, max_period: int = 10000
+    ) -> torch.Tensor:
         """Create sinusoidal timestep embeddings.
 
         Args:
@@ -146,12 +152,18 @@ class TimestepEmbedder(nn.Module):
             Timestep embeddings (B, dim)
         """
         half = dim // 2
-        freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half)
+        freqs = torch.exp(
+            -math.log(max_period)
+            * torch.arange(start=0, end=half, dtype=torch.float32)
+            / half
+        )
         freqs = freqs.to(t.device)
         args = t[:, None].float() * freqs[None]
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         if dim % 2:
-            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
+            embedding = torch.cat(
+                [embedding, torch.zeros_like(embedding[:, :1])], dim=-1
+            )
         return embedding
 
     def forward(self, t: torch.Tensor) -> torch.Tensor:
@@ -234,10 +246,14 @@ class DiTBlock(nn.Module):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = mod_values
 
         # Attention with AdaLN
-        x = x + gate_msa.unsqueeze(1) * self.attn(self.norm1(x) * (1 + scale_msa.unsqueeze(1)) + shift_msa.unsqueeze(1))
+        x = x + gate_msa.unsqueeze(1) * self.attn(
+            self.norm1(x) * (1 + scale_msa.unsqueeze(1)) + shift_msa.unsqueeze(1)
+        )
 
         # MLP with AdaLN
-        x = x + gate_mlp.unsqueeze(1) * self.mlp(self.norm2(x) * (1 + scale_mlp.unsqueeze(1)) + shift_mlp.unsqueeze(1))
+        x = x + gate_mlp.unsqueeze(1) * self.mlp(
+            self.norm2(x) * (1 + scale_mlp.unsqueeze(1)) + shift_mlp.unsqueeze(1)
+        )
 
         return x
 
@@ -276,7 +292,9 @@ class FinalLayer(nn.Module):
             Image tensor (B, C, H, W)
         """
         shift, scale = self.adaLN_modulation(c).chunk(2, dim=-1)
-        x = self.linear(self.norm_final(x) * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1))
+        x = self.linear(
+            self.norm_final(x) * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+        )
         return x
 
 
@@ -324,11 +342,16 @@ class TinyDiT(nn.Module):
 
         # Transformer blocks
         self.blocks = nn.ModuleList(
-            [DiTBlock(embed_dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)]
+            [
+                DiTBlock(embed_dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio)
+                for _ in range(depth)
+            ]
         )
 
         # Final layer
-        self.final_layer = FinalLayer(embed_dim=embed_dim, patch_size=patch_size, out_channels=in_channels)
+        self.final_layer = FinalLayer(
+            embed_dim=embed_dim, patch_size=patch_size, out_channels=in_channels
+        )
 
         # Initialize weights
         self.initialize_weights()
@@ -386,7 +409,9 @@ class TinyDiT(nn.Module):
 
         # Reshape to image (use explicit batch size for ONNX compatibility)
         batch_size = x.shape[0]
-        x = x.transpose(1, 2).reshape(batch_size, self.in_channels, self.image_size, self.image_size)
+        x = x.transpose(1, 2).reshape(
+            batch_size, self.in_channels, self.image_size, self.image_size
+        )
         return x
 
     def forward_with_cfg(

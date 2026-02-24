@@ -12,7 +12,7 @@ AI agent guidance for the tiny-cats-model project.
 | Train (local) | `python src/train.py data/cats` |
 | Train options | `modal run src/train.py -- --epochs 20 --batch-size 64` |
 | Evaluate | `python src/eval.py` |
-| Quality gate | `bash scripts/quality-gate.sh` or `make quality-gate` |
+| **Quality gate** | `bash scripts/quality-gate.sh` (runs all CI checks locally) |
 | Verify | `bash .agents/skills/git-workflow/quality-gate.sh` |
 | Tests | `pytest tests/ -v` |
 | Lint | `ruff check . && flake8 .` |
@@ -33,7 +33,8 @@ AI agent guidance for the tiny-cats-model project.
 - Never commit `.env` files
 - Never skip CI checks before merging
 - Never use `--force` with git push to main
-- Never commit without running lint/test locally
+- Never commit without running quality gate locally: `bash scripts/quality-gate.sh`
+- Never merge if local quality gate passes but CI fails (report config mismatch)
 
 ## Agent Skills
 
@@ -54,9 +55,23 @@ See [agents-docs/skills.md](agents-docs/skills.md) for full details.
 ## CI/CD
 
 - **Workflows**: `.github/workflows/ci.yml`, `train.yml`, `deploy.yml`
-- **Trigger**: push + PR to `main`
-- **Jobs**: lint → test → type-check (parallel)
+- **Trigger**: push + PR to `main` + `workflow_dispatch`
+- **Jobs**: lint → test → type-check → build-frontend
 - **Never merge if CI fails**
+
+### Quality Gate Parity (ADR-014)
+
+The local quality gate runs the **same checks** as CI:
+
+```bash
+bash scripts/quality-gate.sh
+```
+
+This ensures: **what passes locally passes in CI**.
+
+**Configuration Files**:
+- `.flake8` - Flake8 config (single source of truth)
+- `pyproject.toml` - Black, isort, mypy config
 
 See [agents-docs/ci-cd.md](agents-docs/ci-cd.md) for fix workflows and CLI commands.
 
@@ -97,10 +112,11 @@ See [agents-docs/training.md](agents-docs/training.md) for full options.
 
 ## Notes
 
-- Run `pytest tests/` after any code change
+- Run `bash scripts/quality-gate.sh` before every commit (runs all CI checks locally)
 - Dataset `data/cats/` and `cats_model.pt` are gitignored
 - Max workflow timeout: 10 minutes
 - Always use type hints for new functions
+- Black line-length: 88 chars (matches CI)
 
 ## Learnings & Patterns
 

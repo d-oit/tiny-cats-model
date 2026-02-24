@@ -59,7 +59,9 @@ def setup_logging(log_file: str | None = None) -> logging.Logger:
     logger.handlers.clear()
 
     # Format with timestamp
-    formatter = logging.Formatter("%(asctime)s | %(levelname)-8s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
 
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
@@ -81,10 +83,15 @@ def setup_logging(log_file: str | None = None) -> logging.Logger:
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Train cats classifier", formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        description="Train cats classifier",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("data_dir", type=str, help="Path to dataset root (ImageFolder format)")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
+    parser.add_argument(
+        "data_dir", type=str, help="Path to dataset root (ImageFolder format)"
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=10, help="Number of training epochs"
+    )
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument(
@@ -94,18 +101,42 @@ def parse_args() -> argparse.Namespace:
         help="Model backbone",
         choices=["resnet18", "resnet34", "resnet50", "mobilenet_v3_small"],
     )
-    parser.add_argument("--output", type=str, default="cats_model.pt", help="Output checkpoint path")
-    parser.add_argument("--num-workers", type=int, default=2, help="DataLoader workers")
-    parser.add_argument("--no-pretrained", action="store_true", help="Disable pretrained weights")
-    parser.add_argument("--mixed-precision", action="store_true", help="Enable automatic mixed precision training")
     parser.add_argument(
-        "--gradient-clip", type=float, default=1.0, help="Max gradient norm for clipping (0 to disable)"
+        "--output", type=str, default="cats_model.pt", help="Output checkpoint path"
     )
-    parser.add_argument("--warmup-epochs", type=int, default=2, help="Number of LR warmup epochs")
-    parser.add_argument("--grad-accum-steps", type=int, default=1, help="Gradient accumulation steps")
-    parser.add_argument("--log-file", type=str, default=None, help="Path to log file (optional)")
-    parser.add_argument("--save-interval", type=int, default=1, help="Checkpoint save interval in epochs")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument("--num-workers", type=int, default=2, help="DataLoader workers")
+    parser.add_argument(
+        "--no-pretrained", action="store_true", help="Disable pretrained weights"
+    )
+    parser.add_argument(
+        "--mixed-precision",
+        action="store_true",
+        help="Enable automatic mixed precision training",
+    )
+    parser.add_argument(
+        "--gradient-clip",
+        type=float,
+        default=1.0,
+        help="Max gradient norm for clipping (0 to disable)",
+    )
+    parser.add_argument(
+        "--warmup-epochs", type=int, default=2, help="Number of LR warmup epochs"
+    )
+    parser.add_argument(
+        "--grad-accum-steps", type=int, default=1, help="Gradient accumulation steps"
+    )
+    parser.add_argument(
+        "--log-file", type=str, default=None, help="Path to log file (optional)"
+    )
+    parser.add_argument(
+        "--save-interval",
+        type=int,
+        default=1,
+        help="Checkpoint save interval in epochs",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed for reproducibility"
+    )
     return parser.parse_args()
 
 
@@ -130,7 +161,9 @@ def log_gpu_memory(logger: logging.Logger, prefix: str = "") -> None:
     if torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / (1024**2)
         reserved = torch.cuda.memory_reserved() / (1024**2)
-        logger.info(f"{prefix}GPU Memory: {allocated:.1f}MB allocated, {reserved:.1f}MB reserved")
+        logger.info(
+            f"{prefix}GPU Memory: {allocated:.1f}MB allocated, {reserved:.1f}MB reserved"
+        )
 
 
 def cleanup_memory() -> None:
@@ -209,12 +242,16 @@ def train_one_epoch(
                 if scaler:
                     if gradient_clip > 0:
                         scaler.unscale_(optimizer)
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+                        torch.nn.utils.clip_grad_norm_(
+                            model.parameters(), gradient_clip
+                        )
                     scaler.step(optimizer)
                     scaler.update()
                 else:
                     if gradient_clip > 0:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+                        torch.nn.utils.clip_grad_norm_(
+                            model.parameters(), gradient_clip
+                        )
                     optimizer.step()
                 optimizer.zero_grad()
 
@@ -269,7 +306,9 @@ def validate(
     try:
         with torch.no_grad():
             for xb, yb in loader:
-                xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
+                xb, yb = xb.to(device, non_blocking=True), yb.to(
+                    device, non_blocking=True
+                )
                 pred = model(xb)
                 loss = loss_fn(pred, yb)
                 total_loss += loss.item() * xb.size(0)
@@ -427,7 +466,9 @@ def train_modal(
     # Setup logging
     logger = setup_logging(log_file)
     logger.info("Starting Modal GPU training")
-    logger.info(f"Configuration: data_dir={data_dir}, epochs={epochs}, batch_size={batch_size}")
+    logger.info(
+        f"Configuration: data_dir={data_dir}, epochs={epochs}, batch_size={batch_size}"
+    )
 
     try:
         # Download dataset if needed
@@ -573,7 +614,9 @@ def train(
             batch_size=batch_size,
             num_workers=num_workers,
         )
-        logger.info(f"Data loaders created: {len(train_loader)} train batches, {len(val_loader)} val batches")
+        logger.info(
+            f"Data loaders created: {len(train_loader)} train batches, {len(val_loader)} val batches"
+        )
     except Exception as e:
         raise DataLoadError(f"Failed to create data loaders: {e}") from e
 
@@ -585,19 +628,31 @@ def train(
         pretrained=pretrained,
     ).to(device)
 
-    logger.info(f"Model: {backbone} | Classes: {num_classes} | Parameters: {count_parameters(model):,}")
+    logger.info(
+        f"Model: {backbone} | Classes: {num_classes} | Parameters: {count_parameters(model):,}"
+    )
 
     # Optimizer and loss
     optimizer = Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     loss_fn = nn.CrossEntropyLoss()
 
     # Learning rate scheduler with warmup
-    warmup_scheduler = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
+    warmup_scheduler = LinearLR(
+        optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs
+    )
     main_scheduler = CosineAnnealingLR(optimizer, T_max=epochs - warmup_epochs)
-    scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, main_scheduler], milestones=[warmup_epochs])
+    scheduler = SequentialLR(
+        optimizer,
+        schedulers=[warmup_scheduler, main_scheduler],
+        milestones=[warmup_epochs],
+    )
 
     # Mixed precision scaler
-    scaler = torch.cuda.amp.GradScaler() if mixed_precision and torch.cuda.is_available() else None
+    scaler = (
+        torch.cuda.amp.GradScaler()
+        if mixed_precision and torch.cuda.is_available()
+        else None
+    )
     if scaler:
         logger.info("Mixed precision training enabled (AMP)")
 

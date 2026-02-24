@@ -88,7 +88,9 @@ class TestTrainOneEpoch:
             logger=logger,
         )
         params_after = list(simple_model.parameters())
-        changed = any(not torch.equal(b, a) for b, a in zip(params_before, params_after))
+        changed = any(
+            not torch.equal(b, a) for b, a in zip(params_before, params_after)
+        )
         assert changed
 
 

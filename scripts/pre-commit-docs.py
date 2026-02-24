@@ -35,23 +35,31 @@ def check_docs_needed(files: list[str]) -> list[str]:
         # CI workflow changes
         if ".github/workflows/" in f:
             warnings.append(
-                f"⚠️  CI workflow changed ({f})\n" f"   → Consider updating agents-docs/ci-cd.md or creating an ADR"
+                f"⚠️  CI workflow changed ({f})\n"
+                f"   → Consider updating agents-docs/ci-cd.md or creating an ADR"
             )
 
         # Modal config changes
         if "modal" in f.lower() and f.endswith((".py", ".yml", ".yaml")):
-            warnings.append(f"⚠️  Modal config changed ({f})\n" f"   → Consider updating agents-docs/training.md")
+            warnings.append(
+                f"⚠️  Modal config changed ({f})\n"
+                f"   → Consider updating agents-docs/training.md"
+            )
 
         # Security-related changes
         if "security" in f.lower() or "secret" in f.lower() or "token" in f.lower():
             if not f.endswith("test"):
                 warnings.append(
-                    f"⚠️  Security-related change ({f})\n" f"   → Consider updating agents-docs/security.md"
+                    f"⚠️  Security-related change ({f})\n"
+                    f"   → Consider updating agents-docs/security.md"
                 )
 
         # Agent skills changes
         if ".agents/skills/" in f:
-            warnings.append(f"⚠️  Agent skill changed ({f})\n" f"   → Consider updating agents-docs/skills.md")
+            warnings.append(
+                f"⚠️  Agent skill changed ({f})\n"
+                f"   → Consider updating agents-docs/skills.md"
+            )
 
         # GOAP/ADR changes
         if "plans/GOAP.md" in f or "plans/ADR-" in f:
@@ -79,7 +87,9 @@ def main():
             print(w)
             print()
         print("=" * 50)
-        print("\n💡 Tip: Run 'python scripts/update-learnings.py' to auto-update learnings")
+        print(
+            "\n💡 Tip: Run 'python scripts/update-learnings.py' to auto-update learnings"
+        )
         print("   Or 'python scripts/adr-scaffold.py \"Title\"' to create an ADR\n")
 
         # Don't block commit, just warn

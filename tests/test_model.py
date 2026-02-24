@@ -26,7 +26,9 @@ class TestCatsModel:
         assert out.shape == (2, 3)
 
     def test_model_output_shape_mobilenet(self):
-        model = cats_model(num_classes=5, backbone="mobilenet_v3_small", pretrained=False)
+        model = cats_model(
+            num_classes=5, backbone="mobilenet_v3_small", pretrained=False
+        )
         model.eval()
         x = torch.randn(2, 3, 224, 224)
         with torch.no_grad():

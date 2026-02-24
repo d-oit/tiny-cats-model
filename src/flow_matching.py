@@ -182,7 +182,9 @@ class EMA:
             model: Model to track
         """
         self.shadow_params = {
-            name: param.clone().detach() for name, param in model.named_parameters() if param.requires_grad
+            name: param.clone().detach()
+            for name, param in model.named_parameters()
+            if param.requires_grad
         }
 
     def update(self, model: nn.Module) -> None:

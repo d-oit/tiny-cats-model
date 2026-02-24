@@ -25,7 +25,9 @@ from PIL import Image
 try:
     import onnxruntime as ort
 except ImportError as e:
-    raise ImportError("onnxruntime is required. Install with: pip install onnxruntime>=1.15.0") from e
+    raise ImportError(
+        "onnxruntime is required. Install with: pip install onnxruntime>=1.15.0"
+    ) from e
 
 from model import cats_model
 
@@ -285,7 +287,9 @@ def test_onnx_inference(
 
         # Calculate speedup
         if pytorch_results["latency_mean_ms"] > 0:
-            speedup = pytorch_results["latency_mean_ms"] / onnx_results["latency_mean_ms"]
+            speedup = (
+                pytorch_results["latency_mean_ms"] / onnx_results["latency_mean_ms"]
+            )
             results["speedup"] = {
                 "onnx_vs_pytorch": float(speedup),
                 "faster": "ONNX" if speedup > 1 else "PyTorch",
@@ -343,14 +347,18 @@ def print_results(results: dict[str, Any]) -> None:
     if results["speedup"]:
         print("\n--- Performance Comparison ---")
         speedup = results["speedup"]
-        print(f"  Speedup: {speedup['onnx_vs_pytorch']:.2f}x ({speedup['faster']} is faster)")
+        print(
+            f"  Speedup: {speedup['onnx_vs_pytorch']:.2f}x ({speedup['faster']} is faster)"
+        )
 
     print("\n" + "=" * 60)
 
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Test ONNX inference for cats classifier")
+    parser = argparse.ArgumentParser(
+        description="Test ONNX inference for cats classifier"
+    )
     parser.add_argument(
         "--onnx-model",
         type=str,

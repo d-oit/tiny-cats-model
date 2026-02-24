@@ -37,7 +37,9 @@ def analyze_commit_message(msg: str) -> list[str]:
         )
 
     # Bug fixes with lessons
-    if "fix" in msg_lower and ("timeout" in msg_lower or "error" in msg_lower or "fail" in msg_lower):
+    if "fix" in msg_lower and (
+        "timeout" in msg_lower or "error" in msg_lower or "fail" in msg_lower
+    ):
         suggestions.append(
             "📝 Bug fix with error handling. Document the lesson:\n"
             "   → What was the root cause?\n"

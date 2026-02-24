@@ -364,16 +364,24 @@ def verify_onnx_model(model_path: str | Path) -> None:
 
         print("  Inputs:")
         for inp in model.graph.input:
-            shape = [d.dim_value if d.dim_value else d.dim_param for d in inp.type.tensor_type.shape.dim]
+            shape = [
+                d.dim_value if d.dim_value else d.dim_param
+                for d in inp.type.tensor_type.shape.dim
+            ]
             print(f"    {inp.name}: {shape}")
 
         print("  Outputs:")
         for out in model.graph.output:
-            shape = [d.dim_value if d.dim_value else d.dim_param for d in out.type.tensor_type.shape.dim]
+            shape = [
+                d.dim_value if d.dim_value else d.dim_param
+                for d in out.type.tensor_type.shape.dim
+            ]
             print(f"    {out.name}: {shape}")
 
         # Count parameters
-        param_count = sum(onnx.numpy_helper.to_array(init).size for init in model.graph.initializer)
+        param_count = sum(
+            onnx.numpy_helper.to_array(init).size for init in model.graph.initializer
+        )
         print(f"  Parameters: {param_count:,}")
         print(f"  Model size: {model_path.stat().st_size / 1024 / 1024:.1f} MB")
 
@@ -415,11 +423,15 @@ def test_onnx_inference(model_path: str | Path) -> None:
         batch_size = 1
         image_size = 128
 
-        noise = np.random.randn(batch_size, 3, image_size, image_size).astype(np.float32)
+        noise = np.random.randn(batch_size, 3, image_size, image_size).astype(
+            np.float32
+        )
         timestep = np.array([0.5], dtype=np.float32)
         breed = np.array([0], dtype=np.int64)
 
-        result = session.run(None, {"noise": noise, "timestep": timestep, "breed": breed})
+        result = session.run(
+            None, {"noise": noise, "timestep": timestep, "breed": breed}
+        )
 
         print("\n  Test Inference:")
         print(f"    Input noise shape: {noise.shape}")
@@ -435,7 +447,9 @@ def test_onnx_inference(model_path: str | Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Export TinyDiT generator to ONNX format")
+    parser = argparse.ArgumentParser(
+        description="Export TinyDiT generator to ONNX format"
+    )
     parser.add_argument(
         "--checkpoint",
         type=str,

@@ -100,9 +100,9 @@ fi
 log_info "Running linter (ruff)..."
 
 if RUFF_OUTPUT=$(python -m ruff check . 2>&1); then
-    log_success "Lint check passed"
+    log_success "Ruff check passed"
 else
-    log_error "Lint check failed"
+    log_error "Ruff check failed"
     echo "$RUFF_OUTPUT" | head -20
     if echo "$RUFF_OUTPUT" | grep -q "error:"; then
         echo "   Run 'python -m ruff check . --fix' to fix auto-fixable issues"
@@ -114,7 +114,24 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. Type Check (Mypy)
+# 4. Lint (Flake8) - CI Parity Check
+# ─────────────────────────────────────────────────────────────────────────────
+log_info "Running flake8 linter (CI parity)..."
+
+if FLAKE8_OUTPUT=$(flake8 . 2>&1); then
+    log_success "Flake8 check passed"
+else
+    log_error "Flake8 check failed"
+    echo "$FLAKE8_OUTPUT" | head -20
+    echo "   Fix flake8 errors or update .flake8 config if needed"
+    FAILURES=$((FAILURES + 1))
+    if [[ "$STRICT" == true ]]; then
+        exit 1
+    fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. Type Check (Mypy)
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Running type checker (mypy)..."
 
@@ -131,7 +148,7 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. Tests (Pytest)
+# 6. Tests (Pytest)
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Running tests (pytest)..."
 
