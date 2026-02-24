@@ -51,6 +51,7 @@ See [agents-docs/skills.md](agents-docs/skills.md) for full details.
 | `goap` | Planning, ADR, project goals |
 | `security` | Secrets, credentials |
 | `model-training` | GPU training, Modal |
+| `web-search-researcher` | Web research, documentation lookup |
 
 ## CI/CD
 
