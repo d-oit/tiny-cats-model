@@ -62,7 +62,7 @@ Build a cats classifier and generator with web frontend, following the architect
 
 ### Phase 6: Documentation & CI/CD
 - [x] Update AGENTS.md with new workflows
-- [x] Create ADRs for architectural decisions (ADR-008 to ADR-015)
+- [x] Create ADRs for architectural decisions (ADR-008 to ADR-016)
 - [x] Fix CI flake8 linting errors (ADR-012)
 - [x] Optimize GitHub Actions workflow (ADR-013)
 - [x] Add frontend build to CI pipeline
@@ -70,7 +70,9 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] Write comprehensive README
 - [x] Align quality gate with CI pipeline (ADR-014)
 - [x] Fix GitHub workflow caching issues (ADR-015)
-- [ ] Fix frontend TypeScript build errors
+- [x] Fix frontend TypeScript build errors
+- [x] Modernize code quality setup for 2026 (ADR-016) - Ruff replaces flake8+black+isort
+- [x] Add ci-monitor skill for CI orchestration
 
 ## Priorities
 1. Dataset preparation (high) - foundation for training
@@ -101,7 +103,8 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] Add memory management (ADR-010)
 - [x] Align quality gate with CI pipeline (ADR-014)
 - [x] Fix GitHub workflow caching issues (ADR-015)
-- [ ] Fix frontend TypeScript build errors
+- [x] Fix frontend TypeScript build errors
+- [x] Modernize code quality setup for 2026 (ADR-016)
 - [ ] Train full model on Modal GPU
 - [x] Complete frontend generation canvas
 - [x] Add frontend build to CI pipeline
@@ -147,8 +150,9 @@ Build a cats classifier and generator with web frontend, following the architect
 | Model size | <100MB | ✅ 11MB (quantized) |
 | Inference | <2s generation | ✅ Benchmark page ready |
 | Frontend | Responsive UI | ✅ Complete |
-| CI | All checks pass | ⚠️ Lint/Test/Type pass, Frontend TS errors |
+| CI | All checks pass | ✅ All 5 jobs passing |
 | Quality Gate | Local = CI | ✅ ADR-014 implemented |
+| Code Quality | 2026 stack | ✅ ADR-016 (Ruff) |
 
 ## Success Metrics
 - Dataset: 12 cat breeds + other class ready

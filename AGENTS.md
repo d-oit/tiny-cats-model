@@ -12,11 +12,13 @@ AI agent guidance for the tiny-cats-model project.
 | Train (local) | `python src/train.py data/cats` |
 | Train options | `modal run src/train.py -- --epochs 20 --batch-size 64` |
 | Evaluate | `python src/eval.py` |
-| **Quality gate** | `bash scripts/quality-gate.sh` (runs all CI checks locally) |
+| **Quality gate** | `bash scripts/quality-gate.sh` (ruff format + ruff check) |
+| **Pre-commit** | `pre-commit install && pre-commit run --all-files` |
 | Verify | `bash .agents/skills/git-workflow/quality-gate.sh` |
 | Tests | `pytest tests/ -v` |
-| Lint | `ruff check . && flake8 .` |
-| Format | `black .` |
+| Lint | `ruff check . && ruff format --check .` |
+| Format | `ruff format .` |
+| **CI Monitor** | `gh run list && gh run view <id>` |
 
 ## Code Style
 
