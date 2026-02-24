@@ -224,6 +224,43 @@ When CI fails on linting:
 - Use websearch/codesearch for 2026 best practices
 - Document findings in ADR if significant
 
+### 7. GitHub Actions Best Practices (ADR-013)
+
+**Concurrency Strategy (2026)**:
+```yaml
+# ✅ CORRECT: Use PR number, not branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# ❌ WRONG: Causes cancelled runs to show as failures
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+**Why This Matters**:
+- GitHub UI shows cancelled runs as "failing" (bug)
+- PR status shows "3/12 checks failing" even when all pass
+- Using PR number groups runs correctly
+- Only cancel PR runs, not main branch builds
+
+**Branch Protection** (Required for 2026):
+- Enable on `main` branch
+- Require status checks: Lint, Test, Type Check
+- Require PR reviews before merge
+- Include administrators
+
+**Workflow Dispatch**: Add manual trigger for debugging:
+```yaml
+workflow_dispatch:
+  inputs:
+    debug_enabled:
+      description: 'Run with debug logging'
+      required: false
+      default: 'false'
+```
+
 ---
 
 ## 2026 Best Practices Applied
