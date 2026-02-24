@@ -25,6 +25,7 @@ AI agent guidance for the tiny-cats-model project.
 - **Linting**: `ruff check . --fix`
 - **Formatting**: `black .`
 - **Type hints**: Required for new code
+- **500 LOC max per file**
 
 ## What NOT to Do
 

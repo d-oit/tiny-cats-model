@@ -27,9 +27,6 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 # Add project root to path for relative imports when run directly
 sys.path.insert(0, str(Path(__file__).parent))
 
-from dataset import cats_dataloader
-from model import cats_model, count_parameters
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train cats classifier")
@@ -107,12 +104,13 @@ stub = modal.App("tiny-cats-model")
 volume_outputs = modal.Volume.from_name("cats-model-outputs", create_if_missing=True)
 volume_data = modal.Volume.from_name("cats-model-data", create_if_missing=True)
 
-LOCAL_SRC = Path(__file__).parent.absolute()
+LOCAL_SRC = Path(__file__).parent.parent.absolute()
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
+    .apt_install("wget", "tar")
     .pip_install("torch>=2.0.0", "torchvision>=0.15.0", "Pillow>=9.0.0", "tqdm>=4.65.0")
-    .add_local_dir(str(LOCAL_SRC), "/app/src", copy=True)
+    .add_local_dir(str(LOCAL_SRC), "/app", copy=True)
 )
 
 
@@ -176,6 +174,9 @@ def train(
     pretrained: bool = True,
 ) -> None:
     """Full training loop with validation and checkpoint saving."""
+    from dataset import cats_dataloader
+    from model import cats_model, count_parameters
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 

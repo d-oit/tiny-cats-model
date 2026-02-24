@@ -28,7 +28,8 @@ cat > "$HOOKS_DIR/pre-commit" << 'EOF'
 # Pre-commit hook - checks if docs need updating
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"; pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+# Go up two levels: from .git/hooks to project root
+ROOT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 python3 "$ROOT_DIR/scripts/pre-commit-docs.py"
 exit $?
@@ -43,7 +44,8 @@ cat > "$HOOKS_DIR/commit-msg" << 'EOF'
 # Commit-msg hook - captures learnings from commits
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"; pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+# Go up two levels: from .git/hooks to project root
+ROOT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 python3 "$ROOT_DIR/scripts/commit-msg-hook.py" "$1"
 exit $?
@@ -58,7 +60,8 @@ cat > "$HOOKS_DIR/pre-commit-quality" << 'EOF'
 # Strict pre-commit hook - runs full quality gate
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"; pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+# Go up two levels: from .git/hooks to project root
+ROOT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 bash "$ROOT_DIR/scripts/quality-gate-pre-commit.sh"
 exit $?

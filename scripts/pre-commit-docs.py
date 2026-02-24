@@ -45,7 +45,9 @@ def check_docs_needed(files: list[str]) -> list[str]:
         # Security-related changes
         if "security" in f.lower() or "secret" in f.lower() or "token" in f.lower():
             if not f.endswith("test"):
-                warnings.append(f"⚠️  Security-related change ({f})\n" f"   → Consider updating agents-docs/security.md")
+                warnings.append(
+                    f"⚠️  Security-related change ({f})\n" f"   → Consider updating agents-docs/security.md"
+                )
 
         # Agent skills changes
         if ".agents/skills/" in f:

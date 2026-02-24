@@ -67,11 +67,11 @@ section_header "Quality Gate"
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Checking code formatting (black)..."
 
-if black --check --quiet . 2>/dev/null; then
+if python -m black --check --quiet . 2>/dev/null; then
     log_success "Format check passed"
 else
     log_error "Format check failed"
-    echo "   Run 'black .' to fix formatting issues"
+    echo "   Run 'python -m black .' to fix formatting issues"
     FAILURES=$((FAILURES + 1))
     if [[ "$STRICT" == true ]]; then
         exit 1
@@ -83,11 +83,11 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Checking import order (isort)..."
 
-if isort --check-only --quiet . 2>/dev/null; then
+if python -m isort --check-only --quiet . 2>/dev/null; then
     log_success "Import order check passed"
 else
     log_error "Import order check failed"
-    echo "   Run 'isort .' to fix import ordering"
+    echo "   Run 'python -m isort .' to fix import ordering"
     FAILURES=$((FAILURES + 1))
     if [[ "$STRICT" == true ]]; then
         exit 1
@@ -99,13 +99,13 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Running linter (ruff)..."
 
-if RUFF_OUTPUT=$(ruff check . 2>&1); then
+if RUFF_OUTPUT=$(python -m ruff check . 2>&1); then
     log_success "Lint check passed"
 else
     log_error "Lint check failed"
     echo "$RUFF_OUTPUT" | head -20
     if echo "$RUFF_OUTPUT" | grep -q "error:"; then
-        echo "   Run 'ruff check . --fix' to fix auto-fixable issues"
+        echo "   Run 'python -m ruff check . --fix' to fix auto-fixable issues"
     fi
     FAILURES=$((FAILURES + 1))
     if [[ "$STRICT" == true ]]; then
@@ -118,7 +118,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Running type checker (mypy)..."
 
-if MYPY_OUTPUT=$(mypy . --ignore-missing-imports 2>&1); then
+if MYPY_OUTPUT=$(python -m mypy . --ignore-missing-imports 2>&1); then
     log_success "Type check passed"
 else
     log_error "Type check failed"
@@ -135,7 +135,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Running tests (pytest)..."
 
-if PYTEST_OUTPUT=$(pytest tests/ -v --tb=short 2>&1); then
+if PYTEST_OUTPUT=$(python -m pytest tests/ -v --tb=short 2>&1); then
     log_success "All tests passed"
 else
     log_error "Tests failed"
