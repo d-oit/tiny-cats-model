@@ -23,9 +23,9 @@ AI agent guidance for the tiny-cats-model project.
 ## Code Style
 
 - **PEP 8** - Python standard
-- **Line length**: 88 chars (black default)
-- **Linting**: `ruff check . --fix`
-- **Formatting**: `black .`
+- **Line length**: 88 chars
+- **Linting**: `ruff check . --fix` (Ruff replaces flake8, isort, black)
+- **Formatting**: `ruff format .`
 - **Type hints**: Required for new code
 - **500 LOC max per file**
 
@@ -73,8 +73,8 @@ bash scripts/quality-gate.sh
 This ensures: **what passes locally passes in CI**.
 
 **Configuration Files**:
-- `.flake8` - Flake8 config (single source of truth)
-- `pyproject.toml` - Black, isort, mypy config
+- `ruff.toml` - Ruff config (single source of truth for linting + formatting)
+- `pyproject.toml` - Mypy config
 
 See [agents-docs/ci-cd.md](agents-docs/ci-cd.md) for fix workflows and CLI commands.
 
@@ -119,7 +119,7 @@ See [agents-docs/training.md](agents-docs/training.md) for full options.
 - Dataset `data/cats/` and `cats_model.pt` are gitignored
 - Max workflow timeout: 10 minutes
 - Always use type hints for new functions
-- Black line-length: 88 chars (matches CI)
+- Ruff line-length: 88 chars (matches CI)
 
 ## Learnings & Patterns
 
