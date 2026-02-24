@@ -17,8 +17,6 @@ import {
   Card,
   CardContent,
   LinearProgress,
-  IconButton,
-  Tooltip,
 } from "@mui/material";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import RefreshIcon from "@mui/icons-material/Refresh";
@@ -30,11 +28,13 @@ import InfoIcon from "@mui/icons-material/Info";
 import {
   runBenchmarkSuite,
   formatLatency,
-  getPerformanceRecommendations,
+  getPerformanceRecommendation,
   exportReportToMarkdown,
   type BenchmarkReport,
   type BenchmarkStats,
-} from "../utils/benchmark";
+  type ClassificationBenchmarkResult,
+  type GenerationBenchmarkResult,
+} from "../../utils/benchmark";
 
 const GOAP_GOAL_THRESHOLD = 2000; // 2 seconds in ms
 
@@ -182,23 +182,23 @@ export default function BenchmarkPage() {
               System Information
             </Typography>
             <Grid container spacing={2}>
-              <Grid item xs={6} md={3}>
+              <Grid size={{ xs: 6, md: 3 }}>
                 <Typography variant="caption" color="text.secondary">CPU Cores</Typography>
                 <Typography variant="body1">{report.hardwareConcurrency}</Typography>
               </Grid>
-              <Grid item xs={6} md={3}>
+              <Grid size={{ xs: 6, md: 3 }}>
                 <Typography variant="caption" color="text.secondary">Browser</Typography>
                 <Typography variant="body2" sx={{ fontSize: "0.75rem" }}>
                   {report.userAgent.split(" ").slice(0, 3).join(" ")}...
                 </Typography>
               </Grid>
-              <Grid item xs={6} md={3}>
+              <Grid size={{ xs: 6, md: 3 }}>
                 <Typography variant="caption" color="text.secondary">Timestamp</Typography>
                 <Typography variant="body2">
                   {new Date(report.timestamp).toLocaleString()}
                 </Typography>
               </Grid>
-              <Grid item xs={6} md={3}>
+              <Grid size={{ xs: 6, md: 3 }}>
                 <Typography variant="caption" color="text.secondary">GOAP Goal</Typography>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                   {report.summary.meetsGoal ? (
@@ -237,7 +237,7 @@ export default function BenchmarkPage() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {report.classification.map((result) => (
+                  {report.classification.map((result: ClassificationBenchmarkResult) => (
                     <StatsRow
                       key={result.imageSize}
                       label={`${result.imageSize}x${result.imageSize}`}
@@ -271,7 +271,7 @@ export default function BenchmarkPage() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {report.generation.map((result, idx) => {
+                  {report.generation.map((result: GenerationBenchmarkResult, idx: number) => {
                     const meetsGoal = result.totalStats.p95 < GOAP_GOAL_THRESHOLD;
                     return (
                       <TableRow key={idx}>
@@ -303,7 +303,7 @@ export default function BenchmarkPage() {
               Summary
             </Typography>
             <Grid container spacing={3}>
-              <Grid item xs={12} md={6}>
+              <Grid size={{ xs: 12, md: 6 }}>
                 <Card variant="outlined">
                   <CardContent>
                     <Typography variant="subtitle2" color="text.secondary">
@@ -318,7 +318,7 @@ export default function BenchmarkPage() {
                   </CardContent>
                 </Card>
               </Grid>
-              <Grid item xs={12} md={6}>
+              <Grid size={{ xs: 12, md: 6 }}>
                 <Card variant="outlined">
                   <CardContent>
                     <Typography variant="subtitle2" color="text.secondary">
@@ -371,7 +371,7 @@ export default function BenchmarkPage() {
               Performance Recommendations
             </Typography>
             <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-              {getPerformanceRecommendations(report).map((rec, idx) => (
+              {getPerformanceRecommendation(report).map((rec: string, idx: number) => (
                 <Alert key={idx} severity="info" sx={{ py: 1 }}>
                   {rec}
                 </Alert>
@@ -400,10 +400,10 @@ export default function BenchmarkPage() {
                 </TableHead>
                 <TableBody>
                   {report.generation
-                    .filter(r => r.totalStats.p95 < GOAP_GOAL_THRESHOLD)
-                    .sort((a, b) => a.totalStats.p95 - b.totalStats.p95)
+                    .filter((r: GenerationBenchmarkResult) => r.totalStats.p95 < GOAP_GOAL_THRESHOLD)
+                    .sort((a: GenerationBenchmarkResult, b: GenerationBenchmarkResult) => a.totalStats.p95 - b.totalStats.p95)
                     .slice(0, 5)
-                    .map((result, idx) => {
+                    .map((result: GenerationBenchmarkResult, idx: number) => {
                       const margin = GOAP_GOAL_THRESHOLD - result.totalStats.p95;
                       return (
                         <TableRow key={idx}>
@@ -422,7 +422,7 @@ export default function BenchmarkPage() {
                         </TableRow>
                       );
                     })}
-                  {report.generation.filter(r => r.totalStats.p95 < GOAP_GOAL_THRESHOLD).length === 0 && (
+                  {report.generation.filter((r: GenerationBenchmarkResult) => r.totalStats.p95 < GOAP_GOAL_THRESHOLD).length === 0 && (
                     <TableRow>
                       <TableCell colSpan={5} align="center">
                         <Typography variant="body2" color="text.secondary">
