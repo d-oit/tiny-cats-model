@@ -68,11 +68,11 @@ def export_onnx(
         },
     )
 
-    print("Exported ONNX model to {output_path}")
+    print(f"Exported ONNX model to {output_path}")
     print("  Input shape: [1, 3, 224, 224] (batch=1, channels=3, height=224, width=224)")
     print("  Output shape: [1, 2] (batch=1, num_classes=2)")
     print("  Classes: ['cat', 'not_cat']")
-    print("  Opset version: {opset_version}")
+    print(f"  Opset version: {opset_version}")
 
 
 def parse_args() -> argparse.Namespace:
