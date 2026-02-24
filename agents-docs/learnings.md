@@ -16,6 +16,53 @@ After each task, capture learnings here. Use this for continuous improvement.
 
 ## Key Learnings
 
+### feat: add ci-monitor skill and update GOAP progress
+
+**Date**: 2026-02-24 17:33:07 +0000
+**Type**: feature
+**Areas**: documentation
+
+**Pattern**: [To be documented - what reusable lesson applies?]
+
+**Related**: [Link to ADR if applicable]
+
+
+
+### feat: modernize code quality setup for 2026 (ADR-016)
+
+**Date**: 2026-02-24 17:23:45 +0000
+**Type**: feature
+**Areas**: source, ci-cd, documentation
+
+**Pattern**: [To be documented - what reusable lesson applies?]
+
+**Related**: [Link to ADR if applicable]
+
+
+
+### fix: resolve frontend TypeScript build errors
+
+**Date**: 2026-02-24 17:11:25 +0000
+**Type**: bugfix
+**Areas**: source
+
+**Pattern**: [To be documented - what reusable lesson applies?]
+
+**Related**: [Link to ADR if applicable]
+
+
+
+### fix: resolve flake8 E402 and E501 errors for CI
+
+**Date**: 2026-02-24 16:54:52 +0000
+**Type**: bugfix
+**Areas**: tests, source
+
+**Pattern**: [To be documented - what reusable lesson applies?]
+
+**Related**: [Link to ADR if applicable]
+
+
 ### feat: implement missing GOAP tasks for Phase 4, 5, and 6
 
 **Date**: 2026-02-24 16:06:24 +0000
