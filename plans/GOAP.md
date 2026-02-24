@@ -58,8 +58,9 @@ Build a cats classifier and generator with web frontend, following the architect
 
 ### Phase 6: Documentation & CI/CD
 - [x] Update AGENTS.md with new workflows
-- [x] Create ADRs for architectural decisions (ADR-008 to ADR-012)
+- [x] Create ADRs for architectural decisions (ADR-008 to ADR-013)
 - [x] Fix CI flake8 linting errors (ADR-012)
+- [x] Optimize GitHub Actions workflow (ADR-013)
 - [ ] Add frontend build to CI pipeline
 - [ ] Configure GitHub Pages deployment
 - [x] Write comprehensive README
