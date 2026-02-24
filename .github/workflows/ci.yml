@@ -44,7 +44,7 @@ jobs:
       - name: Check black formatting
         run: black --check .
 
-      - name: Run flake8
+      - name: Run flake8 (reads from .flake8 config)
         run: flake8 .
 
   test:
