@@ -15,43 +15,53 @@ Build a cats classifier and generator with web frontend, following the architect
 ## Actions
 
 ### Phase 1: Dataset Preparation
-- [ ] Download Oxford IIIT Pet dataset
-- [ ] Create breed-to-index mapping (12 breeds + other)
-- [ ] Implement PyTorch dataset loader
-- [ ] Test preprocessing pipeline (resize, normalize, augment)
+- [x] Download Oxford IIIT Pet dataset
+- [x] Create breed-to-index mapping (12 breeds + other)
+- [x] Implement PyTorch dataset loader
+- [x] Test preprocessing pipeline (resize, normalize, augment)
+- [x] Add Python download script for container compatibility (ADR-011)
 
 ### Phase 2: Model Development
-- [ ] Implement TinyDiT architecture (similar to tiny-models)
-- [ ] Add breed conditioning (one-hot embeddings)
-- [ ] Implement flow matching training loop
-- [ ] Test training on small subset (CPU)
+- [x] Implement TinyDiT architecture (similar to tiny-models)
+- [x] Add breed conditioning (one-hot embeddings)
+- [x] Implement flow matching training loop
+- [x] Implement AdaLN modulation for conditioning
+- [x] Add EMA weight averaging for inference
+- [x] Add classifier-free guidance (CFG) sampling
 
 ### Phase 3: Modal Training
-- [ ] Configure Modal GPU training (ADR-007)
-- [ ] Set up volume for checkpoints
+- [x] Configure Modal GPU training (ADR-007)
+- [x] Set up volume for checkpoints
+- [x] Implement error handling and logging (ADR-010)
+- [x] Add mixed precision training (ADR-010)
+- [x] Add memory management (ADR-010)
+- [x] Add learning rate warmup with cosine annealing
+- [x] Add gradient clipping and OOM recovery
 - [ ] Train full model (200k steps, EMA)
 - [ ] Evaluate generated samples
 
 ### Phase 4: ONNX Export
-- [ ] Export model to ONNX format
+- [x] Export model to ONNX format (export_onnx.py)
+- [x] Add dynamic axes support for batch size
 - [ ] Test ONNX inference (Python)
 - [ ] Optimize model (quantization if needed)
 - [ ] Deploy to frontend/public/models/
 
 ### Phase 5: Frontend Development
-- [ ] Set up React + TypeScript + Vite
-- [ ] Implement breed selector component
-- [ ] Implement image upload for classification
+- [x] Set up React + TypeScript + Vite
+- [x] Implement breed selector component
+- [x] Implement image upload for classification
 - [ ] Implement generation canvas
-- [ ] Add inference dashboard (step time, latency)
-- [ ] Integrate ONNX Runtime Web + web workers
+- [x] Add inference dashboard (step time, latency)
+- [x] Integrate ONNX Runtime Web + web workers
 - [ ] Test and optimize inference latency
 
 ### Phase 6: Documentation & CI/CD
-- [ ] Update AGENTS.md with new workflows
+- [x] Update AGENTS.md with new workflows
+- [x] Create ADRs for architectural decisions (ADR-008 to ADR-011)
 - [ ] Add frontend build to CI pipeline
 - [ ] Configure GitHub Pages deployment
-- [ ] Write comprehensive README
+- [x] Write comprehensive README
 
 ## Priorities
 1. Dataset preparation (high) - foundation for training
@@ -71,9 +81,19 @@ Build a cats classifier and generator with web frontend, following the architect
 
 ## Current Action Items
 - [x] Create ADR-008 for architecture decision
-- [ ] Download Oxford IIIT Pet dataset
-- [ ] Implement cat breed dataset loader
-- [ ] Implement TinyDiT model
+- [x] Create ADR-010 for Modal training improvements
+- [x] Create ADR-011 for Modal container dependencies fix
+- [x] Download Oxford IIIT Pet dataset (download.py)
+- [x] Implement cat breed dataset loader
+- [x] Implement TinyDiT model
+- [x] Implement error handling in train.py (ADR-010)
+- [x] Add logging infrastructure (ADR-010)
+- [x] Add mixed precision training (ADR-010)
+- [x] Add memory management (ADR-010)
+- [ ] Train full model on Modal GPU
+- [ ] Complete frontend generation canvas
+- [ ] Add frontend build to CI pipeline
+- [ ] Configure GitHub Pages deployment
 
 ## Success Metrics
 - Dataset: 12 cat breeds + other class ready
