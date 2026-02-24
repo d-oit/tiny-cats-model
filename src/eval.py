@@ -69,8 +69,8 @@ def evaluate(
 
     correct = 0
     total = 0
-    per_class_correct = {c: 0 for c in class_names}
-    per_class_total = {c: 0 for c in class_names}
+    per_class_correct = dict.fromkeys(class_names, 0)
+    per_class_total = dict.fromkeys(class_names, 0)
 
     with torch.no_grad():
         for xb, yb in val_loader:

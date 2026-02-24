@@ -32,13 +32,17 @@ def export_onnx(
     checkpoint_path = (
         Path(checkpoint_path)
         if isinstance(checkpoint_path, str)
-        else checkpoint_path if isinstance(checkpoint_path, str) else checkpoint_path
+        else checkpoint_path
+        if isinstance(checkpoint_path, str)
+        else checkpoint_path
     )
 
     output_path = (
         Path(output_path)
         if isinstance(output_path, str)
-        else output_path if isinstance(output_path, str) else output_path
+        else output_path
+        if isinstance(output_path, str)
+        else output_path
     )
 
     if not checkpoint_path.exists():

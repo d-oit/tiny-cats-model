@@ -63,15 +63,15 @@ cd "$ROOT_DIR"
 section_header "Quality Gate"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. Format Check (Black)
+# 1. Format Check (Ruff Format - Black-compatible)
 # ─────────────────────────────────────────────────────────────────────────────
-log_info "Checking code formatting (black)..."
+log_info "Checking code formatting (ruff format)..."
 
-if python -m black --check --quiet . 2>/dev/null; then
+if python -m ruff format --check . 2>/dev/null; then
     log_success "Format check passed"
 else
     log_error "Format check failed"
-    echo "   Run 'python -m black .' to fix formatting issues"
+    echo "   Run 'ruff format .' to fix formatting issues"
     FAILURES=$((FAILURES + 1))
     if [[ "$STRICT" == true ]]; then
         exit 1
@@ -79,23 +79,7 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. Import Sort Check (isort)
-# ─────────────────────────────────────────────────────────────────────────────
-log_info "Checking import order (isort)..."
-
-if python -m isort --check-only --quiet . 2>/dev/null; then
-    log_success "Import order check passed"
-else
-    log_error "Import order check failed"
-    echo "   Run 'python -m isort .' to fix import ordering"
-    FAILURES=$((FAILURES + 1))
-    if [[ "$STRICT" == true ]]; then
-        exit 1
-    fi
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3. Lint (Ruff)
+# 2. Lint (Ruff - replaces flake8 + isort + pydocstyle)
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Running linter (ruff)..."
 
@@ -105,25 +89,8 @@ else
     log_error "Ruff check failed"
     echo "$RUFF_OUTPUT" | head -20
     if echo "$RUFF_OUTPUT" | grep -q "error:"; then
-        echo "   Run 'python -m ruff check . --fix' to fix auto-fixable issues"
+        echo "   Run 'ruff check . --fix' to fix auto-fixable issues"
     fi
-    FAILURES=$((FAILURES + 1))
-    if [[ "$STRICT" == true ]]; then
-        exit 1
-    fi
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. Lint (Flake8) - CI Parity Check
-# ─────────────────────────────────────────────────────────────────────────────
-log_info "Running flake8 linter (CI parity)..."
-
-if FLAKE8_OUTPUT=$(flake8 . 2>&1); then
-    log_success "Flake8 check passed"
-else
-    log_error "Flake8 check failed"
-    echo "$FLAKE8_OUTPUT" | head -20
-    echo "   Fix flake8 errors or update .flake8 config if needed"
     FAILURES=$((FAILURES + 1))
     if [[ "$STRICT" == true ]]; then
         exit 1

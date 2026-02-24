@@ -264,7 +264,7 @@ def train_one_epoch(
 
             if (batch_idx + 1) % 10 == 0:
                 logger.info(
-                    f"  Epoch {epoch} | Batch {batch_idx+1}/{len(loader)} | "
+                    f"  Epoch {epoch} | Batch {batch_idx + 1}/{len(loader)} | "
                     f"Loss: {loss.item() * grad_accum_steps:.4f}"
                 )
 
@@ -307,8 +307,9 @@ def validate(
     try:
         with torch.no_grad():
             for xb, yb in loader:
-                xb, yb = xb.to(device, non_blocking=True), yb.to(
-                    device, non_blocking=True
+                xb, yb = (
+                    xb.to(device, non_blocking=True),
+                    yb.to(device, non_blocking=True),
                 )
                 pred = model(xb)
                 loss = loss_fn(pred, yb)
@@ -394,7 +395,7 @@ def load_checkpoint(
 
     start_epoch = checkpoint.get("epoch", 0) + 1
     if logger:
-        logger.info(f"Loaded checkpoint from {path} (epoch {start_epoch-1})")
+        logger.info(f"Loaded checkpoint from {path} (epoch {start_epoch - 1})")
 
     return model, optimizer, start_epoch
 

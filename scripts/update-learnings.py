@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # mypy: ignore-errors
-# flake8: noqa: E501
 """scripts/update-learnings.py
 
 Update learnings.md with new patterns from commits.

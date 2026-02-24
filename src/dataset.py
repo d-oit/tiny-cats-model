@@ -13,7 +13,6 @@ Expects ImageFolder-compatible structure:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Tuple
 
 import torchvision.transforms as T
 from torch.utils.data import DataLoader, random_split
@@ -56,7 +55,7 @@ def cats_dataloader(
     image_size: int = DEFAULT_IMAGE_SIZE,
     num_workers: int = 2,
     seed: int = 42,
-) -> Tuple[DataLoader, DataLoader]:
+) -> tuple[DataLoader, DataLoader]:
     """Create train and validation DataLoaders from an ImageFolder directory.
 
     Args:

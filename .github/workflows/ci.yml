@@ -36,16 +36,13 @@ jobs:
       - name: Install lint dependencies
         run: |
           pip install --upgrade pip
-          pip install ruff black flake8
+          pip install ruff
 
-      - name: Run ruff
+      - name: Run ruff format check
+        run: ruff format --check .
+
+      - name: Run ruff lint
         run: ruff check .
-
-      - name: Check black formatting
-        run: black --check .
-
-      - name: Run flake8 (reads from .flake8 config)
-        run: flake8 .
 
   test:
     name: Test (Python ${{ matrix.python-version }})
