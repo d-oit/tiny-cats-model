@@ -9,11 +9,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
 import pytest
 import torch
-
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from dataset import DEFAULT_IMAGE_SIZE, IMAGENET_MEAN, IMAGENET_STD, build_transforms
 from model import SUPPORTED_BACKBONES, cats_model, count_parameters
