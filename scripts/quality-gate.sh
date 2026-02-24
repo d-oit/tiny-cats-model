@@ -163,9 +163,9 @@ else
     echo "Fix the issues above before committing."
     echo ""
     echo "Quick fixes:"
-    echo "  black . && isort .          # Fix formatting"
-    echo "  ruff check . --fix          # Fix lint issues"
-    echo "  pytest tests/ -v            # Run tests"
+    echo "  python -m black . && python -m isort .   # Fix formatting"
+    echo "  python -m ruff check . --fix             # Fix lint issues"
+    echo "  python -m pytest tests/ -v               # Run tests"
     echo ""
     exit 1
 fi
