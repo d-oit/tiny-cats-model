@@ -1,7 +1,7 @@
 torch>=2.0.0
 torchvision>=0.15.0
-pillow>=9.0.0
-requests>=2.28.0
+pillow>=10.0.0
+requests>=2.32.0
 tqdm>=4.65.0
 modal>=0.55.0
 ruff>=0.2.0
