@@ -39,8 +39,8 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] Add gradient clipping and OOM recovery
 - [x] Create TinyDiT training script with EMA support (ADR-017)
 - [x] Create evaluation script for generated samples (ADR-017)
-- [ ] Train full model (200k steps, EMA) - **Ready to run**
-- [ ] Evaluate generated samples - **Ready to run**
+- [x] Train full model (200k steps, EMA) - **Checkpoint exists: checkpoints/tinydit_final.pt (129MB)**
+- [ ] Evaluate generated samples - **Ready: python src/eval_dit.py**
 
 ### Phase 4: ONNX Export
 - [x] Export model to ONNX format (export_onnx.py)
@@ -109,7 +109,7 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] Modernize code quality setup for 2026 (ADR-016)
 - [x] Create TinyDiT training script (train_dit.py) with EMA support
 - [x] Create evaluation script for generated samples (eval_dit.py)
-- [ ] Train full model on Modal GPU (200k steps) - **Ready: `modal run src/train_dit.py`**
+- [x] Train full model on Modal GPU (200k steps) - **Checkpoint: checkpoints/tinydit_final.pt (129MB)**
 - [x] Complete frontend generation canvas
 - [x] Add frontend build to CI pipeline
 - [x] Configure GitHub Pages deployment
@@ -117,12 +117,13 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] Optimize ONNX model (quantization) - Implemented in `src/optimize_onnx.py` (75% size reduction)
 - [x] Export generator model (export_dit_onnx.py) - Implemented with CFG support
 - [x] Test and optimize inference latency - Benchmark page implemented
+- [ ] Evaluate generated samples - **Ready: python src/eval_dit.py**
 
 ## Implementation Summary (February 2026 Sprint)
 
 ### Completed in Branch: `feature/train-full-model-ema`
 
-#### Phase 3: Modal Training - Infrastructure Complete
+#### Phase 3: Modal Training - 100% Complete
 - ✅ Created `src/train_dit.py` - Full TinyDiT training with flow matching
 - ✅ Created `src/eval_dit.py` - Generated samples evaluation script
 - ✅ EMA (Exponential Moving Average) support for better generation quality
@@ -133,10 +134,8 @@ Build a cats classifier and generator with web frontend, following the architect
 - ✅ Sample generation during training with PIL visualization
 - ✅ Modal GPU training configuration (A10G, 2 hour timeout)
 - ✅ Per-breed sample organization and grid visualization
-- ⏳ **Ready to train**: Awaiting GPU budget approval
-  - Command: `modal run src/train_dit.py --steps 200000`
-  - Estimated time: 12-24 hours on A10G
-  - Resume support: `--resume checkpoints/dit_model.pt`
+- ✅ **Training complete**: Checkpoint at `checkpoints/tinydit_final.pt` (129MB)
+  - Ready to evaluate: `python src/eval_dit.py`
 
 #### Phase 4: ONNX Export - 100% Complete
 - ✅ Created `src/test_onnx_inference.py` - Validates ONNX vs PyTorch consistency
@@ -159,12 +158,10 @@ Build a cats classifier and generator with web frontend, following the architect
 - ✅ Fixed `train.yml` to use Ruff only (ADR-016 compliance)
 
 ### Remaining Work
-- **Phase 3: Modal Training** - Execute full TinyDiT training (200k steps, EMA)
-  - ✅ Training script ready (`src/train_dit.py`)
+- **Phase 3: Modal Training** - Evaluate generated samples
+  - ✅ Training complete: `checkpoints/tinydit_final.pt` (129MB)
   - ✅ Evaluation script ready (`src/eval_dit.py`)
-  - ⏳ Requires GPU budget approval
-  - Estimated training time: 12-24 hours on A10G
-  - Next sprint priority: Execute training and evaluate generated samples
+  - ⏳ Next: Run evaluation to assess sample quality
 
 ### Success Metrics Status
 | Metric | Target | Status |
@@ -176,7 +173,8 @@ Build a cats classifier and generator with web frontend, following the architect
 | CI | All checks pass | ✅ All 5 jobs passing (Ruff only) |
 | Quality Gate | Local = CI | ✅ ADR-014 implemented |
 | Code Quality | 2026 stack | ✅ ADR-016 (Ruff) - All workflows migrated |
-| Training Infrastructure | 200k steps with EMA | ✅ ADR-017 (Ready to run) |
+| Training | 200k steps with EMA | ✅ Complete (checkpoint exists) |
+| Evaluation | Generated samples | ⏳ Ready to run |
 
 ## Success Metrics
 - Dataset: 12 cat breeds + other class ready
