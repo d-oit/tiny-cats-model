@@ -32,7 +32,8 @@ try:
     )
 except ImportError as e:
     raise ImportError(
-        "onnxruntime-tools is required. Install with: pip install onnxruntime-tools>=1.15.0"
+        "onnxruntime-tools is required. "
+        "Install with: pip install onnxruntime-tools>=1.15.0"
     ) from e
 
 try:
@@ -151,7 +152,8 @@ def get_file_size(path: str | Path) -> int:
     total = path.stat().st_size
 
     # Check for external data files (ONNX models with external data)
-    # External data files are typically named <model>.onnx.data, <model>.onnx.data_1, etc.
+    # External data files are typically named <model>.onnx.data,
+    # <model>.onnx.data_1, etc.
     base_name = str(path)
     parent = path.parent
 
@@ -496,7 +498,8 @@ def optimize_onnx(
             print(f"  Accuracy validation PASSED (match rate: {match_rate:.1%})")
         else:
             print(
-                f"  Warning: Accuracy drop may be significant (match rate: {match_rate:.1%})"
+                f"  Warning: Accuracy drop may be significant "
+                f"(match rate: {match_rate:.1%})"
             )
 
     # Summary

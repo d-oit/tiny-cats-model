@@ -162,7 +162,8 @@ def log_gpu_memory(logger: logging.Logger, prefix: str = "") -> None:
         allocated = torch.cuda.memory_allocated() / (1024**2)
         reserved = torch.cuda.memory_reserved() / (1024**2)
         logger.info(
-            f"{prefix}GPU Memory: {allocated:.1f}MB allocated, {reserved:.1f}MB reserved"
+            f"{prefix}GPU Memory: {allocated:.1f}MB allocated, "
+            f"{reserved:.1f}MB reserved"
         )
 
 
@@ -615,7 +616,8 @@ def train(
             num_workers=num_workers,
         )
         logger.info(
-            f"Data loaders created: {len(train_loader)} train batches, {len(val_loader)} val batches"
+            f"Data loaders created: {len(train_loader)} train batches, "
+            f"{len(val_loader)} val batches"
         )
     except Exception as e:
         raise DataLoadError(f"Failed to create data loaders: {e}") from e
@@ -629,7 +631,8 @@ def train(
     ).to(device)
 
     logger.info(
-        f"Model: {backbone} | Classes: {num_classes} | Parameters: {count_parameters(model):,}"
+        f"Model: {backbone} | Classes: {num_classes} | "
+        f"Parameters: {count_parameters(model):,}"
     )
 
     # Optimizer and loss
