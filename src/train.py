@@ -146,7 +146,7 @@ def train_modal(
         subprocess.run(
             ["bash", "data/download.sh"],
             cwd="/app",
-            env={**os.environ, "DATA_DIR": "/data"},
+            env={**os.environ, "DATA_DIR": "/data", "CATS_DIR": "/data/cats"},
             check=True,
         )
 
