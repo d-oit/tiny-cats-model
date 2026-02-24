@@ -82,7 +82,7 @@ def evaluate(
     accuracy = correct / total if total > 0 else 0.0
 
     print("\n=== Evaluation Results ===")
-    print("Overall accuracy: {accuracy:.4f} ({correct}/{total})")
+    print(f"Overall accuracy: {accuracy:.4f} ({correct}/{total})")
     print("\nPer-class accuracy:")
     for cls in class_names:
         cls_total = per_class_total[cls]
