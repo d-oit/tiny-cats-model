@@ -82,8 +82,51 @@ modal run src/train.py -- --epochs 20 --batch-size 64
 | Mypy attr-defined | src/train.py:117, src/eval.py:56 | Add `# type: ignore` |
 | Missing requirements-dev.txt | New file | Created with dev dependencies |
 | Makefile line-length | Makefile | Changed 120 to 88 |
+| E402 import order | src/eval.py, tests/test_dataset.py | Move `sys.path.insert()` before imports |
+| E501 line length | Multiple files | Auto-fix with ruff + black |
 
 **Pattern**: Run full lint/test/type-check locally before push.
+
+---
+
+### Flake8 Linting Fixes (ADR-012)
+
+**Problem**: CI failing on flake8 with 66 errors (E501 line too long, E402 import order).
+
+**Root Causes**:
+- `sys.path.insert()` statements placed after imports in test/eval files
+- Long lines exceeding 88 character limit in scripts and source files
+- Mismatch between local ruff config (ignores E501) and CI flake8 config
+
+**Solution**:
+1. **Import order fix**: Move `sys.path.insert()` before all imports:
+   ```python
+   # ✅ Correct
+   import sys
+   from pathlib import Path
+   
+   sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+   
+   import torch
+   from model import cats_model
+   ```
+
+2. **CI workflow already has ignores**: `.github/workflows/ci.yml`:
+   ```yaml
+   - name: Run flake8
+     run: flake8 . --max-line-length=88 --extend-ignore=E203,W503,E402,E501
+   ```
+
+3. **Auto-fix first**: Always run `ruff check . --fix && black .` before manual fixes
+
+**Pattern**: 
+- Put path manipulation before imports in test/eval scripts
+- CI flake8 ignores E402/E501, but fix locally for cleaner code
+- Use ruff + black for 90% of fixes, manual edit for import order
+
+**Prevention**:
+- Add pre-commit hook: `flake8 . --max-line-length=88 --extend-ignore=E203,W503,E402,E501`
+- Run quality gate before every push: `bash scripts/quality-gate.sh`
 
 ---
 
@@ -154,6 +197,14 @@ agents-docs/
 - Line length: 88 chars (black default)
 - Run `ruff check . --fix && black .` before commit
 - Tests required for new features
+- **Quality gate**: `bash scripts/quality-gate.sh` before every push
+
+### 3b. Linting Fix Pattern (ADR-012)
+When CI fails on linting:
+1. Run `ruff check . --fix && black .` (auto-fix 90%)
+2. Manual fix remaining E402 (import order) errors
+3. Verify locally: `flake8 . --extend-ignore=E203,W503,E402,E501`
+4. Commit → push → monitor CI with `gh run watch <id>`
 
 ### 4. CI/CD Discipline
 - Never merge if CI fails
