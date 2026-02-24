@@ -1,0 +1,50 @@
+# Pre-commit configuration for tiny-cats-model (2026 best practices)
+# Docs: https://pre-commit.com/
+# Install: pip install pre-commit && pre-commit install
+
+repos:
+  # Git file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ['--unsafe']
+      - id: check-json
+      - id: check-toml
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: check-case-conflict
+
+  # Ruff linter (10-100x faster than flake8)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.0
+    hooks:
+      # Run linter
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
+      # Run formatter
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  # Mypy type checker (optional, can be slow)
+  # Uncomment if you want type checking on every commit
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.14.0
+  #   hooks:
+  #     - id: mypy
+  #       additional_dependencies:
+  #         - types-requests
+  #         - types-PyYAML
+  #       args: [--ignore-missing-imports]
+
+# Default language version
+default_language_version:
+  python: python3.10
+
+# CI integration
+# In .github/workflows/ci.yml:
+# - name: Run pre-commit
+#   uses: pre-commit/action@v4
