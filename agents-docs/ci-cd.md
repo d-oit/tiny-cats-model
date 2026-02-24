@@ -10,16 +10,14 @@ bash scripts/quality-gate.sh
 ```
 
 This runs the **same checks** as GitHub Actions CI:
-- ✅ Black format check (88 chars)
-- ✅ isort import order (88 chars)
-- ✅ Ruff linting (E,F,W,I codes)
-- ✅ Flake8 linting (reads `.flake8` config)
+- ✅ Ruff format check (88 chars)
+- ✅ Ruff linting (E,F,W,I,B,C4,UP,SIM,PERF codes)
 - ✅ Mypy type checking
 - ✅ Pytest tests
 
 **Configuration Files**:
-- `.flake8` - Flake8 configuration (single source of truth)
-- `pyproject.toml` - Black, isort, mypy configuration
+- `ruff.toml` - Ruff configuration (single source of truth for linting + formatting)
+- `pyproject.toml` - Mypy configuration
 
 ## Workflows
 
@@ -91,6 +89,6 @@ gh run watch
 
 **If CI fails anyway**:
 1. Check if local quality gate was run
-2. Check if config files are in sync (`.flake8`, `pyproject.toml`)
+2. Check if config files are in sync (`ruff.toml`, `pyproject.toml`)
 3. Use `gh run view <id>` to see exact error
 4. Fix locally, verify with quality gate, push again

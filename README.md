@@ -4,7 +4,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/d-oit/tiny-cats-model/actions/workflows/ci.yml/badge.svg)](https://github.com/d-oit/tiny-cats-model/actions/workflows/ci.yml)
 [![Code Quality: Ruff](https://img.shields.io/badge/code%20quality-ruff-ff0000)](https://github.com/astral-sh/ruff)
-[![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000)](https://github.com/psf/black)
 [![Type Check: mypy](https://img.shields.io/badge/type%20check-mypy-blue)](https://github.com/python/mypy)
 
 A cats classifier built on PyTorch with ResNet-18, following 2026 best practices for AI-agent-friendly repositories.
@@ -105,17 +104,17 @@ modal run src/train.py
 # Run tests
 pytest tests/ -v
 
-# Lint code
+# Lint code (auto-fix)
 ruff check . --fix
 
 # Format code
-black .
+ruff format .
 
 # Type check
 mypy .
 
 # Full verification
-bash .agents/skills/testing-workflow/verify.sh
+bash scripts/quality-gate.sh
 ```
 
 ## Dataset
