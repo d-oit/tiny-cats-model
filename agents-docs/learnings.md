@@ -51,6 +51,55 @@ After each task, capture learnings here. Use this for continuous improvement.
 **Related**: [Link to ADR if applicable]
 
 
+### fix: align quality gate with CI pipeline (ADR-014)
+
+**Date**: 2026-02-24
+**Type**: bugfix
+**Areas**: ci-cd, developer-experience, tooling
+
+**Problem**: Local quality gate (`scripts/quality-gate.sh`) passed but CI failed with flake8 errors.
+
+**Root Causes**:
+- Local quality gate did not run flake8 at all
+- Black configured for 120 chars locally, CI expected 88 chars
+- CI flake8 config inline in workflow, not in `.flake8` file
+- No single source of truth for linting rules
+
+**Solution**:
+1. Added flake8 check to `scripts/quality-gate.sh` with same config as CI
+2. Created `.flake8` file as single source of truth
+3. Updated `pyproject.toml` black/isort to use 88 chars (not 120)
+4. Updated CI to read from `.flake8` file instead of inline flags
+
+**Pattern**: **Local-CI Parity Principle** - The local quality gate must run the same checks with the same configuration as CI.
+
+```bash
+# ✅ CORRECT: Local quality gate matches CI
+scripts/quality-gate.sh
+├── black --check . (88 chars)
+├── isort --check-only . (88 chars)
+├── ruff check .
+├── flake8 . (reads .flake8)
+├── mypy . --ignore-missing-imports
+└── pytest tests/ -v
+
+.github/workflows/ci.yml
+├── black --check . (88 chars)
+├── ruff check .
+├── flake8 . (reads .flake8)
+├── mypy . --ignore-missing-imports
+└── pytest tests/ -v --cov=.
+```
+
+**Prevention**:
+- Always add new CI checks to local quality gate first
+- Use config files (`.flake8`, `pyproject.toml`) not inline flags
+- Run `bash scripts/quality-gate.sh` before every commit
+- Install pre-commit hook: `bash scripts/install-hooks.sh`
+
+**Related**: ADR-014 (Quality Gate CI Alignment)
+
+
 ### Modal GPU Training (ADR-007)
 
 **Problem**: Training times out on CPU; Modal setup was broken.
@@ -238,8 +287,30 @@ agents-docs/
 When CI fails on linting:
 1. Run `ruff check . --fix && black .` (auto-fix 90%)
 2. Manual fix remaining E402 (import order) errors
-3. Verify locally: `flake8 . --extend-ignore=E203,W503,E402,E501`
+3. Verify locally: `flake8 .` (reads .flake8 config)
 4. Commit → push → monitor CI with `gh run watch <id>`
+
+### 3c. Quality Gate Parity Pattern (ADR-014)
+**Principle**: Local quality gate must match CI exactly.
+
+**Checklist for New CI Checks**:
+1. Add check to `scripts/quality-gate.sh`
+2. Create/update config file (`.flake8`, `pyproject.toml`)
+3. Update CI to read from config file
+4. Test locally: `bash scripts/quality-gate.sh`
+5. Verify CI passes with same checks
+
+**Configuration Alignment**:
+- Black line-length: 88 (in `pyproject.toml`)
+- Flake8 config: `.flake8` file (not inline in CI)
+- isort profile: black (in `pyproject.toml`)
+- mypy: `--ignore-missing-imports` (both local and CI)
+
+**Pre-commit Hook**:
+```bash
+# Install to run quality gate automatically before each commit
+bash scripts/install-hooks.sh
+```
 
 ### 4. CI/CD Discipline
 - Never merge if CI fails
@@ -295,6 +366,23 @@ workflow_dispatch:
       required: false
       default: 'false'
 ```
+
+### 8. Quality Gate Parity (ADR-014)
+
+**Golden Rule**: What passes locally must pass in CI.
+
+**Common Mismatches to Avoid**:
+| Issue | Local | CI | Fix |
+|-------|-------|----|-----|
+| Missing flake8 | ❌ Not run | ✅ Runs | Add to quality-gate.sh |
+| Line length | 120 chars | 88 chars | Align black config |
+| Config flags | Inline | Config file | Use `.flake8` file |
+| Coverage | Not checked | Checked | Add --cov to pytest |
+
+**Single Source of Truth**:
+- `.flake8` for flake8 configuration
+- `pyproject.toml` for black, isort, mypy
+- CI reads from config files, not inline flags
 
 ---
 

@@ -1,0 +1,29 @@
+[flake8]
+# Maximum line length (must match black line-length in pyproject.toml)
+max-line-length = 88
+
+# Ignore codes that are handled by other tools or conflict with black
+# E203: Whitespace before ':' (black formats this differently)
+# W503: Line break before binary operator (black formats this differently)
+# E402: Module level import not at top of file (sometimes needed for sys.path)
+# E501: Line too long (black handles this, flake8 check is redundant)
+extend-ignore = E203, W503, E402, E501
+
+# Directories to exclude
+exclude = 
+    .git,
+    __pycache__,
+    build,
+    dist,
+    .venv,
+    node_modules,
+    notebooks,
+    .mypy_cache,
+    .pytest_cache,
+    *.egg-info,
+    frontend/node_modules
+
+# Per-file ignores (optional, for specific files that need exceptions)
+# per-file-ignores = 
+#     tests/*: S101  # Allow assert in tests
+#     src/test_*.py: S101

@@ -124,15 +124,22 @@ def check_learnings_needs_update(commits: list[dict]) -> bool:
         if cat["type"] in ["bugfix", "ci-cd", "feature"]:
             if "ci-cd" in cat["areas"] or "modal" in cat["areas"]:
                 return True
-            if "fix" in commit["message"].lower() and "test" not in commit["message"].lower():
+            if (
+                "fix" in commit["message"].lower()
+                and "test" not in commit["message"].lower()
+            ):
                 return True
     return False
 
 
 def main():
     parser = argparse.ArgumentParser(description="Update learnings.md from commits")
-    parser.add_argument("--dry-run", action="store_true", help="Show changes without applying")
-    parser.add_argument("--commits", type=int, default=5, help="Number of recent commits to analyze")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show changes without applying"
+    )
+    parser.add_argument(
+        "--commits", type=int, default=5, help="Number of recent commits to analyze"
+    )
     args = parser.parse_args()
 
     print("Analyzing recent commits...")
@@ -181,7 +188,9 @@ def main():
         marker = "## Reusable Patterns"
         if marker in content:
             insert_pos = content.find(marker)
-            new_content = content[:insert_pos] + "\n".join(entries) + "\n" + content[insert_pos:]
+            new_content = (
+                content[:insert_pos] + "\n".join(entries) + "\n" + content[insert_pos:]
+            )
         else:
             new_content = content + "\n" + "\n".join(entries)
 

@@ -120,13 +120,23 @@ gh pr create
 
 ## Quality Gate
 
-Run quality checks before every commit:
+Run quality checks before every commit (ADR-014):
 
 ```bash
-bash .agents/skills/git-workflow/quality-gate.sh
+bash scripts/quality-gate.sh
 ```
 
-This runs: ruff, flake8, black, mypy, and pytest.
+This runs the **same checks** as GitHub Actions CI:
+- Black format (88 chars)
+- isort imports (88 chars)
+- Ruff lint (E,F,W,I codes)
+- Flake8 lint (reads `.flake8`)
+- Mypy type check
+- Pytest tests
+
+**Configuration**:
+- `.flake8` - Flake8 config (single source of truth)
+- `pyproject.toml` - Black, isort, mypy config
 
 ### Pre-commit Hook (Optional)
 
@@ -136,7 +146,7 @@ To run automatically before each commit:
 # Create .git/hooks/pre-commit
 cat > .git/hooks/pre-commit << 'EOF'
 #!/bin/bash
-exec bash .agents/skills/git-workflow/quality-gate.sh
+exec bash scripts/quality-gate.sh
 EOF
 chmod +x .git/hooks/pre-commit
 ```
@@ -145,9 +155,10 @@ chmod +x .git/hooks/pre-commit
 
 - **Never force push to main**
 - **Never amend pushed commits**
-- **Always run quality gate before commit**
+- **Always run quality gate before commit**: `bash scripts/quality-gate.sh`
 - **Use conventional commits**: `feat:`, `fix:`, `docs:`, `refactor:`
 - **PR must pass CI before merge**
+- **Local-CI Parity**: What passes locally passes in CI (ADR-014)
 
 ## Complete CI/CD Fix Workflow
 

@@ -38,11 +38,18 @@ def extract_action_items(commits: list[dict]) -> list[str]:
     for commit in commits:
         msg = commit["message"]
         # Look for TODO, FIXME, HACK, XXX patterns
-        patterns = [r"TODO[:\s]*(.+)", r"FIXME[:\s]*(.+)", r"HACK[:\s]*(.+)", r"XXX[:\s]*(.+)"]
+        patterns = [
+            r"TODO[:\s]*(.+)",
+            r"FIXME[:\s]*(.+)",
+            r"HACK[:\s]*(.+)",
+            r"XXX[:\s]*(.+)",
+        ]
         for pattern in patterns:
             match = re.search(pattern, msg, re.IGNORECASE)
             if match:
-                items.append(f"- [ ] {match.group(1).strip()} (from {commit['hash'][:7]})")
+                items.append(
+                    f"- [ ] {match.group(1).strip()} (from {commit['hash'][:7]})"
+                )
     return items
 
 
@@ -90,8 +97,12 @@ def add_action_items(items: list[str], dry_run: bool = False) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="Update GOAP.md with action items")
-    parser.add_argument("--dry-run", action="store_true", help="Show changes without applying")
-    parser.add_argument("--commits", type=int, default=3, help="Number of commits to analyze")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show changes without applying"
+    )
+    parser.add_argument(
+        "--commits", type=int, default=3, help="Number of commits to analyze"
+    )
     args = parser.parse_args()
 
     print("Analyzing commits for action items...")

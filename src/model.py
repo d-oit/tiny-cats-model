@@ -64,12 +64,16 @@ def cats_model(
             nn.Linear(in_features, num_classes),
         )
     else:
-        raise ValueError(f"Unsupported backbone: {backbone}. Choose from {SUPPORTED_BACKBONES}")
+        raise ValueError(
+            f"Unsupported backbone: {backbone}. Choose from {SUPPORTED_BACKBONES}"
+        )
 
     return model
 
 
-def load_checkpoint(path: str | Path, num_classes: int = 2, backbone: str = "resnet18") -> nn.Module:
+def load_checkpoint(
+    path: str | Path, num_classes: int = 2, backbone: str = "resnet18"
+) -> nn.Module:
     """Load a model from a saved state dict checkpoint.
 
     Args:

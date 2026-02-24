@@ -25,7 +25,9 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 DEFAULT_IMAGE_SIZE = 224
 
 
-def build_transforms(train: bool = True, image_size: int = DEFAULT_IMAGE_SIZE) -> T.Compose:
+def build_transforms(
+    train: bool = True, image_size: int = DEFAULT_IMAGE_SIZE
+) -> T.Compose:
     """Return torchvision transforms for train or validation."""
     if train:
         return T.Compose(
@@ -70,10 +72,14 @@ def cats_dataloader(
     """
     root = Path(root)
     if not root.exists():
-        raise FileNotFoundError(f"Dataset root not found: {root}. Run `bash data/download.sh` first.")
+        raise FileNotFoundError(
+            f"Dataset root not found: {root}. Run `bash data/download.sh` first."
+        )
 
     # Full dataset with train transforms (we apply different transforms after split)
-    full_dataset = ImageFolder(root, transform=build_transforms(train=True, image_size=image_size))
+    full_dataset = ImageFolder(
+        root, transform=build_transforms(train=True, image_size=image_size)
+    )
 
     n_total = len(full_dataset)
     n_val = int(n_total * val_split)
@@ -85,7 +91,9 @@ def cats_dataloader(
     train_ds, val_ds = random_split(full_dataset, [n_train, n_val], generator=generator)
 
     # Override val transforms
-    val_ds.dataset = ImageFolder(root, transform=build_transforms(train=False, image_size=image_size))
+    val_ds.dataset = ImageFolder(
+        root, transform=build_transforms(train=False, image_size=image_size)
+    )
 
     train_loader = DataLoader(
         train_ds,
@@ -110,4 +118,8 @@ def cats_dataloader(
 
 def get_class_names(root: str | Path) -> list[str]:
     """Return sorted class names from ImageFolder root."""
-    return sorted(entry.name for entry in Path(root).iterdir() if entry.is_dir() and not entry.name.startswith("."))
+    return sorted(
+        entry.name
+        for entry in Path(root).iterdir()
+        if entry.is_dir() and not entry.name.startswith(".")
+    )
