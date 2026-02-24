@@ -156,6 +156,7 @@ Build a cats classifier and generator with web frontend, following the architect
 - ✅ Verified `.github/workflows/deploy.yml` for GitHub Pages deployment
 - ✅ Updated ADR-013 status to "Implemented"
 - ✅ All workflows follow 2026 best practices (concurrency, dispatch, names)
+- ✅ Fixed `train.yml` to use Ruff only (ADR-016 compliance)
 
 ### Remaining Work
 - **Phase 3: Modal Training** - Execute full TinyDiT training (200k steps, EMA)
@@ -172,9 +173,9 @@ Build a cats classifier and generator with web frontend, following the architect
 | Model size | <100MB | ✅ 11MB (quantized) |
 | Inference | <2s generation | ✅ Benchmark page ready |
 | Frontend | Responsive UI | ✅ Complete |
-| CI | All checks pass | ✅ All 5 jobs passing |
+| CI | All checks pass | ✅ All 5 jobs passing (Ruff only) |
 | Quality Gate | Local = CI | ✅ ADR-014 implemented |
-| Code Quality | 2026 stack | ✅ ADR-016 (Ruff) |
+| Code Quality | 2026 stack | ✅ ADR-016 (Ruff) - All workflows migrated |
 | Training Infrastructure | 200k steps with EMA | ✅ ADR-017 (Ready to run) |
 
 ## Success Metrics

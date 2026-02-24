@@ -1,7 +1,7 @@
 # ADR-016: Modern Python Code Quality Setup for 2026
 
 **Date:** 2026-02-24
-**Status:** Proposed
+**Status:** Implemented
 **Authors:** AI Agent
 **Related:** ADR-014 (Quality Gate CI Alignment), ADR-015 (GitHub Workflow Caching)
 
