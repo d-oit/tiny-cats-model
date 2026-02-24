@@ -16,6 +16,41 @@ After each task, capture learnings here. Use this for continuous improvement.
 
 ## Key Learnings
 
+### feat: implement missing GOAP tasks for Phase 4, 5, and 6
+
+**Date**: 2026-02-24 16:06:24 +0000
+**Type**: feature
+**Areas**: source, documentation, ci-cd
+
+**Pattern**: [To be documented - what reusable lesson applies?]
+
+**Related**: [Link to ADR if applicable]
+
+
+
+### feat: implement 2026 GitHub Actions best practices (ADR-013)
+
+**Date**: 2026-02-24 15:09:15 +0000
+**Type**: feature
+**Areas**: documentation, ci-cd
+
+**Pattern**: [To be documented - what reusable lesson applies?]
+
+**Related**: [Link to ADR if applicable]
+
+
+
+### fix: resolve flake8 E402 import order errors
+
+**Date**: 2026-02-24 14:54:26 +0000
+**Type**: bugfix
+**Areas**: source, documentation, tests
+
+**Pattern**: [To be documented - what reusable lesson applies?]
+
+**Related**: [Link to ADR if applicable]
+
+
 ### Modal GPU Training (ADR-007)
 
 **Problem**: Training times out on CPU; Modal setup was broken.
