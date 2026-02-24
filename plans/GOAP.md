@@ -62,13 +62,15 @@ Build a cats classifier and generator with web frontend, following the architect
 
 ### Phase 6: Documentation & CI/CD
 - [x] Update AGENTS.md with new workflows
-- [x] Create ADRs for architectural decisions (ADR-008 to ADR-013)
+- [x] Create ADRs for architectural decisions (ADR-008 to ADR-015)
 - [x] Fix CI flake8 linting errors (ADR-012)
 - [x] Optimize GitHub Actions workflow (ADR-013)
 - [x] Add frontend build to CI pipeline
 - [x] Configure GitHub Pages deployment
 - [x] Write comprehensive README
 - [x] Align quality gate with CI pipeline (ADR-014)
+- [x] Fix GitHub workflow caching issues (ADR-015)
+- [ ] Fix frontend TypeScript build errors
 
 ## Priorities
 1. Dataset preparation (high) - foundation for training
@@ -98,6 +100,8 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] Add mixed precision training (ADR-010)
 - [x] Add memory management (ADR-010)
 - [x] Align quality gate with CI pipeline (ADR-014)
+- [x] Fix GitHub workflow caching issues (ADR-015)
+- [ ] Fix frontend TypeScript build errors
 - [ ] Train full model on Modal GPU
 - [x] Complete frontend generation canvas
 - [x] Add frontend build to CI pipeline
@@ -143,7 +147,7 @@ Build a cats classifier and generator with web frontend, following the architect
 | Model size | <100MB | ✅ 11MB (quantized) |
 | Inference | <2s generation | ✅ Benchmark page ready |
 | Frontend | Responsive UI | ✅ Complete |
-| CI | All checks pass | ✅ Build job added |
+| CI | All checks pass | ⚠️ Lint/Test/Type pass, Frontend TS errors |
 | Quality Gate | Local = CI | ✅ ADR-014 implemented |
 
 ## Success Metrics
