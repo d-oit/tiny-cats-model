@@ -1,7 +1,6 @@
 import * as ort from "onnxruntime-web";
-import * as Comlink from "comlink";
 
-import { MODEL_CONFIGS, GENERATOR_CONFIG, CAT_BREEDS, type ModelType } from "../constants";
+import { MODEL_CONFIGS, GENERATOR_CONFIG, type ModelType } from "../constants";
 
 /**
  * Benchmark statistics
@@ -511,7 +510,7 @@ export function exportReportToMarkdown(report: BenchmarkReport): string {
 
   lines.push("## Recommendations");
   lines.push("");
-  const recommendations = getPerformanceRecommendations(report);
+  const recommendations = getPerformanceRecommendation(report);
   for (const rec of recommendations) {
     lines.push(`- ${rec}`);
   }

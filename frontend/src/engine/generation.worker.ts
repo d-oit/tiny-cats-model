@@ -229,4 +229,6 @@ class GenerationEngine {
   }
 }
 
+export default GenerationEngine;
+
 Comlink.expose(new GenerationEngine());

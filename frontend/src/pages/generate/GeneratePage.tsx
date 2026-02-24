@@ -25,7 +25,7 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import DownloadIcon from "@mui/icons-material/Download";
 
 type GenerationWorker = Comlink.Remote<
-  import("../../engine/generation.worker").GenerationEngine
+  import("../../engine/generation.worker").default
 >;
 
 export default function GeneratePage() {
@@ -55,7 +55,7 @@ export default function GeneratePage() {
 
     engine.loadModel()
       .then(() => setReady(true))
-      .catch((err) => {
+      .catch((err: unknown) => {
         console.error("Failed to load generator model:", err);
         setError("Failed to load generator model. Please refresh the page.");
       });
@@ -239,7 +239,7 @@ export default function GeneratePage() {
           </Button>
 
           <Grid container spacing={2}>
-            <Grid item xs={6}>
+            <Grid size={{ xs: 6 }}>
               <Button
                 variant="outlined"
                 startIcon={<RefreshIcon />}
@@ -250,7 +250,7 @@ export default function GeneratePage() {
                 Reset Noise
               </Button>
             </Grid>
-            <Grid item xs={6}>
+            <Grid size={{ xs: 6 }}>
               <Button
                 variant="outlined"
                 startIcon={<DownloadIcon />}
@@ -328,7 +328,7 @@ export default function GeneratePage() {
                 value={(progress.step / progress.totalSteps) * 100}
               />
               <Grid container spacing={2} sx={{ mt: 2 }}>
-                <Grid item xs={4}>
+                <Grid size={{ xs: 4 }}>
                   <Box sx={{ textAlign: "center" }}>
                     <Typography variant="h6" color="primary">
                       {progress.step}/{progress.totalSteps}
@@ -338,7 +338,7 @@ export default function GeneratePage() {
                     </Typography>
                   </Box>
                 </Grid>
-                <Grid item xs={4}>
+                <Grid size={{ xs: 4 }}>
                   <Box sx={{ textAlign: "center" }}>
                     <Typography variant="h6" color="primary">
                       {progress.stepTime.toFixed(0)}ms
@@ -348,7 +348,7 @@ export default function GeneratePage() {
                     </Typography>
                   </Box>
                 </Grid>
-                <Grid item xs={4}>
+                <Grid size={{ xs: 4 }}>
                   <Box sx={{ textAlign: "center" }}>
                     <Typography variant="h6" color="primary">
                       {(progress.totalTime / 1000).toFixed(1)}s
