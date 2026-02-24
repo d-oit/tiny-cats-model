@@ -36,14 +36,14 @@ echo ""
 
 # --- Lint ---
 run_check "ruff lint" python -m ruff check . --exclude node_modules
-run_check "flake8 lint" flake8 . --exclude node_modules,.git --max-line-length=88 --extend-ignore=E203,W503,E402,E501
-run_check "black format check" black --check . --exclude "node_modules/"
+run_check "flake8 lint" python -m flake8 . --exclude node_modules,.git --max-line-length=88 --extend-ignore=E203,W503,E402,E501
+run_check "black format check" python -m black --check . --exclude "node_modules/"
 
 # --- Type Check ---
-run_check "mypy type check" mypy . --exclude node_modules --ignore-missing-imports
+run_check "mypy type check" python -m mypy . --exclude node_modules --ignore-missing-imports
 
 # --- Tests ---
-run_check "pytest unit tests" pytest tests/ -v --tb=short
+run_check "pytest unit tests" python -m pytest tests/ -v --tb=short
 
 # --- Summary ---
 echo "========================================"
