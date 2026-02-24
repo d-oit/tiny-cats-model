@@ -13,9 +13,9 @@ import argparse
 import sys
 from pathlib import Path
 
-import torch
-
 sys.path.insert(0, str(Path(__file__).parent))
+
+import torch
 
 from dataset import cats_dataloader
 from model import load_checkpoint
