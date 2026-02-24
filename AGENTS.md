@@ -41,6 +41,7 @@ See [agents-docs/skills.md](agents-docs/skills.md) for full details.
 
 | Skill | When to Use |
 |-------|-------------|
+| `analysis-swarm` | Complex decisions, multi-perspective analysis |
 | `cli-usage` | Training, evaluation, dataset |
 | `testing-workflow` | Running tests, verification |
 | `code-quality` | Linting, formatting |
