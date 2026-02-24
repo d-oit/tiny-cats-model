@@ -86,12 +86,14 @@ black --check .
 ## Modal GPU Training
 
 ```bash
-# Set credentials (never hardcode)
-export MODAL_TOKEN_ID=your_token_id
-export MODAL_TOKEN_SECRET=your_token_secret
+# Set credentials globally (never hardcode)
+modal token set
 
 # Run training on GPU
 modal run src/train.py
+
+# Run with custom options
+modal run src/train.py -- --epochs 20 --batch-size 64
 ```
 
 ## Full Verification
@@ -99,6 +101,12 @@ modal run src/train.py
 ```bash
 # Run complete CI check suite
 bash .agents/skills/testing-workflow/verify.sh
+
+# Or use the quality gate
+bash .agents/skills/git-workflow/quality-gate.sh
+
+# Or use the new scripts
+bash scripts/quality-gate.sh
 ```
 
 ## Command Reference

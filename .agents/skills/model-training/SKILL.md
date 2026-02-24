@@ -42,15 +42,14 @@ python src/train.py data/cats --device cpu
 ## Modal GPU Training
 
 ```bash
-# Set credentials
-export MODAL_TOKEN_ID=your_token_id
-export MODAL_TOKEN_SECRET=your_token_secret
+# Set credentials globally (one-time setup)
+modal token set
 
 # Run training on GPU
 modal run src/train.py
 
 # Run with custom settings
-modal run src/train.py --data-dir data/cats --epochs 20
+modal run src/train.py -- --epochs 20 --batch-size 64 --lr 0.0001
 ```
 
 ## Model Evaluation

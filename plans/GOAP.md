@@ -1,175 +1,139 @@
-# GOAP: Agent Infrastructure Enhancement Plan
+# GOAP: Cats Classifier with Web Frontend
 
 ## Goal
-Enhance the tiny-cats-model project with comprehensive agent skills and 2026 best practices for AI-assisted development.
+Build a cats classifier and generator with web frontend, following the architecture of https://github.com/amins01/tiny-models/ but for cat breeds. Train with Modal GPU, run inference in-browser via ONNX.
 
 ## Objectives
 
-1. **Improve Agent Context** - Create AGENTS.md following 2026 standards
-2. **Expand Skill Coverage** - Add new skills for git, code quality, security, model training
-3. **Optimize CI/CD** - Update GitHub Actions with concurrency, caching, modern patterns
-4. **Document Decisions** - Maintain ADRs for all architectural choices
+1. **Dataset Preparation** - Oxford IIIT Pet + supplementary cat breed datasets
+2. **Model Development** - TinyDiT with breed conditioning for generation
+3. **Modal Training** - GPU training with proper checkpointing
+4. **ONNX Export** - Export model for browser inference
+5. **Web Frontend** - React + TypeScript app with ONNX Runtime Web
+6. **Documentation** - Maintain ADRs and update AGENTS.md
 
 ## Actions
 
-### Phase 1: Planning & Research
-- [x] Analyze existing skills structure
-- [x] Research 2026 best practices (GitHub Actions, AGENTS.md, gh CLI)
-- [x] Identify gaps in current skill coverage
+### Phase 1: Dataset Preparation
+- [ ] Download Oxford IIIT Pet dataset
+- [ ] Create breed-to-index mapping (12 breeds + other)
+- [ ] Implement PyTorch dataset loader
+- [ ] Test preprocessing pipeline (resize, normalize, augment)
 
-### Phase 2: Skill Development
-- [x] Create git-workflow skill
-- [x] Create code-quality skill  
-- [x] Create security skill
-- [x] Create model-training skill
-- [x] Update existing skills (gh-actions, testing-workflow, cli-usage)
+### Phase 2: Model Development
+- [ ] Implement TinyDiT architecture (similar to tiny-models)
+- [ ] Add breed conditioning (one-hot embeddings)
+- [ ] Implement flow matching training loop
+- [ ] Test training on small subset (CPU)
 
-### Phase 3: Documentation
-- [x] Update AGENTS.md with 2026 best practices
-- [x] Create ADR documents for key decisions
-- [x] Document skill usage patterns
+### Phase 3: Modal Training
+- [ ] Configure Modal GPU training (ADR-007)
+- [ ] Set up volume for checkpoints
+- [ ] Train full model (200k steps, EMA)
+- [ ] Evaluate generated samples
 
-### Phase 4: CI Optimization
-- [x] Add concurrency controls to workflows
-- [x] Enhance caching strategies
-- [x] Add timeout limits
-- [x] Implement job parallelization
+### Phase 4: ONNX Export
+- [ ] Export model to ONNX format
+- [ ] Test ONNX inference (Python)
+- [ ] Optimize model (quantization if needed)
+- [ ] Deploy to frontend/public/models/
 
-### Phase 5: CI Issues Fix
-- [x] Analyze CI failures via gh CLI
-- [x] Fix lint errors (F401, F541)
-- [x] Fix mypy type errors
-- [x] Create requirements-dev.txt
-- [x] Update pyproject.toml with ruff/mypy config
-- [x] Fix Makefile line-length
-- [x] Verify all tests pass
+### Phase 5: Frontend Development
+- [ ] Set up React + TypeScript + Vite
+- [ ] Implement breed selector component
+- [ ] Implement image upload for classification
+- [ ] Implement generation canvas
+- [ ] Add inference dashboard (step time, latency)
+- [ ] Integrate ONNX Runtime Web + web workers
+- [ ] Test and optimize inference latency
+
+### Phase 6: Documentation & CI/CD
+- [ ] Update AGENTS.md with new workflows
+- [ ] Add frontend build to CI pipeline
+- [ ] Configure GitHub Pages deployment
+- [ ] Write comprehensive README
 
 ## Priorities
-1. AGENTS.md update (high) - core context for all agents ✅
-2. New skills (high) - expand agent capabilities ✅
-3. CI optimization (medium) - improve developer experience ✅
-4. Documentation (medium) - maintain knowledge ✅
-5. CI issues fix (high) - all CI must pass ✅
+1. Dataset preparation (high) - foundation for training
+2. Model development (high) - core architecture
+3. Modal training (high) - GPU access
+4. ONNX export (medium) - browser deployment
+5. Frontend development (high) - user interface
+6. Documentation (medium) - maintain knowledge
 
 ## Timeline
-- Phase 1: Complete
-- Phase 2: Complete
-- Phase 3: Complete
-- Phase 4: Complete
-- Phase 5: Complete
+- Phase 1: Week 1
+- Phase 2: Week 2
+- Phase 3: Week 3-4
+- Phase 4: Week 5
+- Phase 5: Week 6-7
+- Phase 6: Week 8
+
+## Current Action Items
+- [x] Create ADR-008 for architecture decision
+- [ ] Download Oxford IIIT Pet dataset
+- [ ] Implement cat breed dataset loader
+- [ ] Implement TinyDiT model
 
 ## Success Metrics
-- All skills under 250 LOC ✅
-- AGENTS.md < 200 lines ✅
-- CI workflow runtime < 5 minutes ✅
-- All tests passing ✅
-- ruff check passes ✅
+- Dataset: 12 cat breeds + other class ready
+- Model: <100MB for browser deployment
+- Training: Converges with good sample quality
+- Inference: <2s for full generation in browser
+- Frontend: Responsive, intuitive UI
+- CI: All checks pass
 
-## CI Issues Found & Fixed
+## Technical Specifications
 
-### Issue 1: Lint Errors (Flake8/Ruff)
-| File | Issue | Fix Applied |
-|------|-------|--------------|
-| src/dataset.py | F401 unused imports | Removed `os`, `Optional` |
-| src/model.py | F401 unused imports | Removed `Optional` |
-| src/eval.py | F541 f-strings | Removed f-prefix from print |
-| src/export_onnx.py | F401, F541 | Removed unused imports, fixed f-strings |
-| tests/test_dataset.py | F401 unused | Removed `tempfile` |
+### Model Architecture (TinyDiT for Cats)
+| Parameter | Value |
+|-----------|-------|
+| Parameters | ~22M |
+| Patches | 256 (16x16) |
+| Layers | 12 |
+| Hidden Dim | 384 |
+| Attention Heads | 6 |
+| Image Size | 128x128 or 256x256 |
+| Patch Size | 8 or 16 |
+| Conditioning | Breed one-hot (13 classes) |
 
-### Issue 2: Mypy Type Errors
-| File | Issue | Fix Applied |
-|------|-------|--------------|
-| src/train.py:76 | Return type mismatch | Changed to `tuple[float, float]` |
-| src/train.py:117 | attr-defined | Added `# type: ignore` |
-| src/eval.py:56 | attr-defined | Added `# type: ignore` |
-| tests/test_train.py | Missing exports | Rewrote tests to use actual API |
+### Training Configuration
+| Parameter | Value |
+|-----------|-------|
+| Steps | 200,000 |
+| Batch Size | 256 |
+| Learning Rate | 1e-4 |
+| Optimizer | AdamW (β1=0.9, β2=0.95) |
+| Weight Decay | 0.05 |
+| EMA Beta | 0.9999 |
+| Loss | Flow matching (v or x prediction) |
 
-### Issue 3: Missing requirements-dev.txt
-- Created `requirements-dev.txt` with dev dependencies
-- Updated CI workflow to use correct file
+### Frontend Stack
+- **Framework**: React 18 + TypeScript
+- **Build Tool**: Vite
+- **UI Library**: Material UI
+- **Model Runtime**: ONNX Runtime Web + WASM
+- **Deployment**: GitHub Pages
 
-### Issue 4: Configuration Mismatch
-- Fixed pyproject.toml with ruff/mypy config
-- Fixed Makefile line-length from 120 to 88
-- Added E501 to ruff ignore (black handles line length)
+## Dataset Details
 
-## Deliverables Created
+### Oxford IIIT Pet Dataset
+- **Source**: https://www.robots.ox.ac.uk/~vgg/data/pets/
+- **Cat Breeds** (12): Abyssinian, Bengal, Birman, Bombay, British_Shorthair, Egyptian_Mau, Maine_Coon, Persian, Ragdoll, Russian_Blue, Siamese, Sphynx
+- **Images per breed**: ~100-200
+- **Total cat images**: ~2,000
+- **Format**: JPG with breed labels
 
-### Skills (8 total)
-| Skill | LOC | Purpose |
-|-------|-----|---------|
-| cli-usage | ~115 | Training, evaluation, dataset commands |
-| testing-workflow | ~59 | Run tests, lint, verification |
-| gh-actions | ~84 | CI/CD status, triggers, debugging |
-| git-workflow | ~127 | Branch management, commits, PRs |
-| code-quality | ~115 | Linting, formatting, type checking |
-| security | ~124 | Secrets, credentials, safe practices |
-| model-training | ~121 | Training, hyperparameters, Modal |
-| goap | ~150 | GOAP/ADR planning and management |
+### Preprocessing
+1. Resize to 128x128 or 256x256
+2. Normalize to [-1, 1]
+3. Horizontal flip augmentation
+4. One-hot encode breed labels
 
-### Documentation
-- `AGENTS.md` - Updated with 2026 best practices
-- `plans/GOAP.md` - Project plan
-- `plans/ADR-001-agent-skill-structure.md` - Skill architecture decision
-- `plans/ADR-002-ci-workflow-optimization.md` - CI optimization decision
-- `plans/ADR-003-agents-md-structure.md` - AGENTS.md structure decision
-- `plans/ADR-004-frontend-cat-model-update.md` - Frontend update proposal
-- `plans/ADR-005-ci-pipeline-fixes.md` - CI pipeline fixes
-- `plans/ADR-006-ci-fix-workflow.md` - Complete CI fix workflow
-
----
-
-## Phase 6: Complete CI/CD Fix Workflow
-
-### Atomic Commit-to-Fix Loop
-
-```
-1. git commit → git push
-2. gh run list → get run-id
-3. gh run view <id> → identify failures
-4. FOR EACH failure:
-   a. Analyze error type → determine skill needed
-   b. Spawn specialist agent with @skill
-   c. Agent fixes → commits → pushes
-   d. Repeat from step 2 until all pass
-5. NEVER skip: each fix must go through full cycle
-```
-
-### Specialist Agent Mapping
-
-| Failure Type | Skill | Agent Task |
-|--------------|-------|------------|
-| Lint error | `code-quality` | Fix style issues |
-| Test failure | `testing-workflow` | Debug and fix tests |
-| Type error | `code-quality` | Add type hints |
-| CI config | `gh-actions` | Fix workflow YAML |
-| Model/training | `model-training` | Fix training code |
-| Security | `security` | Fix vulnerability |
-| New feature | Multiple | Spawn coordinator |
-
-### 2026 Best Practices Integration
-
-Before implementing fixes:
-1. Use `websearch` for latest solutions
-2. Use `codesearch` for API patterns
-3. Document findings in ADR if significant
-4. Apply minimal, correct fix
-
-### References
-- ADR-006: Complete CI/CD Fix Workflow
-
-### CI/CD
-- `.github/workflows/ci.yml` - Optimized with concurrency, timeouts, modern caching
-- `.github/workflows/train.yml` - Optimized with concurrency, timeouts
-- `requirements-dev.txt` - Created with dev dependencies
-- `pyproject.toml` - Updated with ruff and mypy configuration
-
-### Files Modified to Fix CI
-- `src/dataset.py` - Removed unused imports
-- `src/model.py` - Removed unused imports
-- `src/eval.py` - Fixed f-strings, added type ignore
-- `src/export_onnx.py` - Removed unused imports, fixed f-strings
-- `src/train.py` - Fixed return type, added type ignore
-- `tests/test_dataset.py` - Removed unused imports
-- `tests/test_train.py` - Rewrote to use actual API
-- `Makefile` - Fixed line-length to 88
+## References
+- ADR-008: Adapt tiny-models Architecture for Cats
+- ADR-007: Modal GPU Training Fix
+- tiny-models: https://github.com/amins01/tiny-models/
+- DiT Paper: https://arxiv.org/pdf/2212.09748
+- Flow Matching: https://arxiv.org/pdf/2210.02747
+- Oxford IIIT Pet: https://www.robots.ox.ac.uk/~vgg/data/pets/

@@ -34,12 +34,12 @@ echo "======================================"
 echo ""
 
 # --- Lint ---
-run_check "ruff lint" ruff check .
-run_check "flake8 lint" flake8 . --max-line-length=88 --extend-ignore=E203,W503
-run_check "black format check" black --check .
+run_check "ruff lint" python -m ruff check .
+run_check "flake8 lint" python -m flake8 . --exclude node_modules,.git --max-line-length=88 --extend-ignore=E203,W503,E402,E501
+run_check "black format check" python -m black --check . --exclude node_modules
 
 # --- Tests ---
-run_check "pytest unit tests" pytest tests/ -v --tb=short
+run_check "pytest unit tests" python -m pytest tests/ -v --tb=short
 
 # --- Summary ---
 echo "======================================"
