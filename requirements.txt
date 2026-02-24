@@ -8,3 +8,7 @@ pytest>=7.4.0
 ruff>=0.1.0
 black>=23.0.0
 flake8>=6.0.0
+onnxruntime>=1.15.0
+onnxruntime-tools>=1.15.0
+onnx>=1.14.0
+onnxscript>=0.1.0

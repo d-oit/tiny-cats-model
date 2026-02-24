@@ -384,8 +384,9 @@ class TinyDiT(nn.Module):
         # Unpatchify
         x = self.final_layer(x, c)  # (B, N, P*P*C)
 
-        # Reshape to image
-        x = x.transpose(1, 2).view(-1, self.in_channels, self.image_size, self.image_size)
+        # Reshape to image (use explicit batch size for ONNX compatibility)
+        batch_size = x.shape[0]
+        x = x.transpose(1, 2).reshape(batch_size, self.in_channels, self.image_size, self.image_size)
         return x
 
     def forward_with_cfg(
