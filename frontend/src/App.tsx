@@ -2,6 +2,8 @@ import "./App.css";
 import Navbar from "./components/Navbar";
 import { HashRouter as Router, Routes, Route } from "react-router-dom";
 import ClassifyPage from "./pages/classify/ClassifyPage";
+import GeneratePage from "./pages/generate/GeneratePage";
+import BenchmarkPage from "./pages/benchmark/BenchmarkPage";
 
 import { ThemeProvider } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
@@ -36,6 +38,8 @@ function App() {
         <Routes>
           <Route path="/" element={<ClassifyPage />} />
           <Route path="/classify" element={<ClassifyPage />} />
+          <Route path="/generate" element={<GeneratePage />} />
+          <Route path="/benchmark" element={<BenchmarkPage />} />
         </Routes>
       </Router>
     </ThemeProvider>

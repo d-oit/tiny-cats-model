@@ -1,0 +1,121 @@
+{
+  "models": {
+    "classifier": {
+      "original": {
+        "path": "cats.onnx",
+        "dataPath": "cats.onnx.data",
+        "sizeBytes": 45121536,
+        "sizeFormatted": "43 MB",
+        "description": "Full precision FP32 model with external data file"
+      },
+      "quantized": {
+        "path": "cats_quantized.onnx",
+        "sizeBytes": 11534336,
+        "sizeFormatted": "11 MB",
+        "description": "Quantized INT8 model optimized for web inference"
+      }
+    },
+    "generator": {
+      "path": "generator.onnx",
+      "sizeBytes": 132177920,
+      "sizeFormatted": "126 MB",
+      "description": "TinyDiT generator model for cat image synthesis with breed conditioning"
+    }
+  },
+  "classifier": {
+    "input": {
+      "name": "input",
+      "shape": ["batch_size", 3, 224, 224],
+      "description": "RGB image with 3 channels, 224x224 pixels",
+      "normalization": {
+        "mean": [0.485, 0.456, 0.406],
+        "std": [0.229, 0.224, 0.225],
+        "range": "[-1, 1] after normalization"
+      }
+    },
+    "output": {
+      "name": "output",
+      "shape": ["batch_size", 2],
+      "description": "Logits for binary classification",
+      "classes": ["cat", "other"]
+    }
+  },
+  "generator": {
+    "inputs": [
+      {
+        "name": "noise",
+        "shape": ["batch_size", 3, 128, 128],
+        "description": "Gaussian noise tensor for generation start point",
+        "range": "Standard normal distribution N(0, 1)"
+      },
+      {
+        "name": "timestep",
+        "shape": ["batch_size"],
+        "description": "Current ODE timestep (0 to 1)",
+        "range": "[0.0, 1.0]"
+      },
+      {
+        "name": "breed",
+        "shape": ["batch_size"],
+        "description": "Breed index for conditioning (0-12)",
+        "range": "[0, 12]"
+      }
+    ],
+    "output": {
+      "name": "velocity",
+      "shape": ["batch_size", 3, 128, 128],
+      "description": "Predicted velocity for flow matching ODE integration"
+    },
+    "sampling": {
+      "method": "Euler integration",
+      "steps": 50,
+      "cfgScale": 1.5,
+      "description": "Run model iteratively from t=0 to t=1, updating: x(t+dt) = x(t) + dt * velocity"
+    }
+  },
+  "recommended": {
+    "classifier": "quantized",
+    "generator": "generator"
+  },
+  "recommendation_reason": "The quantized classifier is 4x smaller (11 MB vs 43 MB) and provides faster inference. The generator model uses CFG scale 1.5 for better sample quality.",
+  "breed_classes": {
+    "note": "This is a binary cat vs other classifier. For breed-specific classification, the model outputs 2 classes:",
+    "classes": [
+      {
+        "index": 0,
+        "name": "cat",
+        "description": "Image contains a cat (any of 12 breeds: Abyssinian, Bengal, Birman, Bombay, British Shorthair, Egyptian Mau, Maine Coon, Persian, Ragdoll, Russian Blue, Siamese, Sphynx)"
+      },
+      {
+        "index": 1,
+        "name": "other",
+        "description": "Image contains a non-cat (primarily dogs used as negative samples)"
+      }
+    ]
+  },
+  "generator_breeds": {
+    "note": "Generator supports 13 breed classes for conditional image generation",
+    "classes": [
+      {"index": 0, "name": "Abyssinian"},
+      {"index": 1, "name": "Bengal"},
+      {"index": 2, "name": "Birman"},
+      {"index": 3, "name": "Bombay"},
+      {"index": 4, "name": "British_Shorthair"},
+      {"index": 5, "name": "Egyptian_Mau"},
+      {"index": 6, "name": "Maine_Coon"},
+      {"index": 7, "name": "Persian"},
+      {"index": 8, "name": "Ragdoll"},
+      {"index": 9, "name": "Russian_Blue"},
+      {"index": 10, "name": "Siamese"},
+      {"index": 11, "name": "Sphynx"},
+      {"index": 12, "name": "Other"}
+    ]
+  },
+  "runtime": {
+    "name": "ONNX Runtime Web",
+    "executionProviders": ["wasm", "webgl", "webgpu"],
+    "recommendedProvider": "wasm"
+  },
+  "version": "1.1.0",
+  "generatedAt": "2026-02-24"
+}

@@ -1,8 +1,8 @@
 # ADR-013: GitHub Actions Workflow Optimization for 2026
 
-**Date:** 2026-02-24  
-**Status:** Proposed  
-**Authors:** AI Agent  
+**Date:** 2026-02-24
+**Status:** Implemented
+**Authors:** AI Agent
 **Related:** ADR-005 (CI Pipeline Fixes), ADR-006 (CI Fix Workflow)
 
 ## Context
@@ -160,10 +160,10 @@ on:
 
 ## Implementation Plan
 
-### Phase 1: Immediate Fixes (This Week)
-- [ ] Update concurrency strategy in `.github/workflows/ci.yml`
-- [ ] Add workflow run names
-- [ ] Add `workflow_dispatch` trigger
+### Phase 1: Immediate Fixes (Completed)
+- [x] Update concurrency strategy in `.github/workflows/ci.yml`
+- [x] Add workflow run names
+- [x] Add `workflow_dispatch` trigger
 
 ### Phase 2: Repository Configuration (This Week)
 - [ ] Enable branch protection on `main`
@@ -174,6 +174,41 @@ on:
 - [ ] Add job summaries
 - [ ] Implement smart retry for flaky tests
 - [ ] Add debug mode via workflow_dispatch
+
+### Phase 4: CI/CD Pipeline (Completed)
+- [x] Add `build-frontend` job to CI pipeline
+- [x] Create `.github/workflows/deploy.yml` for GitHub Pages deployment
+- [x] Configure `vite.config.ts` with GitHub Pages base path
+
+## Implementation Status
+
+### Completed (2026-02-24)
+
+#### CI Pipeline (`ci.yml`)
+- Added `build-frontend` job that:
+  - Runs after `lint`, `test`, and `type-check` jobs
+  - Uses Node.js 20 with npm caching
+  - Executes `npm ci` and `npm run build` in frontend directory
+  - Uploads `dist` as artifact with 7-day retention
+  - Has 15-minute timeout
+
+#### Deploy Pipeline (`deploy.yml`)
+- Created deployment workflow that:
+  - Triggers on push to `main` and manual `workflow_dispatch`
+  - Uses `actions/deploy-pages@v4` for GitHub Pages deployment
+  - Configures proper permissions (`contents: read`, `pages: write`, `id-token: write`)
+  - Uses concurrency group "pages" without cancellation
+  - Sets up Node.js 20 with dependency caching
+  - Uploads artifact via `actions/upload-pages-artifact@v3`
+
+#### Frontend Configuration (`vite.config.ts`)
+- Set `base: "/tiny-cats-model/"` for GitHub Pages compatibility
+
+### Pending
+- Branch protection rules on `main` (requires admin access)
+- Workflow badge in README
+- Job summaries for test results
+- Smart retry for flaky tests
 
 ## Consequences
 
@@ -265,11 +300,13 @@ jobs:
 
 ## Success Metrics
 
-- [ ] Zero "cancelled" runs showing as "failing" in PR status
-- [ ] All required status checks clearly visible and passing
-- [ ] Branch protection prevents merges with failing CI
-- [ ] Developers can manually trigger workflows for debugging
-- [ ] README shows current CI status badge
+- [x] Zero "cancelled" runs showing as "failing" in PR status
+- [ ] All required status checks clearly visible and passing (pending branch protection)
+- [ ] Branch protection prevents merges with failing CI (pending admin setup)
+- [x] Developers can manually trigger workflows for debugging
+- [ ] README shows current CI status badge (pending)
+- [x] CI builds frontend on every push/PR
+- [x] Deploy workflow deploys to GitHub Pages on main push
 
 ## References
 
