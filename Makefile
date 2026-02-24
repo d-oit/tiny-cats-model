@@ -1,4 +1,4 @@
-.PHONY: help install install-dev lint format test test-cov clean train evaluate predict
+.PHONY: help install install-dev lint format test test-cov clean train evaluate predict quality-gate
 
 PYTHON ?= python
 PIP    ?= pip
@@ -61,3 +61,7 @@ evaluate:
 ## Usage: make predict IMG=path/to/image.jpg CKPT=checkpoints/best.pth
 predict:
 	$(PYTHON) predict.py --image $(IMG) --checkpoint $(CKPT)
+
+## quality-gate: Run full quality gate (format, lint, test)
+quality-gate:
+	bash scripts/quality-gate.sh

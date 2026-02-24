@@ -13,6 +13,7 @@ Modal GPU training:
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -103,19 +104,54 @@ def validate(
 
 stub = modal.App("tiny-cats-model")
 
+volume_outputs = modal.Volume.from_name("cats-model-outputs", create_if_missing=True)
+volume_data = modal.Volume.from_name("cats-model-data", create_if_missing=True)
 
-@stub.function(gpu="T4", timeout=3600)
+LOCAL_SRC = Path(__file__).parent.absolute()
+
+image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .pip_install("torch>=2.0.0", "torchvision>=0.15.0", "Pillow>=9.0.0", "tqdm>=4.65.0")
+    .add_local_dir(str(LOCAL_SRC), "/app/src", copy=True)
+)
+
+
+@stub.function(
+    image=image,
+    volumes={
+        "/outputs": volume_outputs,
+        "/data": volume_data,
+    },
+    gpu="T4",
+    timeout=3600,
+)
 def train_modal(
-    data_dir: str = "/root/tiny-cats-model/data/cats",
+    data_dir: str = "/data/cats",
     epochs: int = 10,
     batch_size: int = 32,
     lr: float = 1e-4,
     backbone: str = "resnet18",
     output: str = "/outputs/cats_model.pt",
-    num_workers: int = 2,
+    num_workers: int = 0,
     pretrained: bool = True,
 ) -> dict:
     """Modal function for GPU training."""
+    import os
+    import sys
+
+    sys.path.insert(0, "/app/src")
+    os.chdir("/app")
+
+    if not Path(data_dir).exists():
+        print("Downloading dataset...")
+        Path("/data").mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["bash", "data/download.sh"],
+            cwd="/app",
+            env={**os.environ, "DATA_DIR": "/data"},
+            check=True,
+        )
+
     train(
         data_dir=data_dir,
         epochs=epochs,
@@ -187,13 +223,13 @@ def train(
 
 @stub.local_entrypoint()
 def main(
-    data_dir: str = "/root/tiny-cats-model/data/cats",
+    data_dir: str = "/data/cats",
     epochs: int = 10,
     batch_size: int = 32,
     lr: float = 1e-4,
     backbone: str = "resnet18",
     output: str = "/outputs/cats_model.pt",
-    num_workers: int = 2,
+    num_workers: int = 0,
     pretrained: bool = True,
 ):
     """Local entrypoint for Modal CLI."""
