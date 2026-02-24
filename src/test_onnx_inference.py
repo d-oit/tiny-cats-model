@@ -348,7 +348,8 @@ def print_results(results: dict[str, Any]) -> None:
         print("\n--- Performance Comparison ---")
         speedup = results["speedup"]
         print(
-            f"  Speedup: {speedup['onnx_vs_pytorch']:.2f}x ({speedup['faster']} is faster)"
+            f"  Speedup: {speedup['onnx_vs_pytorch']:.2f}x "
+            f"({speedup['faster']} is faster)"
         )
 
     print("\n" + "=" * 60)

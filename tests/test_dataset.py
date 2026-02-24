@@ -1,7 +1,8 @@
 """tests/test_dataset.py
 
 Unit tests for the dataset module.
-These tests do NOT require a real dataset - they test transforms, utilities, and error handling.
+These tests do NOT require a real dataset - they test transforms,
+utilities, and error handling.
 """
 
 from __future__ import annotations
@@ -14,7 +15,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import pytest
 import torch
 
-from dataset import DEFAULT_IMAGE_SIZE, IMAGENET_MEAN, IMAGENET_STD, build_transforms
+from dataset import (
+    DEFAULT_IMAGE_SIZE,
+    IMAGENET_MEAN,
+    IMAGENET_STD,
+    build_transforms,
+)
 from model import SUPPORTED_BACKBONES, cats_model, count_parameters
 
 

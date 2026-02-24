@@ -1,10 +1,11 @@
 """Tests for the training module."""
 
-import logging
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+import logging
 
 import pytest
 import torch
