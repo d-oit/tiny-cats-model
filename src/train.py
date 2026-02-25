@@ -363,6 +363,7 @@ image = (
     .add_local_file("src/train.py", "/app/train.py")
     .add_local_file("src/dataset.py", "/app/dataset.py")
     .add_local_file("src/model.py", "/app/model.py")
+    .add_local_dir("data/", "/app/data/", copy=True)
 )
 
 
