@@ -44,7 +44,7 @@ def get_changed_files() -> list[str]:
 
 def check_quality_issues() -> list[str]:
     """Run quality checks on changed files. Returns suggestions if issues found."""
-    suggestions = []
+    suggestions: list[str] = []
     changed_files = get_changed_files()
 
     if not changed_files:
