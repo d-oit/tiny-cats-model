@@ -1,0 +1,50 @@
+{
+  "deployment_id": "deploy-2026-02-25-001",
+  "started_at": null,
+  "completed_at": null,
+  "current_phase": null,
+  "last_action": null,
+  "actions_completed": [],
+  "actions_pending": [
+    "A01", "A02", "A03", "A04", "A05", "A06", "A07",
+    "A08", "A09", "A10", "A11", "A12", "A13", "A14", "A15"
+  ],
+  "world_state": {
+    "code_validation": {
+      "modal_cli_validated": false,
+      "ruff_validated": false,
+      "typescript_validated": false
+    },
+    "git_state": {
+      "branch_created": false,
+      "branch_name": "",
+      "commits": [],
+      "pushed": false
+    },
+    "ci_state": {
+      "pipeline_running": false,
+      "pipeline_passed": false,
+      "failures_detected": [],
+      "failures_resolved": []
+    },
+    "deployment_state": {
+      "validation_gates_passed": false,
+      "model_uploaded_hub": false,
+      "mlflow_integrated": false
+    },
+    "documentation_state": {
+      "goap_updated": false,
+      "adrs_complete": false
+    }
+  },
+  "timeline": {
+    "phase_1_validation": { "start": null, "end": null, "status": "pending" },
+    "phase_2_branch": { "start": null, "end": null, "status": "pending" },
+    "phase_3_commits": { "start": null, "end": null, "status": "pending" },
+    "phase_4_ci": { "start": null, "end": null, "status": "pending" },
+    "phase_5_deployment": { "start": null, "end": null, "status": "pending" },
+    "phase_6_documentation": { "start": null, "end": null, "status": "pending" }
+  },
+  "issues": [],
+  "notes": []
+}
