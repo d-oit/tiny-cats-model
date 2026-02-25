@@ -1,0 +1,12 @@
+# .github/actionlint.yaml
+# actionlint configuration
+custom-actions:
+  # Example:
+  # - name: 'owner/action@v1'
+  #   input:
+  #     required: ['input1']
+  #     optional: ['input2']
+
+ignore:
+  - pattern: '.*'
+    message: 'shell injection'

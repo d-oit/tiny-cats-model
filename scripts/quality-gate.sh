@@ -104,14 +104,26 @@ log_info "Validating GitHub Actions workflows (actionlint)..."
 
 WORKFLOW_DIR="$ROOT_DIR/.github/workflows"
 if [[ -d "$WORKFLOW_DIR" ]]; then
-    # Check if actionlint is available
+    # Check if actionlint is available (try multiple installation paths)
+    ACTIONLINT_CMD=""
     if command -v actionlint &> /dev/null; then
-        if ACTIONLINT_OUTPUT=$(actionlint "$WORKFLOW_DIR"/*.yml 2>&1); then
+        ACTIONLINT_CMD="actionlint"
+    elif [[ -f "/usr/local/share/nvm/versions/node/v24.11.1/lib/node_modules/actionlint/actionlint.cjs" ]]; then
+        ACTIONLINT_CMD="node /usr/local/share/nvm/versions/node/v24.11.1/lib/node_modules/actionlint/actionlint.cjs"
+    elif command -v node &> /dev/null; then
+        # Try to find actionlint in npm global path
+        ACTIONLINT_PATH=$(npm root -g 2>/dev/null)/actionlint/actionlint.cjs
+        if [[ -f "$ACTIONLINT_PATH" ]]; then
+            ACTIONLINT_CMD="node $ACTIONLINT_PATH"
+        fi
+    fi
+
+    if [[ -n "$ACTIONLINT_CMD" ]]; then
+        if ACTIONLINT_OUTPUT=$($ACTIONLINT_CMD "$WORKFLOW_DIR"/*.yml 2>&1); then
             log_success "Workflow validation passed (actionlint)"
         else
             log_error "Workflow validation failed (actionlint)"
             echo "$ACTIONLINT_OUTPUT" | head -30
-            echo "   Install: npm install -g actionlint"
             echo "   Fix workflow syntax/semantics in .github/workflows/"
             FAILURES=$((FAILURES + 1))
             if [[ "$STRICT" == true ]]; then
@@ -160,8 +172,10 @@ log_info "Validating agent skills (agentskills.io specification)..."
 
 SKILLS_VALIDATION_SCRIPT="$SCRIPT_DIR/validate-skills.py"
 if [[ -f "$SKILLS_VALIDATION_SCRIPT" ]]; then
+    # Run skills validation and capture output
     if SKILLS_OUTPUT=$(python "$SKILLS_VALIDATION_SCRIPT" 2>&1); then
-        echo "$SKILLS_OUTPUT" | grep -E "^✓|^▶" | head -15
+        # Show summary (strip ANSI codes for grep)
+        echo "$SKILLS_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -E "^✓|^▶" | head -15
         log_success "Skills validation passed"
     else
         log_error "Skills validation failed"
