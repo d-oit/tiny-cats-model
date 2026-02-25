@@ -210,6 +210,28 @@ Build a cats classifier and generator with web frontend, following the architect
 | EMA Beta | 0.9999 |
 | Loss | Flow matching (v or x prediction) |
 
+### Training Commands (Modal CLI)
+
+**Classifier Training:**
+```bash
+# Modal GPU training (recommended)
+modal run src/train.py data/cats --epochs 20 --batch-size 64
+
+# Local CPU testing (debug)
+python src/train.py data/cats --epochs 1 --batch-size 8
+```
+
+**DiT Training:**
+```bash
+# Modal GPU training (recommended)
+modal run src/train_dit.py data/cats --steps 200000 --batch-size 256
+
+# Local CPU testing (debug)
+python src/train_dit.py data/cats --steps 100 --batch-size 8
+```
+
+See ADR-020 for complete Modal CLI reference.
+
 ### Frontend Stack
 - **Framework**: React 18 + TypeScript
 - **Build Tool**: Vite

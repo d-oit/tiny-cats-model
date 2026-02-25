@@ -8,9 +8,11 @@ AI agent guidance for the tiny-cats-model project.
 |------|---------|
 | Install | `pip install -r requirements.txt` |
 | Download data | `bash data/download.sh` |
-| Train (Modal GPU) | `modal run src/train.py` |
-| Train (local) | `python src/train.py data/cats` |
-| Train options | `modal run src/train.py -- --epochs 20 --batch-size 64` |
+| **Train Classifier (Modal GPU)** | `modal run src/train.py data/cats` |
+| **Train DiT (Modal GPU)** | `modal run src/train_dit.py data/cats` |
+| Train options (classifier) | `modal run src/train.py -- --epochs 20 --batch-size 64` |
+| Train options (DiT) | `modal run src/train_dit.py -- --steps 200000 --batch-size 256` |
+| Train (local CPU) | `python src/train.py data/cats` |
 | Evaluate | `python src/eval.py` |
 | **Quality gate** | `bash scripts/quality-gate.sh` (ruff format + ruff check) |
 | **Pre-commit** | `pre-commit install && pre-commit run --all-files` |
@@ -19,6 +21,8 @@ AI agent guidance for the tiny-cats-model project.
 | Lint | `ruff check . && ruff format --check .` |
 | Format | `ruff format .` |
 | **CI Monitor** | `gh run list && gh run view <id>` |
+
+> **Note:** See ADR-020 for complete Modal CLI reference.
 
 ## Code Style
 
@@ -90,7 +94,7 @@ See [agents-docs/security.md](agents-docs/security.md) for details.
 
 ```
 tiny-cats-model/
-├── src/              # train.py, eval.py, model.py, dataset.py
+├── src/              # train.py, train_dit.py, eval.py, model.py, dataset.py
 ├── tests/            # test_dataset.py, test_model.py, test_train.py
 ├── data/cats/        # dataset (gitignored)
 ├── .agents/skills/   # agent automation
@@ -98,17 +102,39 @@ tiny-cats-model/
 ├── plans/            # GOAP, ADR documents
 ├── agents-docs/      # Extended agent documentation
 ├── AGENTS.md         # this file
-└── modal.yml         # GPU training config
+└── modal.yml         # Modal CLI reference (documentation only, see ADR-020)
 ```
 
 ## Modal GPU Training
 
 Modal tokens configured globally via `modal token set`.
 
+**See ADR-020 for the complete Modal CLI-First Training Strategy.**
+
+### Classifier Training
+
 ```bash
-modal run src/train.py
-modal run src/train.py -- --epochs 20 --batch-size 64
-python src/train.py data/cats  # local CPU
+# Modal GPU training (recommended)
+modal run src/train.py data/cats
+
+# With options
+modal run src/train.py -- --epochs 20 --batch-size 64 --backbone resnet34
+
+# Local CPU testing (debug)
+python src/train.py data/cats --epochs 1 --batch-size 8
+```
+
+### DiT Training
+
+```bash
+# Modal GPU training (recommended)
+modal run src/train_dit.py data/cats
+
+# With options
+modal run src/train_dit.py -- --steps 200000 --batch-size 256 --lr 0.0001
+
+# Local CPU testing (debug)
+python src/train_dit.py data/cats --steps 100 --batch-size 8
 ```
 
 See [agents-docs/training.md](agents-docs/training.md) for full options.
