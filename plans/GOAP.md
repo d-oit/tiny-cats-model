@@ -137,10 +137,66 @@ Build a cats classifier and generator with web frontend, following the architect
 - [ ] Publish model to HuggingFace
 
 ### Phase 9: Publishing to HuggingFace
-- [ ] Create HuggingFace model card
-- [ ] Export final model to HuggingFace format
-- [ ] Add benchmark results to model card
-- [ ] Push to HuggingFace Hub
+- [x] Create HuggingFace model card template (ADR-026)
+- [x] Export final model to HuggingFace format (Safetensors)
+- [x] Add benchmark results to model card
+- [ ] Push to HuggingFace Hub (requires HF_TOKEN)
+
+### Phase 10: Production Deployment (2026 Best Practices)
+
+**GOAP System Active:** See `plans/GOAP-DEPLOYMENT-PLAN-2026.md` for complete action plan.
+**ADR:** ADR-029 documents the GOAP deployment strategy.
+
+#### Phase 10.1: Code Validation
+- [x] Create HuggingFace upload utility (src/upload_to_hub.py)
+- [x] Implement Safetensors export support (ADR-026)
+- [x] Create model validation gates (src/validate_model.py, ADR-028)
+- [x] Document experiment tracking (ADR-027: MLflow integration)
+- [ ] **A01:** Validate Modal CLI training with new utilities
+- [ ] **A02:** Validate Ruff linting on all Python code
+- [ ] **A03:** Validate TypeScript build
+
+#### Phase 10.2: Git Branch Management
+- [ ] **A04:** Create branch `feature/production-deployment-2026`
+- [ ] **A05:** Commit code changes (validate_model.py, upload_to_hub.py)
+- [ ] **A06:** Commit documentation (ADRs 026-029, GOAP.md update)
+- [ ] **A07:** Commit utility additions (modal_monitor.py)
+
+#### Phase 10.3: CI/CD Monitoring
+- [ ] **A08:** Push to GitHub with proper commit messages
+- [ ] **A09:** Monitor CI/CD pipeline with gh CLI
+- [ ] **A10:** Fix all issues using GOAP and ADR methodology
+
+#### Phase 10.4: Model Deployment
+- [ ] **A11:** Run validation gates post-training
+- [ ] **A12:** Upload model to HuggingFace Hub
+- [ ] **A13:** Integrate MLflow tracking into train.py and train_dit.py
+
+#### Phase 10.5: Documentation & Progress
+- [ ] **A14:** Update GOAP.md with Phase 10 progress
+- [ ] **A15:** Complete ADRs (ensure 026-029 are linked and complete)
+- [ ] Add validation step post-training
+- [ ] Add automated upload to GitHub Actions workflow
+- [ ] Set up HuggingFace Space demo (optional)
+
+#### GOAP Action Status
+| Action | Status | Phase | Skill |
+|--------|--------|-------|-------|
+| A01 | ⏳ Pending | Validation | model-training |
+| A02 | ⏳ Pending | Validation | code-quality |
+| A03 | ⏳ Pending | Validation | testing-workflow |
+| A04 | ⏳ Pending | Branch | git-workflow |
+| A05 | ⏳ Pending | Commits | git-workflow |
+| A06 | ⏳ Pending | Commits | git-workflow |
+| A07 | ⏳ Pending | Commits | git-workflow |
+| A08 | ⏳ Pending | Push/CI | git-workflow |
+| A09 | ⏳ Pending | CI Monitor | ci-monitor |
+| A10 | ⏳ Pending | CI Fix | ci-monitor |
+| A11 | ⏳ Pending | Deployment | model-training |
+| A12 | ⏳ Pending | Deployment | model-training |
+| A13 | ⏳ Pending | Deployment | model-training |
+| A14 | ⏳ Pending | Docs | agents-md |
+| A15 | ⏳ Pending | Docs | agents-md |
 
 ## Implementation Summary (February 2026 Sprint)
 
@@ -204,6 +260,9 @@ Build a cats classifier and generator with web frontend, following the architect
 | Code Quality | 2026 stack | ✅ ADR-016 (Ruff) - All workflows migrated |
 | Training | 200k steps with EMA | ✅ Complete (checkpoint: tinydit_final.pt) |
 | Evaluation | Generated samples | ✅ Complete (104 samples, ADR-019) |
+| HuggingFace Publishing | Safetensors + model card | ✅ Ready (ADR-026) |
+| Model Validation | Automated gates | ✅ Ready (ADR-028) |
+| Experiment Tracking | MLflow integration | 📝 Documented (ADR-027) |
 
 ## Success Metrics
 - Dataset: 12 cat breeds + other class ready
