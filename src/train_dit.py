@@ -311,11 +311,11 @@ image = (
         "pillow==11.0.0",
         "tqdm==4.67.1",
     )
+    .add_local_dir("data/", "/app/data/", copy=True)
     .add_local_file("src/train_dit.py", "/app/train_dit.py")
     .add_local_file("src/dit.py", "/app/dit.py")
     .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
     .add_local_file("src/dataset.py", "/app/dataset.py")
-    .add_local_dir("data/", "/app/data/", copy=True)
 )
 
 
