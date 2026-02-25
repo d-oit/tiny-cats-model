@@ -233,10 +233,12 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] Add `volume_utils.py` to Modal container in train_dit.py
 - [x] Fix deprecated torch.cuda.amp.GradScaler() → torch.amp.GradScaler('cuda')
 - [x] Fix deprecated torch.cuda.amp.autocast() → torch.amp.autocast('cuda')
+- [x] Format code with ruff
+- [x] Merge PR #21 to main
 
-#### Validation Pending
-- [ ] **A23:** Test Modal training runs without FutureWarnings
-- [ ] **A24:** Verify volume_utils cleanup works without import errors
+#### Validation Complete
+- [x] **A23:** Test Modal training runs without FutureWarnings ✅
+- [x] **A24:** Verify volume_utils cleanup works without import errors ✅
 
 ### Phase 14: Classifier Training Results
 
@@ -246,30 +248,33 @@ Build a cats classifier and generator with web frontend, following the architect
 
 #### Actions
 - [x] Run classifier training on Modal GPU
+- [x] Classifier ONNX export script exists (src/export_onnx.py)
 
 #### Next Steps
-- [ ] Export classifier to ONNX for frontend integration
-- [ ] Add classifier to web frontend (classify page)
+- [x] Classifier ONNX export script exists (src/export_onnx.py)
+- [ ] Export classifier checkpoint from Modal volume
+- [x] Classifier frontend page exists (frontend/src/pages/classify/)
+- [ ] **A12:** Upload model to HuggingFace Hub (needs HF_TOKEN)
 
 #### Phase 10.2: Git Branch Management
-- [ ] **A04:** Create branch `feature/production-deployment-2026`
-- [ ] **A05:** Commit code changes (validate_model.py, upload_to_hub.py)
-- [ ] **A06:** Commit documentation (ADRs 026-029, GOAP.md update)
-- [ ] **A07:** Commit utility additions (modal_monitor.py)
+- [x] **A04:** Create branch `feature/production-deployment-2026`
+- [x] **A05:** Commit code changes (validate_model.py, upload_to_hub.py)
+- [x] **A06:** Commit documentation (ADRs 026-029, GOAP.md update)
+- [x] **A07:** Commit utility additions (modal_monitor.py)
 
 #### Phase 10.3: CI/CD Monitoring
-- [ ] **A08:** Push to GitHub with proper commit messages
-- [ ] **A09:** Monitor CI/CD pipeline with gh CLI
-- [ ] **A10:** Fix all issues using GOAP and ADR methodology
+- [x] **A08:** Push to GitHub with proper commit messages
+- [x] **A09:** Monitor CI/CD pipeline with gh CLI
+- [x] **A10:** Fix all issues using GOAP and ADR methodology
 
 #### Phase 10.4: Model Deployment
-- [ ] **A11:** Run validation gates post-training
+- [x] **A11:** Run validation gates post-training
 - [ ] **A12:** Upload model to HuggingFace Hub
-- [ ] **A13:** Integrate MLflow tracking into train.py and train_dit.py
+- [x] **A13:** Integrate MLflow tracking into train.py and train_dit.py ✅
 
 #### Phase 10.5: Documentation & Progress
-- [ ] **A14:** Update GOAP.md with Phase 10 progress
-- [ ] **A15:** Complete ADRs (ensure 026-029 are linked and complete)
+- [x] **A14:** Update GOAP.md with Phase 10 progress
+- [x] **A15:** Complete ADRs (ensure 026-029 are linked and complete)
 - [ ] Add validation step post-training
 - [ ] Add automated upload to GitHub Actions workflow
 - [ ] Set up HuggingFace Space demo (optional)
