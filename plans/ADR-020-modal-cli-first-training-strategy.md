@@ -1,7 +1,7 @@
 # ADR-020: Modal CLI-First Training Strategy
 
 **Date:** 2026-02-25
-**Status:** Proposed
+**Status:** Implemented (updated status check)
 **Authors:** AI Agent
 **Related:** ADR-007 (Modal GPU Training Fix), ADR-010 (Modal Training Improvements), ADR-011 (Modal Container Dependencies), ADR-017 (TinyDiT Training Infrastructure)
 
@@ -351,12 +351,12 @@ Configure in script:
 ## Success Metrics
 
 - [x] ADR-020 created and documented
-- [ ] modal.yml updated to documentation-only
-- [ ] GOAP.md updated with CLI commands
-- [ ] ADR-017 updated with CLI emphasis
-- [ ] ADR-010 status → Implemented
-- [ ] AGENTS.md updated with CLI commands
-- [ ] All training uses Modal CLI consistently
+- [x] modal.yml updated to documentation-only
+- [x] GOAP.md updated with CLI commands
+- [x] ADR-017 updated with CLI emphasis
+- [x] ADR-010 status → Implemented
+- [x] AGENTS.md updated with CLI commands
+- [x] All training uses Modal CLI consistently
 
 ## References
 
