@@ -98,7 +98,87 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. Type Check (Mypy)
+# 3. GitHub Actions YAML Validation
+# ─────────────────────────────────────────────────────────────────────────────
+log_info "Validating GitHub Actions workflows (actionlint)..."
+
+WORKFLOW_DIR="$ROOT_DIR/.github/workflows"
+if [[ -d "$WORKFLOW_DIR" ]]; then
+    # Check if actionlint is available
+    if command -v actionlint &> /dev/null; then
+        if ACTIONLINT_OUTPUT=$(actionlint "$WORKFLOW_DIR"/*.yml 2>&1); then
+            log_success "Workflow validation passed (actionlint)"
+        else
+            log_error "Workflow validation failed (actionlint)"
+            echo "$ACTIONLINT_OUTPUT" | head -30
+            echo "   Install: npm install -g actionlint"
+            echo "   Fix workflow syntax/semantics in .github/workflows/"
+            FAILURES=$((FAILURES + 1))
+            if [[ "$STRICT" == true ]]; then
+                exit 1
+            fi
+        fi
+    else
+        log_warning "actionlint not installed, skipping workflow validation"
+        echo "   Install: npm install -g actionlint"
+    fi
+else
+    log_warning "No workflows directory found, skipping workflow validation"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. YAML Linting (yamllint)
+# ─────────────────────────────────────────────────────────────────────────────
+log_info "Linting YAML files (yamllint)..."
+
+# Check if yamllint is available
+if command -v yamllint &> /dev/null; then
+    # Lint GitHub Actions workflows
+    if [[ -d "$WORKFLOW_DIR" ]]; then
+        if YAMLLINT_OUTPUT=$(yamllint "$WORKFLOW_DIR" 2>&1); then
+            log_success "YAML lint passed (yamllint)"
+        else
+            log_error "YAML lint failed (yamllint)"
+            echo "$YAMLLINT_OUTPUT" | head -20
+            echo "   Install: pip install yamllint"
+            echo "   Config: .yamllint"
+            FAILURES=$((FAILURES + 1))
+            if [[ "$STRICT" == true ]]; then
+                exit 1
+            fi
+        fi
+    fi
+else
+    log_warning "yamllint not installed, skipping YAML linting"
+    echo "   Install: pip install yamllint"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. Agent Skills Validation
+# ─────────────────────────────────────────────────────────────────────────────
+log_info "Validating agent skills (agentskills.io specification)..."
+
+SKILLS_VALIDATION_SCRIPT="$SCRIPT_DIR/validate-skills.py"
+if [[ -f "$SKILLS_VALIDATION_SCRIPT" ]]; then
+    if SKILLS_OUTPUT=$(python "$SKILLS_VALIDATION_SCRIPT" 2>&1); then
+        echo "$SKILLS_OUTPUT" | grep -E "^✓|^▶" | head -15
+        log_success "Skills validation passed"
+    else
+        log_error "Skills validation failed"
+        echo "$SKILLS_OUTPUT" | head -30
+        echo "   See: https://agentskills.io/specification#validation"
+        echo "   Fix SKILL.md frontmatter in .agents/skills/"
+        FAILURES=$((FAILURES + 1))
+        if [[ "$STRICT" == true ]]; then
+            exit 1
+        fi
+    fi
+else
+    log_warning "Skills validation script not found, skipping skills validation"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. Type Check (Mypy)
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Running type checker (mypy)..."
 
@@ -115,7 +195,7 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. Tests (Pytest)
+# 7. Tests (Pytest)
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Running tests (pytest)..."
 

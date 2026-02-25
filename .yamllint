@@ -1,0 +1,33 @@
+# .yamllint - YAML lint configuration
+# Extends default with GitHub Actions-friendly settings
+# See: https://yamllint.readthedocs.io/
+
+extends: default
+
+rules:
+  # GitHub Actions expressions can be long
+  line-length:
+    max: 200
+    level: warning
+
+  # Allow truthy values commonly used in GitHub Actions
+  truthy:
+    allowed-values: ['true', 'false', 'on', 'off', 'yes', 'no']
+
+  # Ensure proper spacing in comments
+  comments:
+    min-spaces-from-content: 1
+
+  # 2-space indentation for YAML
+  indentation:
+    spaces: 2
+    indent-sequences: true
+    check-multi-line-strings: false
+
+  # Allow empty lines
+  empty-lines:
+    max: 2
+    max-end: 1
+
+  # Document start marker not required
+  document-start: disable
