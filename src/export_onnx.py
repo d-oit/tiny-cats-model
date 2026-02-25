@@ -29,21 +29,9 @@ def export_onnx(
         output_path: Path where the ONNX model will be saved.
         opset_version: ONNX opset version to use.
     """
-    checkpoint_path = (
-        Path(checkpoint_path)
-        if isinstance(checkpoint_path, str)
-        else checkpoint_path
-        if isinstance(checkpoint_path, str)
-        else checkpoint_path
-    )
+    checkpoint_path = Path(checkpoint_path) if isinstance(checkpoint_path, str) else checkpoint_path
 
-    output_path = (
-        Path(output_path)
-        if isinstance(output_path, str)
-        else output_path
-        if isinstance(output_path, str)
-        else output_path
-    )
+    output_path = Path(output_path) if isinstance(output_path, str) else output_path
 
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
