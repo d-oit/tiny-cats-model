@@ -21,6 +21,7 @@ AI agent guidance for tiny-cats-model (cat image classification with DiT).
 - Type hints required for new code
 - Format: `ruff format .`
 - Lint: `ruff check . --fix`
+- 500 LOC max per file
 
 ## Testing
 
