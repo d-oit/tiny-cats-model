@@ -1,10 +1,10 @@
 # ADR-010: Modal Training Improvements - Error Handling, Logging, Performance, and Memory Management
 
 ## Status
-Proposed
+Implemented
 
 ## Date
-2026-02-24
+2026-02-24 (Proposed) | 2026-02-25 (Implemented)
 
 ## Context
 The current Modal training setup in `src/train.py` works but lacks production-ready features:
@@ -49,6 +49,28 @@ We will implement comprehensive improvements to the training pipeline:
 - **Memory Monitoring**: Log GPU memory usage during training
 
 ## Implementation Plan
+
+### Scripts Implemented
+
+The improvements from this ADR are now implemented in:
+- **`src/train.py`** - ResNet classifier training with all improvements
+- **`src/train_dit.py`** - TinyDiT training with flow matching and EMA
+
+### Usage (Modal CLI)
+
+```bash
+# Classifier training (Modal GPU)
+modal run src/train.py data/cats --epochs 20 --batch-size 64
+
+# DiT training (Modal GPU)
+modal run src/train_dit.py data/cats --steps 200000 --batch-size 256
+
+# Local testing (CPU)
+python src/train.py data/cats --epochs 1 --batch-size 8
+python src/train_dit.py data/cats --steps 100 --batch-size 8
+```
+
+> **Note:** See ADR-020 for the complete Modal CLI-First Training Strategy.
 
 ### train.py Changes
 ```python
@@ -130,7 +152,8 @@ Add new CLI arguments:
 
 ## Related
 - ADR-007: Modal GPU Training Fix
-- ADR-006: CI/CD Fix Workflow
+- ADR-017: TinyDiT Training Infrastructure
+- ADR-020: Modal CLI-First Training Strategy
 - GOAP.md: Modal Training phase
 - Modal GPU docs: https://modal.com/docs/guide/gpu
 

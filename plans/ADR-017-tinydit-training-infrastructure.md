@@ -91,17 +91,20 @@ TinyDiT(
 ```
 
 **Usage:**
+
+> **Note:** See ADR-020 for the complete Modal CLI-First Training Strategy.
+
 ```bash
 # Local training (debug)
-python src/train_dit.py data/cats --steps 1000
+python src/train_dit.py data/cats --steps 1000 --batch-size 8
 
-# Modal GPU training (production)
-modal run src/train_dit.py
+# Modal GPU training (production) - PRIMARY METHOD
+modal run src/train_dit.py data/cats
 
 # Resume from checkpoint
 python src/train_dit.py data/cats --resume checkpoints/dit_model.pt
 
-# Custom configuration
+# Custom configuration (Modal GPU)
 modal run src/train_dit.py -- \
   --steps 200000 \
   --batch-size 256 \
@@ -306,13 +309,22 @@ tiny-cats-model/
 | Mixed Precision | AMP (FP16) |
 
 ### Modal GPU Configuration
-| Setting | Value |
-|---------|-------|
-| GPU Type | A10G (or T4) |
-| Timeout | 7200s (2 hours) |
-| Volume | `/outputs`, `/data` |
-| Python | 3.12 |
-| Dependencies | torch, torchvision, Pillow, tqdm |
+
+| Setting | Value | Notes |
+|---------|-------|-------|
+| GPU Type | T4 (or A10G) | Configured via `@app.function(gpu="T4")` |
+| Timeout | 7200s (2 hours) | Sufficient for 200k steps |
+| Volume | `/outputs`, `/data` | Checkpoints and dataset |
+| Python | 3.10 | Via PyTorch base image |
+| Dependencies | torch, torchvision, Pillow, tqdm | Installed via `pip_install()` |
+
+**Execution:**
+```bash
+# Primary method: Modal CLI
+modal run src/train_dit.py data/cats --steps 200000
+
+# See ADR-020 for complete Modal CLI reference
+```
 
 ### Sampling Configuration
 | Parameter | Value |
@@ -345,12 +357,15 @@ python src/eval_dit.py --num-samples 2 --breed 0
 ```
 
 ### Modal GPU Testing
+
 ```bash
-# Test Modal GPU (1000 steps)
-modal run src/train_dit.py --steps 1000
+# Test Modal GPU (1000 steps) - PRIMARY METHOD
+modal run src/train_dit.py data/cats --steps 1000
 
 # Full training (200k steps)
-modal run src/train_dit.py --steps 200000
+modal run src/train_dit.py data/cats --steps 200000
+
+# See ADR-020 for complete Modal CLI reference
 ```
 
 ### Evaluation Testing
@@ -377,9 +392,9 @@ If you have existing checkpoints from `src/train.py` (ResNet classifier):
    bash data/download.sh
    ```
 
-2. **Train model**:
+2. **Train model** (Modal GPU - recommended):
    ```bash
-   modal run src/train_dit.py
+   modal run src/train_dit.py data/cats
    ```
 
 3. **Evaluate samples**:
@@ -390,6 +405,8 @@ If you have existing checkpoints from `src/train.py` (ResNet classifier):
 4. **Use in frontend**:
    - Models auto-deployed to `frontend/public/models/`
    - Generation page: `/generate`
+
+> **Note:** See ADR-020 for the complete Modal CLI-First Training Strategy and additional commands.
 
 ## References
 

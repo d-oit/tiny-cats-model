@@ -1,57 +1,106 @@
-# modal.yml
-# Modal configuration for GPU-accelerated training.
-# See: https://modal.com/docs
+# modal.yml - DOCUMENTATION REFERENCE ONLY
 #
-# IMPORTANT: Never hardcode secrets here.
-# Provide credentials via environment variables:
-#   export MODAL_TOKEN_ID=<your_token_id>
-#   export MODAL_TOKEN_SECRET=<your_token_secret>
+# ⚠️  IMPORTANT: This file is NOT executed directly by Modal.
 #
-# Usage:
-#   modal run src/train.py
-
-build:
-  python: "3.10"
-  apt_packages:
-    - wget
-    - unzip
-  requirements:
-    - torch>=2.0.0
-    - torchvision>=0.15.0
-    - pillow>=9.0.0
-    - tqdm>=4.65.0
+# This file serves as a quick reference for Modal CLI commands and configuration.
+# All training should use the Modal CLI with Python scripts directly.
+#
+# See ADR-020 for full details on the Modal CLI-First Training Strategy.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# QUICK REFERENCE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Authentication (one-time setup):
+#   modal token set
+#
+# Classifier Training:
+#   modal run src/train.py data/cats                    # Default settings
+#   modal run src/train.py data/cats -- --epochs 20     # Custom epochs
+#   modal run src/train.py -- --epochs 20 --batch-size 64 --backbone resnet34
+#
+# DiT Training:
+#   modal run src/train_dit.py data/cats                # Default settings
+#   modal run src/train_dit.py -- --steps 200000        # Custom steps
+#   modal run src/train_dit.py -- --steps 200000 --batch-size 256 --lr 0.0001
+#
+# Local Testing (CPU):
+#   python src/train.py data/cats --epochs 1 --batch-size 8
+#   python src/train_dit.py data/cats --steps 100 --batch-size 8
+#
+# Volume Management:
+#   modal volume ls cats-model-outputs                  # List outputs
+#   modal volume get cats-model-outputs /outputs/model.pt ./model.pt
+#
+# Monitoring:
+#   modal app list                                      # List apps
+#   modal app logs tiny-cats-model                      # View logs
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONFIGURATION REFERENCE (Implemented in Python Scripts)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 app:
   name: tiny-cats-model
-  image: pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime
+  # Configured in: src/train.py, src/train_dit.py
+  # via: app = modal.App("tiny-cats-model")
 
-training:
-  # GPU type: use gpu-t4 for cost-efficiency, gpu-a10g for speed
-  gpu: gpu-t4
-  timeout: 3600  # 1 hour max
-  retries: 1
+image:
+  base: pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime
+  python: "3.10"
+  # Configured in: @app.function(image=...)
+  # Dependencies: torch, torchvision, pillow, tqdm (via pip_install)
 
-  entrypoint: "python src/train.py data/cats --epochs 20 --backbone resnet18"
+gpu:
+  # GPU type: use "T4" for cost-efficiency, "A10G" for speed
+  # Configured in: @app.function(gpu="T4")
+  type: T4
+  alternatives:
+    - T4     # ~$0.35/hr, good for standard training
+    - A10G   # ~$1.00/hr, faster training
+    - A100   # ~$3.00/hr, large-scale training
 
-  # Environment variables (values injected at runtime, NOT stored here)
-  env:
-    MODAL_TOKEN_ID: ""       # Set via: export MODAL_TOKEN_ID=...
-    MODAL_TOKEN_SECRET: ""   # Set via: export MODAL_TOKEN_SECRET=...
-    DATA_DIR: "data/cats"
-    OUTPUT_PATH: "cats_model.pt"
+timeout: 7200  # 2 hours max (configured in @app.function(timeout=7200))
 
-  # Mount local source code
-  mounts:
-    - local_dir: "."
-      remote_path: "/root/tiny-cats-model"
-
+volumes:
   # Volume for storing trained model checkpoints
-  volumes:
-    - name: cats-model-outputs
-      mount_path: /outputs
+  - name: cats-model-outputs
+    mount_path: /outputs
+  # Volume for dataset (optional, can download at runtime)
+  - name: cats-dataset
+    mount_path: /data
+
+environment:
+  # Environment variables (values injected at runtime via Modal secrets)
+  # Never store actual secrets in this file
+  DATA_DIR: "data/cats"
+  OUTPUT_PATH: "cats_model.pt"
+  # MODAL_TOKEN_ID: Set via `modal token set`
+  # MODAL_TOKEN_SECRET: Set via `modal token set`
 
 dataset:
   # Dataset can be downloaded inside Modal via data/download.sh
   # or pre-uploaded to a Modal volume
   prepare_cmd: "bash data/download.sh"
-  data_dir: "/root/tiny-cats-model/data/cats"
+  data_dir: "/data/cats"
+
+training:
+  # Default training entrypoints
+  classifier: "python src/train.py data/cats --epochs 20 --backbone resnet18"
+  dit: "python src/train_dit.py data/cats --steps 200000 --batch-size 256"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RELATED DOCUMENTATION
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# ADR-020: Modal CLI-First Training Strategy (this file's rationale)
+# ADR-007: Modal GPU Training Fix
+# ADR-010: Modal Training Improvements
+# ADR-017: TinyDiT Training Infrastructure
+#
+# Modal Documentation:
+#   https://modal.com/docs
+#   https://modal.com/docs/guide/gpu
+#   https://modal.com/docs/reference/cli
+#
+# ═══════════════════════════════════════════════════════════════════════════════
