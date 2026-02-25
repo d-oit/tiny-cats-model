@@ -4,6 +4,8 @@
 # ADR-016: Modern Python Code Quality (Ruff only)
 
 name: Train
+permissions:
+  contents: read
 
 on:
   push:
