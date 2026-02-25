@@ -11,6 +11,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      skip_training:
+        description: "Skip Modal training (for testing CI only)"
+        required: false
+        default: "false"
+        type: boolean
 
 # 2026 Best Practice: Smart concurrency
 concurrency:
@@ -107,4 +113,108 @@ jobs:
           from dataset import build_transforms, get_class_names
           t = build_transforms(train=True)
           print(f'Transforms OK: {t}')
+          "
+
+  train-classifier:
+    name: Train Classifier (Modal)
+    needs: [lint, test, model-import-check]
+    if: github.event_name == 'workflow_dispatch' && !inputs.skip_training
+    runs-on: ubuntu-latest
+    environment:
+      name: modal-training
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Modal
+        run: pip install modal
+
+      - name: Run training
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal run src/train.py data/cats
+
+      - name: Download ONNX from Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          pip install modal
+          modal volume get cats-model-outputs /outputs/cats_classifier.onnx ./cats_classifier.onnx
+
+      - name: Upload to Hugging Face Hub
+        if: vars.HF_TOKEN != ''
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install huggingface_hub
+          python -c "
+          from huggingface_hub import HfApi
+          api = HfApi()
+          api.upload_file(
+              path_or_fileobj='cats_classifier.onnx',
+              path_in_repo='cats_classifier.onnx',
+              repo_id='d4oit/tiny-cats-model',
+              repo_type='model',
+              commit_message='Upload classifier from GitHub Actions'
+          )
+          print('Classifier uploaded to HF Hub')
+          "
+
+  train-dit:
+    name: Train DiT (Modal)
+    needs: [lint, test, model-import-check]
+    if: github.event_name == 'workflow_dispatch' && !inputs.skip_training
+    runs-on: ubuntu-latest
+    environment:
+      name: modal-training
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Modal
+        run: pip install modal
+
+      - name: Run DiT training
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal run src/train_dit.py data/cats
+
+      - name: Download ONNX from Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          pip install modal
+          modal volume get dit-outputs /outputs/cats_dit.onnx ./cats_dit.onnx
+
+      - name: Upload to Hugging Face Hub
+        if: vars.HF_TOKEN != ''
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install huggingface_hub
+          python -c "
+          from huggingface_hub import HfApi
+          api = HfApi()
+          api.upload_file(
+              path_or_fileobj='cats_dit.onnx',
+              path_in_repo='cats_dit.onnx',
+              repo_id='d4oit/tiny-cats-model',
+              repo_type='model',
+              commit_message='Upload DiT from GitHub Actions'
+          )
+          print('DiT uploaded to HF Hub')
           "
