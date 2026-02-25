@@ -1,7 +1,7 @@
 # Modal Integration Improvement Plan
 
 **Created:** 2026-02-25
-**Status:** Proposed
+**Status:** Partially Implemented (Documentation & Infrastructure Complete)
 **Related ADRs:** ADR-022, ADR-023, ADR-024, ADR-025
 
 ## Overview
@@ -11,6 +11,34 @@ This plan implements Modal.com best practices for the tiny-cats-model project to
 - Training reliability (automatic retries with exponential backoff)
 - Storage management (organized checkpoints, cleanup policies)
 - Cold start latency (30-60s → 10-20s with optimizations)
+
+## Implementation Status
+
+### ✅ Completed
+
+1. **Documentation & ADRs**
+   - ADR-022: Container Image Optimization
+   - ADR-023: GPU Retry Strategy
+   - ADR-024: Volume Storage Best Practices
+   - ADR-025: Cold Start Optimization
+   - MODAL-IMPROVEMENTS-PLAN.md (this file)
+
+2. **Infrastructure Files**
+   - `requirements-modal.txt`: Pinned dependencies for reproducible builds
+   - `src/volume_utils.py`: Volume management utilities
+
+3. **Documentation Updates**
+   - `.agents/skills/model-training/SKILL.md`: Updated with Modal best practices
+   - `AGENTS.md`: Added Modal quick reference and ADR links
+
+### ⏳ Pending Implementation
+
+The following changes need to be applied to training scripts:
+
+1. **src/train.py**: Update with container pattern, retries, volume commits
+2. **src/train_dit.py**: Same pattern for DiT training
+
+See "Implementation Code Snippets" section below for ready-to-apply changes.
 
 ## Implementation Tasks
 
@@ -304,3 +332,78 @@ If issues occur:
 - ADR-020: Modal CLI-First Training Strategy (existing)
 - ADR-010: Modal Training Improvements (existing)
 - ADR-017: TinyDiT Training Infrastructure (existing)
+
+## Appendix: Implementation Code Snippets
+
+### src/train.py - Image Configuration
+
+```python
+app = modal.App("tiny-cats-model")
+
+volume_outputs = modal.Volume.from_name("cats-model-outputs", create_if_missing=True)
+volume_data = modal.Volume.from_name("cats-dataset", create_if_missing=True)
+
+image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .apt_install("wget", "tar", "curl", "git")
+    .env({
+        "HF_XET_HIGH_PERFORMANCE": "1",
+        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512",
+    })
+    .uv_pip_install(
+        "torch==2.5.1",
+        "torchvision==0.20.1",
+        "pillow==11.0.0",
+        "tqdm==4.67.1",
+    )
+    .add_local_file("src/train.py", "/app/train.py")
+    .add_local_file("src/dataset.py", "/app/dataset.py")
+    .add_local_file("src/model.py", "/app/model.py")
+)
+```
+
+### src/train.py - TrainingContainer Class
+
+```python
+class TrainingContainer:
+    @modal.enter()
+    def enter(self):
+        import os, torch
+        sys.path.insert(0, "/app/src")
+        os.chdir("/app")
+        import torchvision
+        if torch.cuda.is_available():
+            _ = torch.zeros(1).cuda()
+            dummy_input = torch.randn(1, 3, 32, 32).cuda()
+            dummy_conv = torch.nn.Conv2d(3, 16, 3).cuda()
+            _ = dummy_conv(dummy_input)
+            del dummy_input, dummy_conv
+            torch.cuda.empty_cache()
+
+    @app.function(
+        image=image,
+        volumes={"/outputs": volume_outputs, "/data": volume_data},
+        gpu="T4",
+        timeout=3600,
+        retries=modal.Retries(max_retries=3, backoff_coefficient=2.0, initial_delay=10.0, max_delay=300.0),
+    )
+    def train_modal(self, data_dir: str = "/data/cats", ...):
+        # Create dated checkpoint directory
+        from datetime import datetime
+        run_date = datetime.now().strftime("%Y-%m-%d")
+        checkpoint_dir = f"/outputs/checkpoints/classifier/{run_date}"
+        Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+        
+        # ... training logic ...
+        
+        # Commit volume after training
+        volume_outputs.commit()
+```
+
+### Key Changes Summary
+
+1. **Image**: Use `uv_pip_install` with pinned versions
+2. **Container**: Add `TrainingContainer` class with `@modal.enter()`
+3. **Retry**: Add `retries=modal.Retries(...)` to `@app.function`
+4. **Volumes**: Use dated directories and explicit `volume.commit()`
+5. **Entry point**: Update to use `container.train_modal.remote()`
