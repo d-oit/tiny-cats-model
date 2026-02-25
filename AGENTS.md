@@ -14,6 +14,12 @@ AI agent guidance for tiny-cats-model (cat image classification with DiT).
 - Train local (CPU debug): `python src/train.py data/cats --epochs 1 --batch-size 8`
 - Evaluate: `python src/eval.py`
 
+## Verification
+
+- Verify checkpoint: `python src/verify_checkpoint.py --checkpoint checkpoints/tinydit_final.pt`
+- Export and test ONNX: `python src/export_dit_onnx.py --verify --test`
+- Run E2E tests: `npx playwright test`
+
 ## Code Style
 
 - PEP 8 with Ruff

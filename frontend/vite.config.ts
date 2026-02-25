@@ -16,10 +16,4 @@ export default defineConfig({
     })
   ],
   base: "/tiny-cats-model/",
-  server: {
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
-  },
 });
