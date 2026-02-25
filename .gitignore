@@ -133,3 +133,12 @@ frontend/node_modules/
 frontend/dist/
 frontend/.env
 frontend/.env.local
+
+# =============================================================================
+# Playwright / E2E Tests
+# =============================================================================
+test-results/
+playwright-report/
+node_modules/
+package-lock.json
+*.log

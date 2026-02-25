@@ -123,7 +123,24 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] Add YAML linting (yamllint) to quality-gate.sh
 - [x] Add actionlint validation for GitHub Actions workflows  
 - [x] Create .yamllint config with 120 char line length
-- [ ] Test Modal CLI training (ADR-020)
+- [x] Test Modal CLI training (ADR-020)
+
+### Phase 8: Training Verification & Frontend Integration
+- [x] Create checkpoint verification script (src/verify_checkpoint.py)
+- [x] Add post-training ONNX export verification
+- [x] Create browser E2E tests for generation page (tests/e2e/)
+- [x] Create Playwright configuration
+- [x] Add agent-browser skill for E2E testing
+- [x] Run checkpoint verification
+- [x] Run ONNX export verification
+- [x] Run E2E tests (navigation verified)
+- [ ] Publish model to HuggingFace
+
+### Phase 9: Publishing to HuggingFace
+- [ ] Create HuggingFace model card
+- [ ] Export final model to HuggingFace format
+- [ ] Add benchmark results to model card
+- [ ] Push to HuggingFace Hub
 
 ## Implementation Summary (February 2026 Sprint)
 

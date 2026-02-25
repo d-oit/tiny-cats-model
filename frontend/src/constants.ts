@@ -17,7 +17,7 @@ export interface ModelConfig {
 
 export const MODEL_CONFIGS: Record<ModelType, ModelConfig> = {
   cats: {
-    modelPath: "/tiny-cats-model/models/cats.onnx",
+    modelPath: "/tiny-cats-model/models/cats_quantized.onnx",
     imgDims: [224, 224],
     numClasses: 2,
     classNames: ["cat", "not_cat"],
