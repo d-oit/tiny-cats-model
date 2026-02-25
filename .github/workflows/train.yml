@@ -3,7 +3,7 @@
 # Triggers on push and pull_request to main
 # ADR-016: Modern Python Code Quality (Ruff only)
 
-name: CI
+name: Train
 
 on:
   push:
