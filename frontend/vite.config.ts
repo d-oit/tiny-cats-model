@@ -16,4 +16,9 @@ export default defineConfig({
     })
   ],
   base: "/tiny-cats-model/",
+  // Fix for worker build: use 'es' format instead of default 'iife'
+  // See: https://github.com/vitejs/vite/issues/15360
+  worker: {
+    format: 'es',
+  },
 });

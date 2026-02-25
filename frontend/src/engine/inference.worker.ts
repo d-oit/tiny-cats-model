@@ -5,6 +5,30 @@ import { MODEL_CONFIGS, type ModelConfig, type ModelType } from "../constants";
 
 ort.env.wasm.wasmPaths = "/tiny-cats-model/";
 
+async function getExecutionProvider(): Promise<["wasm"] | ["webgpu"]> {
+  if (typeof navigator !== "undefined") {
+    try {
+      // WebGPU type check: navigator.gpu may not be typed in all environments
+      const gpu = (navigator as any).gpu;
+      if (gpu) {
+        return ["webgpu"];
+      }
+    } catch {
+      // WebGPU not available
+    }
+  }
+  return ["wasm"];
+}
+
+async function loadOrt(): Promise<typeof ort> {
+  const ep = await getExecutionProvider();
+  if (ep[0] === "webgpu") {
+    const ortWebGpu = await import("onnxruntime-web/webgpu");
+    return ortWebGpu as unknown as typeof ort;
+  }
+  return ort;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 if (typeof navigator !== "undefined" && (self as any).crossOriginIsolated) {
   ort.env.wasm.numThreads = navigator.hardwareConcurrency || 2;
@@ -13,6 +37,8 @@ if (typeof navigator !== "undefined" && (self as any).crossOriginIsolated) {
 }
 
 ort.env.wasm.proxy = false;
+
+let ortInstance: typeof ort | null = null;
 
 export interface ClassificationResult {
   classIndex: number;
@@ -30,12 +56,17 @@ class InferenceEngine {
   session: ort.InferenceSession | null = null;
   modelType: string = "";
   configs: ModelConfig | null = null;
+  executionProvider: "wasm" | "webgpu" = "wasm";
 
   async loadModel(path: string, modelType: ModelType) {
     console.log("Loading model...");
     try {
       this.modelType = modelType;
       this.configs = MODEL_CONFIGS[modelType];
+
+      ortInstance = await loadOrt();
+      this.executionProvider = (await getExecutionProvider())[0];
+      console.log("Using execution provider:", this.executionProvider);
 
       console.log("Fetching model from:", path);
       const response = await fetch(path, { mode: "cors", credentials: "omit" });
@@ -47,8 +78,8 @@ class InferenceEngine {
 
       console.log("Creating inference session...");
 
-      this.session = await ort.InferenceSession.create(modelDataUint8, {
-        executionProviders: ["wasm"],
+      this.session = await ortInstance.InferenceSession.create(modelDataUint8, {
+        executionProviders: [this.executionProvider],
         graphOptimizationLevel: "all"
       });
 
@@ -64,11 +95,12 @@ class InferenceEngine {
   async classify(imageTensor: Float32Array): Promise<ClassificationTelemetry> {
     if (!this.session) throw new Error("Model not loaded");
     if (!this.configs) throw new Error("Model config not loaded");
+    if (!ortInstance) throw new Error("ORT not loaded");
 
     const [height, width] = this.configs.imgDims;
     const inputDims = [1, 3, height, width];
 
-    const inputTensor = new ort.Tensor("float32", imageTensor, inputDims);
+    const inputTensor = new ortInstance.Tensor("float32", imageTensor, inputDims);
 
     const result = await this.session.run({
       input: inputTensor

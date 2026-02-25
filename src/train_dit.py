@@ -296,6 +296,7 @@ volume_outputs = modal.Volume.from_name("dit-outputs", create_if_missing=True)
 volume_data = modal.Volume.from_name("dit-dataset", create_if_missing=True)
 
 # Optimized container image (ADR-022: fast builds with uv_pip_install)
+# Download scripts added for dataset download fallback (ADR-031)
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("wget", "tar", "curl", "git")
@@ -315,15 +316,22 @@ image = (
     .add_local_file("src/dit.py", "/app/dit.py")
     .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
     .add_local_file("src/dataset.py", "/app/dataset.py")
+    .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
+    .add_local_file("data/download.py", "/app/data/download.py")
+    .add_local_file("data/download.sh", "/app/data/download.sh")
 )
 
 
 def _initialize_dit_container():
-    """Initialize container environment for faster DiT training start (ADR-025)."""
+    """Initialize container environment for faster DiT training start (ADR-025).
+
+    Note: sys.path set to /app to match file locations from add_local_file
+    (ADR-022, ADR-030). Files are placed at /app/ not /app/src/.
+    """
     import torch
 
-    # Setup paths
-    sys.path.insert(0, "/app/src")
+    # Setup paths - files are at /app/ via add_local_file (ADR-022, ADR-030)
+    sys.path.insert(0, "/app")
     os.chdir("/app")
 
     # Pre-import heavy modules
@@ -615,7 +623,7 @@ def train_dit_local(
 
     # Mixed precision
     scaler = (
-        torch.cuda.amp.GradScaler()
+        torch.amp.GradScaler("cuda")
         if mixed_precision and torch.cuda.is_available()
         else None
     )
@@ -673,7 +681,7 @@ def train_dit_local(
                 t = sample_t(batch_size, device)
 
                 # Mixed precision context
-                context = torch.cuda.amp.autocast() if scaler else nullcontext()
+                context = torch.amp.autocast("cuda") if scaler else nullcontext()
 
                 with context:
                     # Flow matching step
