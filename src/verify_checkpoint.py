@@ -56,7 +56,9 @@ def verify_checkpoint(
     print(f"Checkpoint size: {file_size_mb:.1f} MB")
 
     try:
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        checkpoint = torch.load(
+            checkpoint_path, map_location=device, weights_only=False
+        )
         print("Checkpoint loaded successfully")
 
         config = checkpoint.get("config", {})
@@ -157,7 +159,9 @@ def verify_onnx_inference(
         timestep = np.array([0.5], dtype=np.float32)
         breed = np.array([0], dtype=np.int64)
 
-        result = session.run(None, {"noise": noise, "timestep": timestep, "breed": breed})
+        result = session.run(
+            None, {"noise": noise, "timestep": timestep, "breed": breed}
+        )
 
         results["inference_test"] = True
         print(f"ONNX inference test passed! Output shape: {result[0].shape}")
