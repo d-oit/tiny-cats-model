@@ -623,7 +623,7 @@ def train_dit_local(
 
     # Mixed precision
     scaler = (
-        torch.amp.GradScaler('cuda')
+        torch.amp.GradScaler("cuda")
         if mixed_precision and torch.cuda.is_available()
         else None
     )
@@ -681,7 +681,7 @@ def train_dit_local(
                 t = sample_t(batch_size, device)
 
                 # Mixed precision context
-                context = torch.amp.autocast('cuda') if scaler else nullcontext()
+                context = torch.amp.autocast("cuda") if scaler else nullcontext()
 
                 with context:
                     # Flow matching step

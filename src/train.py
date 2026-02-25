@@ -197,7 +197,7 @@ def train_one_epoch(
         try:
             xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
 
-            context = torch.amp.autocast('cuda') if scaler else nullcontext()
+            context = torch.amp.autocast("cuda") if scaler else nullcontext()
             with context:
                 pred = model(xb)
                 loss = loss_fn(pred, yb) / grad_accum_steps
@@ -670,7 +670,7 @@ def train(
     )
 
     scaler = (
-        torch.amp.GradScaler('cuda')
+        torch.amp.GradScaler("cuda")
         if mixed_precision and torch.cuda.is_available()
         else None
     )
