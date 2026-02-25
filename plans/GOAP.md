@@ -218,6 +218,39 @@ Build a cats classifier and generator with web frontend, following the architect
 - [ ] **A22:** Test `modal run src/train_dit.py data/cats --steps 100` with empty volume (verify dataset downloads)
 - [ ] Verify image builds successfully with new `add_local_file` entries
 
+### Phase 13: PyTorch 2.10 Deprecation Fixes
+
+**Issue:** FutureWarning for deprecated `torch.cuda.amp.GradScaler` and `torch.cuda.amp.autocast`
+**ADR:** ADR-032 documents the PyTorch 2.10 API migration.
+
+#### Root Cause
+- PyTorch 2.10 deprecated `torch.cuda.amp.GradScaler()` and `torch.cuda.amp.autocast()`
+- New API: `torch.amp.GradScaler('cuda')` and `torch.amp.autocast('cuda')`
+- Also missing `volume_utils.py` from Modal container (like ADR-031)
+
+#### Completed Actions
+- [x] Add `volume_utils.py` to Modal container in train.py
+- [x] Add `volume_utils.py` to Modal container in train_dit.py
+- [x] Fix deprecated torch.cuda.amp.GradScaler() → torch.amp.GradScaler('cuda')
+- [x] Fix deprecated torch.cuda.amp.autocast() → torch.amp.autocast('cuda')
+
+#### Validation Pending
+- [ ] **A23:** Test Modal training runs without FutureWarnings
+- [ ] **A24:** Verify volume_utils cleanup works without import errors
+
+### Phase 14: Classifier Training Results
+
+**Completed:** Classifier training successful (resnet18, 1 epoch)
+- Val accuracy: **97.46%**
+- Checkpoint: `/outputs/checkpoints/classifier/2026-02-25/best_cats_model.pt`
+
+#### Actions
+- [x] Run classifier training on Modal GPU
+
+#### Next Steps
+- [ ] Export classifier to ONNX for frontend integration
+- [ ] Add classifier to web frontend (classify page)
+
 #### Phase 10.2: Git Branch Management
 - [ ] **A04:** Create branch `feature/production-deployment-2026`
 - [ ] **A05:** Commit code changes (validate_model.py, upload_to_hub.py)

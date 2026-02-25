@@ -316,6 +316,7 @@ image = (
     .add_local_file("src/dit.py", "/app/dit.py")
     .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
     .add_local_file("src/dataset.py", "/app/dataset.py")
+    .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
     .add_local_file("data/download.py", "/app/data/download.py")
     .add_local_file("data/download.sh", "/app/data/download.sh")
 )
@@ -622,7 +623,7 @@ def train_dit_local(
 
     # Mixed precision
     scaler = (
-        torch.cuda.amp.GradScaler()
+        torch.amp.GradScaler('cuda')
         if mixed_precision and torch.cuda.is_available()
         else None
     )
@@ -680,7 +681,7 @@ def train_dit_local(
                 t = sample_t(batch_size, device)
 
                 # Mixed precision context
-                context = torch.cuda.amp.autocast() if scaler else nullcontext()
+                context = torch.amp.autocast('cuda') if scaler else nullcontext()
 
                 with context:
                     # Flow matching step
