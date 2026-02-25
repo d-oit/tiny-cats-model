@@ -8,7 +8,8 @@ ort.env.wasm.wasmPaths = "/tiny-cats-model/";
 async function getExecutionProvider(): Promise<["wasm"] | ["webgpu"]> {
   if (typeof navigator !== "undefined") {
     try {
-      const gpu = await navigator.gpu;
+      // WebGPU type check: navigator.gpu may not be typed in all environments
+      const gpu = (navigator as any).gpu;
       if (gpu) {
         return ["webgpu"];
       }
