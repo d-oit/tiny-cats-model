@@ -296,6 +296,7 @@ volume_outputs = modal.Volume.from_name("dit-outputs", create_if_missing=True)
 volume_data = modal.Volume.from_name("dit-dataset", create_if_missing=True)
 
 # Optimized container image (ADR-022: fast builds with uv_pip_install)
+# Download scripts added for dataset download fallback (ADR-031)
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("wget", "tar", "curl", "git")
@@ -315,6 +316,8 @@ image = (
     .add_local_file("src/dit.py", "/app/dit.py")
     .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
     .add_local_file("src/dataset.py", "/app/dataset.py")
+    .add_local_file("data/download.py", "/app/data/download.py")
+    .add_local_file("data/download.sh", "/app/data/download.sh")
 )
 
 

@@ -182,6 +182,42 @@ Build a cats classifier and generator with web frontend, following the architect
 - [ ] **A18:** Run full Modal training job to verify end-to-end
 - [ ] Merge PR #21 to main
 
+### Phase 12: Modal Container Download Scripts Fix
+
+**Issue:** `bash: data/download.sh: No such file or directory` when dataset not cached in volume.
+**ADR:** ADR-031 documents the download scripts fix.
+
+#### Root Cause
+- Training scripts call `subprocess.run(["python", "data/download.py"])` when dataset missing
+- Download scripts (`data/download.py`, `data/download.sh`) not added to Modal container image
+- Image only included: `train.py`, `dataset.py`, `model.py` (classifier) or `train_dit.py`, `dit.py`, `flow_matching.py` (DiT)
+- **Fix:** Added download scripts to container image via `add_local_file`
+
+#### Completed Actions
+- [x] Create ADR-031: Modal Container Download Scripts Fix
+- [x] Update `src/train.py` - Added `data/download.py` and `data/download.sh` to image
+- [x] Update `src/train_dit.py` - Added `data/download.py` and `data/download.sh` to image
+- [x] Update GOAP.md with Phase 12 tracking
+
+#### Container File Layout (After Fix)
+```
+/app/
+├── train.py              # Training script (classifier)
+├── train_dit.py          # Training script (DiT)
+├── dataset.py            # Dataset utilities
+├── model.py              # Classifier model
+├── dit.py                # DiT model
+├── flow_matching.py      # Flow matching utilities
+└── data/
+    ├── download.py       # Python download script ✅ ADDED
+    └── download.sh       # Bash download script ✅ ADDED
+```
+
+#### Validation Pending
+- [ ] **A21:** Test `modal run src/train.py data/cats --epochs 1` with empty volume (verify dataset downloads)
+- [ ] **A22:** Test `modal run src/train_dit.py data/cats --steps 100` with empty volume (verify dataset downloads)
+- [ ] Verify image builds successfully with new `add_local_file` entries
+
 #### Phase 10.2: Git Branch Management
 - [ ] **A04:** Create branch `feature/production-deployment-2026`
 - [ ] **A05:** Commit code changes (validate_model.py, upload_to_hub.py)
@@ -228,21 +264,10 @@ Build a cats classifier and generator with web frontend, following the architect
 | A18 | ⏳ Pending (needs PR merge) | Validation | model-training | - |
 | A19 | ✅ Complete | PR | git-workflow | 2026-02-25T19:17 |
 | A20 | ✅ Complete | Vite Fix | code-quality | 2026-02-25T19:21 |
+| A21 | ⏳ Pending | Phase 12 | model-training | - |
+| A22 | ⏳ Pending | Phase 12 | model-training | - |
 
-**Progress:** 17/20 actions complete (85%)
-| A06 | ⏳ Pending | Commits | git-workflow |
-| A07 | ⏳ Pending | Commits | git-workflow |
-| A08 | ⏳ Pending | Push/CI | git-workflow |
-| A09 | ⏳ Pending | CI Monitor | ci-monitor |
-| A10 | ⏳ Pending | CI Fix | ci-monitor |
-| A11 | ⏳ Pending | Deployment | model-training |
-| A12 | ⏳ Pending | Deployment | model-training |
-| A13 | ⏳ Pending | Deployment | model-training |
-| A14 | ⏳ Pending | Docs | agents-md |
-| A15 | ⏳ Pending | Docs | agents-md |
-| A16 | ⏳ Pending | Phase 11 | model-training |
-| A17 | ⏳ Pending | Phase 11 | model-training |
-| A18 | ⏳ Pending | Phase 11 | model-training |
+**Progress:** 17/22 actions complete (77%)
 
 ## Implementation Summary (February 2026 Sprint)
 

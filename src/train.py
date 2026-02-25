@@ -197,7 +197,7 @@ def train_one_epoch(
         try:
             xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
 
-            context = torch.cuda.amp.autocast() if scaler else nullcontext()
+            context = torch.amp.autocast('cuda') if scaler else nullcontext()
             with context:
                 pred = model(xb)
                 loss = loss_fn(pred, yb) / grad_accum_steps
@@ -345,6 +345,7 @@ volume_outputs = modal.Volume.from_name("cats-model-outputs", create_if_missing=
 volume_data = modal.Volume.from_name("cats-dataset", create_if_missing=True)
 
 # Optimized container image (ADR-022: fast builds with uv_pip_install)
+# Download scripts added for dataset download fallback (ADR-031)
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("wget", "tar", "curl", "git")
@@ -363,6 +364,9 @@ image = (
     .add_local_file("src/train.py", "/app/train.py")
     .add_local_file("src/dataset.py", "/app/dataset.py")
     .add_local_file("src/model.py", "/app/model.py")
+    .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
+    .add_local_file("data/download.py", "/app/data/download.py")
+    .add_local_file("data/download.sh", "/app/data/download.sh")
 )
 
 
@@ -666,7 +670,7 @@ def train(
     )
 
     scaler = (
-        torch.cuda.amp.GradScaler()
+        torch.amp.GradScaler('cuda')
         if mixed_precision and torch.cuda.is_available()
         else None
     )
