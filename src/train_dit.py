@@ -288,44 +288,81 @@ class TrainingError(Exception):
     pass
 
 
-# Modal setup
-stub = modal.App("tiny-dit-training")
+# Modal setup (ADR-022, ADR-023, ADR-024, ADR-025)
+app = modal.App("tiny-dit-training")
 
+# Volume definitions (ADR-024: organized storage with explicit commits)
 volume_outputs = modal.Volume.from_name("dit-outputs", create_if_missing=True)
-volume_data = modal.Volume.from_name("dit-data", create_if_missing=True)
+volume_data = modal.Volume.from_name("dit-dataset", create_if_missing=True)
 
-LOCAL_SRC = Path(__file__).parent.parent.absolute()
-
+# Optimized container image (ADR-022: fast builds with uv_pip_install)
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .apt_install("wget", "tar", "curl")
-    .pip_install(
-        "torch>=2.0.0",
-        "torchvision>=0.15.0",
-        "Pillow>=9.0.0",
-        "tqdm>=4.65.0",
+    .apt_install("wget", "tar", "curl", "git")
+    .env(
+        {
+            "HF_XET_HIGH_PERFORMANCE": "1",  # Faster HuggingFace downloads
+            "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512",  # Memory optimization
+        }
     )
-    .add_local_dir(str(LOCAL_SRC), "/app", copy=True)
+    .uv_pip_install(
+        "torch==2.5.1",
+        "torchvision==0.20.1",
+        "pillow==11.0.0",
+        "tqdm==4.67.1",
+    )
+    .add_local_file("src/train_dit.py", "/app/train_dit.py")
+    .add_local_file("src/dit.py", "/app/dit.py")
+    .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
+    .add_local_file("src/dataset.py", "/app/dataset.py")
 )
 
 
-@stub.function(
+def _initialize_dit_container():
+    """Initialize container environment for faster DiT training start (ADR-025)."""
+    import torch
+
+    # Setup paths
+    sys.path.insert(0, "/app/src")
+    os.chdir("/app")
+
+    # Pre-import heavy modules
+    import torchvision  # noqa: F401
+
+    # Warm up CUDA
+    if torch.cuda.is_available():
+        _ = torch.zeros(1).cuda()
+        dummy_input = torch.randn(1, 3, 32, 32).cuda()
+        dummy_conv = torch.nn.Conv2d(3, 16, 3).cuda()
+        _ = dummy_conv(dummy_input)
+        del dummy_input, dummy_conv
+        torch.cuda.empty_cache()
+
+
+@app.function(
     image=image,
     volumes={
         "/outputs": volume_outputs,
         "/data": volume_data,
     },
-    gpu="A10G",  # Better for transformer training
-    timeout=7200,  # 2 hours max
+    gpu="A10G",  # Better for transformer training (ADR-023)
+    timeout=86400,  # 24 hours max for long training runs
+    # Retry configuration (ADR-023: automatic recovery from transient failures)
+    retries=modal.Retries(
+        max_retries=2,  # Fewer retries for long jobs
+        backoff_coefficient=2.0,
+        initial_delay=30.0,  # Longer initial delay
+        max_delay=60.0,  # Max allowed: 60 seconds
+    ),
 )
-def train_dit_modal(
+def train_dit_on_gpu(
     data_dir: str = "/data/cats",
     steps: int = 200_000,
     batch_size: int = 256,
     lr: float = 1e-4,
     image_size: int = 128,
-    output: str = "/outputs/dit_model.pt",
-    ema_output: str = "/outputs/dit_model_ema.pt",
+    output: str | None = None,
+    ema_output: str | None = None,
     num_workers: int = 0,
     mixed_precision: bool = True,
     gradient_clip: float = 1.0,
@@ -333,11 +370,11 @@ def train_dit_modal(
     log_interval: int = 100,
     save_interval: int = 10_000,
     sample_interval: int = 5_000,
-    log_file: str = "/outputs/dit_training.log",
+    log_file: str | None = None,
     ema_beta: float = 0.9999,
     seed: int = 42,
 ) -> dict[str, Any]:
-    """Modal function for GPU training.
+    """Modal function for DiT GPU training.
 
     Args:
         data_dir: Dataset directory.
@@ -345,8 +382,8 @@ def train_dit_modal(
         batch_size: Batch size.
         lr: Learning rate.
         image_size: Image size.
-        output: Output checkpoint path.
-        ema_output: EMA checkpoint path.
+        output: Output checkpoint path (auto-generated if None).
+        ema_output: EMA checkpoint path (auto-generated if None).
         num_workers: DataLoader workers.
         mixed_precision: Enable AMP.
         gradient_clip: Gradient clipping.
@@ -354,15 +391,29 @@ def train_dit_modal(
         log_interval: Logging frequency.
         save_interval: Checkpoint frequency.
         sample_interval: Sampling frequency.
-        log_file: Log file path.
+        log_file: Log file path (auto-generated if None).
         ema_beta: EMA decay.
         seed: Random seed.
 
     Returns:
         Training status dict.
     """
-    sys.path.insert(0, "/app/src")
-    os.chdir("/app")
+    # Initialize container (ADR-025)
+    _initialize_dit_container()
+
+    from datetime import datetime
+
+    # Create dated checkpoint directory (ADR-024: organized storage)
+    run_date = datetime.now().strftime("%Y-%m-%d")
+    checkpoint_dir = f"/outputs/checkpoints/dit/{run_date}"
+    Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+    samples_dir = f"{checkpoint_dir}/samples"
+    Path(samples_dir).mkdir(parents=True, exist_ok=True)
+
+    # Use dated directory for outputs and logs
+    output = output or f"{checkpoint_dir}/dit_model.pt"
+    ema_output = ema_output or f"{checkpoint_dir}/dit_model_ema.pt"
+    log_file = log_file or f"{checkpoint_dir}/dit_training.log"
 
     logger = setup_logging(log_file)
     logger.info("Starting TinyDiT Modal GPU training")
@@ -372,9 +423,9 @@ def train_dit_modal(
     )
 
     try:
-        # Download dataset if needed
-        if not Path(data_dir).exists():
-            logger.info("Downloading dataset...")
+        # Check dataset cache (ADR-024: dataset caching in volume)
+        if not Path(data_dir).exists() or not list(Path(data_dir).iterdir()):
+            logger.info("Dataset not found, downloading...")
             import subprocess
 
             result = subprocess.run(
@@ -390,7 +441,7 @@ def train_dit_modal(
             logger.info("Dataset ready")
 
         # Train
-        final_loss = train_dit(
+        final_loss = train_dit_local(
             data_dir=data_dir,
             steps=steps,
             batch_size=batch_size,
@@ -411,11 +462,17 @@ def train_dit_modal(
             logger=logger,
         )
 
+        # Commit volume after successful training (ADR-024: explicit commits)
+        volume_outputs.commit()
+        logger.info("Checkpoint committed to volume")
+
         logger.info("Training completed successfully")
         return {"status": "completed", "output": output, "final_loss": final_loss}
 
     except Exception as e:
         logger.error(f"Training failed: {e}", exc_info=True)
+        # Commit partial state on error
+        volume_outputs.commit()
         raise TrainingError(f"Training failed: {e}") from e
 
     finally:
@@ -457,7 +514,7 @@ def create_dataloader(
     )
 
 
-def train_dit(
+def train_dit_local(
     data_dir: str,
     steps: int = 200_000,
     batch_size: int = 256,
@@ -775,7 +832,7 @@ def train_dit(
         signal.signal(signal.SIGTERM, old_handler_term)
 
 
-@stub.local_entrypoint()
+@app.local_entrypoint()
 def main(
     data_dir: str = "/data/cats",
     steps: int = 200_000,
@@ -789,8 +846,13 @@ def main(
     gradient_clip: float = 1.0,
     warmup_steps: int = 10_000,
 ):
-    """Local entrypoint for Modal CLI."""
-    result = train_dit_modal.remote(
+    """Local entrypoint for Modal CLI.
+
+    Usage:
+        modal run src/train_dit.py data/cats --steps 200000
+        modal run src/train_dit.py -- --steps 200000 --batch-size 256 --lr 0.0001
+    """
+    result = train_dit_on_gpu.remote(
         data_dir=data_dir,
         steps=steps,
         batch_size=batch_size,
@@ -803,13 +865,13 @@ def main(
         gradient_clip=gradient_clip,
         warmup_steps=warmup_steps,
     )
-    print(f"Training result: {result}")
+    print(f"Training completed: {result}")
 
 
 if __name__ == "__main__":
     args = parse_args()
     try:
-        train_dit(
+        train_dit_local(
             data_dir=args.data_dir,
             steps=args.steps,
             batch_size=args.batch_size,
