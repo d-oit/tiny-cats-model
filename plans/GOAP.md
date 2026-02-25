@@ -156,6 +156,27 @@ Build a cats classifier and generator with web frontend, following the architect
 - [ ] **A02:** Validate Ruff linting on all Python code
 - [ ] **A03:** Validate TypeScript build
 
+### Phase 11: Modal Training Infrastructure Fix
+
+**Issue:** `ModuleNotFoundError: No module named 'dataset'` due to path mismatch.
+**ADR:** ADR-030 documents the Python path fix.
+
+#### Root Cause
+- Files added with `.add_local_file("src/dataset.py", "/app/dataset.py")` → files at `/app/`
+- Container init set `sys.path.insert(0, "/app/src")` → searched wrong directory
+- **Fix:** Changed `sys.path.insert(0, "/app")` to match file locations
+
+#### Completed Actions
+- [x] Create ADR-030: Modal Container Python Path Fix
+- [x] Update `src/train.py` - Fixed `_initialize_container()` sys.path
+- [x] Update `src/train_dit.py` - Fixed `_initialize_dit_container()` sys.path
+- [x] Update GOAP.md with Phase 11 tracking
+
+#### Validation Pending
+- [ ] **A16:** Test `modal run src/train.py --help` (verify no import errors)
+- [ ] **A17:** Test `modal run src/train_dit.py --help` (verify no import errors)
+- [ ] **A18:** Run full Modal training job to verify end-to-end
+
 #### Phase 10.2: Git Branch Management
 - [ ] **A04:** Create branch `feature/production-deployment-2026`
 - [ ] **A05:** Commit code changes (validate_model.py, upload_to_hub.py)
@@ -197,6 +218,9 @@ Build a cats classifier and generator with web frontend, following the architect
 | A13 | ⏳ Pending | Deployment | model-training |
 | A14 | ⏳ Pending | Docs | agents-md |
 | A15 | ⏳ Pending | Docs | agents-md |
+| A16 | ⏳ Pending | Phase 11 | model-training |
+| A17 | ⏳ Pending | Phase 11 | model-training |
+| A18 | ⏳ Pending | Phase 11 | model-training |
 
 ## Implementation Summary (February 2026 Sprint)
 

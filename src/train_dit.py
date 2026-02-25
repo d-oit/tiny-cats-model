@@ -319,11 +319,15 @@ image = (
 
 
 def _initialize_dit_container():
-    """Initialize container environment for faster DiT training start (ADR-025)."""
+    """Initialize container environment for faster DiT training start (ADR-025).
+
+    Note: sys.path set to /app to match file locations from add_local_file
+    (ADR-022, ADR-030). Files are placed at /app/ not /app/src/.
+    """
     import torch
 
-    # Setup paths
-    sys.path.insert(0, "/app/src")
+    # Setup paths - files are at /app/ via add_local_file (ADR-022, ADR-030)
+    sys.path.insert(0, "/app")
     os.chdir("/app")
 
     # Pre-import heavy modules
