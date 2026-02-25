@@ -1,0 +1,16 @@
+# Modal container image dependencies
+# Pinned versions for reproducible builds (ADR-022)
+# Use with: .uv_pip_install_from_requirements("requirements-modal.txt")
+
+# Core ML dependencies
+torch==2.5.1
+torchvision==0.20.1
+
+# Image processing
+pillow==11.0.0
+
+# Progress bars
+tqdm==4.67.1
+
+# Modal SDK (for local development)
+modal==0.72.0
