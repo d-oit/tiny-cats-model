@@ -46,6 +46,8 @@ import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
+from experiment_tracker import ExperimentTracker
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -635,6 +637,23 @@ def train_dit_local(
     ema.init(model)
     logger.info(f"EMA initialized with beta={ema_beta}")
 
+    tracker = ExperimentTracker("tiny-dit-cats")
+    params = {
+        "model": "TinyDiT",
+        "image_size": image_size,
+        "num_classes": num_classes,
+        "batch_size": batch_size,
+        "learning_rate": lr,
+        "mixed_precision": mixed_precision,
+        "gradient_clip": gradient_clip,
+        "warmup_steps": warmup_steps,
+        "steps": steps,
+        "ema_beta": ema_beta,
+    }
+    tracker.start_run(
+        params, run_name=f"dit_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    )
+
     # Resume from checkpoint
     start_step = 0
     if resume:
@@ -728,6 +747,14 @@ def train_dit_local(
                         f"Speed: {steps_per_sec:.1f} steps/s"
                     )
                     log_gpu_memory(logger, "  ")
+
+                    tracker.log_metrics(
+                        {
+                            "loss": avg_loss,
+                            "learning_rate": current_lr,
+                        },
+                        step=step,
+                    )
 
                     epoch_loss = 0.0
                     epoch_start = time.time()
@@ -833,6 +860,12 @@ def train_dit_local(
         )
 
         log_gpu_memory(logger, "Final | ")
+
+        tracker.log_metrics({"final_loss": best_loss, "total_steps": step})
+        tracker.log_artifact(output)
+        tracker.log_artifact(ema_output)
+        tracker.end_run()
+
         return best_loss
 
     finally:
