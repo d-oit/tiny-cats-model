@@ -1,7 +1,7 @@
 # ADR-012: Fix Flake8 Linting Errors in CI Pipeline
 
 **Date:** 2026-02-24  
-**Status:** Proposed  
+**Status:** Superseded by ADR-016 (Modern Python Code Quality 2026)  
 **Authors:** AI Agent  
 **Related:** ADR-005 (CI Pipeline Fixes), ADR-006 (CI Fix Workflow)
 
