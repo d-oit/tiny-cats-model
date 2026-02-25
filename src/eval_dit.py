@@ -185,8 +185,17 @@ def load_model(
     # Create model
     model = tinydit_128(num_classes=13).to(device)
 
-    # Load weights
-    model.load_state_dict(checkpoint["model_state_dict"])
+    # Load weights - support both checkpoint formats
+    if "model_state_dict" in checkpoint:
+        # Standard format from train_dit.py
+        model.load_state_dict(checkpoint["model_state_dict"])
+    elif "model" in checkpoint:
+        # Alternative format with 'model' key
+        model.load_state_dict(checkpoint["model"])
+    else:
+        raise KeyError(
+            f"Checkpoint missing 'model_state_dict' or 'model' key. Keys: {list(checkpoint.keys())}"
+        )
     model.eval()
 
     metadata = {
@@ -216,11 +225,17 @@ def apply_ema(
         checkpoint: Checkpoint with EMA shadow params.
         device: Device.
     """
-    if "ema_shadow_params" not in checkpoint:
+    # Support both checkpoint formats
+    shadow_params = None
+    if "ema_shadow_params" in checkpoint:
+        shadow_params = checkpoint["ema_shadow_params"]
+    elif "ema_params" in checkpoint:
+        shadow_params = checkpoint["ema_params"]
+
+    if shadow_params is None:
         print("Warning: No EMA weights found in checkpoint")
         return
 
-    shadow_params = checkpoint["ema_shadow_params"]
     for name, param in model.named_parameters():
         if name in shadow_params:
             param.data.copy_(shadow_params[name].data)

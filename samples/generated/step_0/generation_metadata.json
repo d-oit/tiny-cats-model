@@ -1,0 +1,78 @@
+{
+  "checkpoint": "checkpoints/tinydit_final.pt",
+  "step": 0,
+  "breeds_generated": [
+    {
+      "breed_idx": 0,
+      "breed_name": "Abyssinian",
+      "num_samples": 8
+    },
+    {
+      "breed_idx": 1,
+      "breed_name": "Bengal",
+      "num_samples": 8
+    },
+    {
+      "breed_idx": 2,
+      "breed_name": "Birman",
+      "num_samples": 8
+    },
+    {
+      "breed_idx": 3,
+      "breed_name": "Bombay",
+      "num_samples": 8
+    },
+    {
+      "breed_idx": 4,
+      "breed_name": "British_Shorthair",
+      "num_samples": 8
+    },
+    {
+      "breed_idx": 5,
+      "breed_name": "Egyptian_Mau",
+      "num_samples": 8
+    },
+    {
+      "breed_idx": 6,
+      "breed_name": "Maine_Coon",
+      "num_samples": 8
+    },
+    {
+      "breed_idx": 7,
+      "breed_name": "Persian",
+      "num_samples": 8
+    },
+    {
+      "breed_idx": 8,
+      "breed_name": "Ragdoll",
+      "num_samples": 8
+    },
+    {
+      "breed_idx": 9,
+      "breed_name": "Russian_Blue",
+      "num_samples": 8
+    },
+    {
+      "breed_idx": 10,
+      "breed_name": "Siamese",
+      "num_samples": 8
+    },
+    {
+      "breed_idx": 11,
+      "breed_name": "Sphynx",
+      "num_samples": 8
+    },
+    {
+      "breed_idx": 12,
+      "breed_name": "Other",
+      "num_samples": 8
+    }
+  ],
+  "samples_per_breed": 8,
+  "output_dir": "samples/generated",
+  "config": {
+    "num_steps": 50,
+    "cfg_scale": 1.5,
+    "image_size": 128
+  }
+}

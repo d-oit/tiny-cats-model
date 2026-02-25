@@ -39,8 +39,8 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] Add gradient clipping and OOM recovery
 - [x] Create TinyDiT training script with EMA support (ADR-017)
 - [x] Create evaluation script for generated samples (ADR-017)
-- [x] Train full model (200k steps, EMA) - **Checkpoint exists: checkpoints/tinydit_final.pt (129MB)**
-- [ ] Evaluate generated samples - **Ready: python src/eval_dit.py**
+- [x] Execute full model training on Modal GPU (200k steps) - **Checkpoint: checkpoints/tinydit_final.pt (129MB)**
+- [x] Evaluate generated samples - **Complete: 104 samples across 13 breeds (ADR-019)**
 
 ### Phase 4: ONNX Export
 - [x] Export model to ONNX format (export_onnx.py)
@@ -117,7 +117,7 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] Optimize ONNX model (quantization) - Implemented in `src/optimize_onnx.py` (75% size reduction)
 - [x] Export generator model (export_dit_onnx.py) - Implemented with CFG support
 - [x] Test and optimize inference latency - Benchmark page implemented
-- [ ] Evaluate generated samples - **Ready: python src/eval_dit.py**
+- [x] Evaluate generated samples - **Complete: 104 samples across 13 breeds (ADR-019)**
 
 ## Implementation Summary (February 2026 Sprint)
 
@@ -135,7 +135,7 @@ Build a cats classifier and generator with web frontend, following the architect
 - ✅ Modal GPU training configuration (A10G, 2 hour timeout)
 - ✅ Per-breed sample organization and grid visualization
 - ✅ **Training complete**: Checkpoint at `checkpoints/tinydit_final.pt` (129MB)
-  - Ready to evaluate: `python src/eval_dit.py`
+- ✅ **Evaluation complete**: 104 samples generated across 13 breeds (ADR-019)
 
 #### Phase 4: ONNX Export - 100% Complete
 - ✅ Created `src/test_onnx_inference.py` - Validates ONNX vs PyTorch consistency
@@ -159,10 +159,10 @@ Build a cats classifier and generator with web frontend, following the architect
 - ✅ Fix TypeScript 5.8 upgrade for frontend build (ADR-018)
 
 ### Remaining Work
-- **Phase 3: Modal Training** - Evaluate generated samples
+- **Phase 3: Modal Training** - 100% Complete
   - ✅ Training complete: `checkpoints/tinydit_final.pt` (129MB)
-  - ✅ Evaluation script ready (`src/eval_dit.py`)
-  - ⏳ Next: Run evaluation to assess sample quality
+  - ✅ Evaluation complete: 104 samples generated across 13 breeds
+  - ✅ ADR-019: Sample evaluation results documented
 
 ### Success Metrics Status
 | Metric | Target | Status |
@@ -174,8 +174,8 @@ Build a cats classifier and generator with web frontend, following the architect
 | CI | All checks pass | ✅ All jobs passing (Ruff + TS 5.8) |
 | Quality Gate | Local = CI | ✅ ADR-014 implemented |
 | Code Quality | 2026 stack | ✅ ADR-016 (Ruff) - All workflows migrated |
-| Training | 200k steps with EMA | ✅ Complete (checkpoint exists) |
-| Evaluation | Generated samples | ⏳ Ready to run |
+| Training | 200k steps with EMA | ✅ Complete (checkpoint: tinydit_final.pt) |
+| Evaluation | Generated samples | ✅ Complete (104 samples, ADR-019) |
 
 ## Success Metrics
 - Dataset: 12 cat breeds + other class ready
