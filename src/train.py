@@ -10,13 +10,15 @@ Features:
 - Memory management (GC, CUDA cache)
 - Learning rate warmup
 - Checkpoint recovery
+- Modal GPU training with optimizations (ADR-022 to ADR-025)
 
 Usage:
     python src/train.py data/cats
     python src/train.py data/cats --epochs 20 --batch-size 64 --backbone resnet34
 
 Modal GPU training:
-    modal run src/train.py
+    modal run src/train.py data/cats
+    modal run src/train.py -- --epochs 20 --batch-size 64 --backbone resnet34
 """
 
 from __future__ import annotations
@@ -40,16 +42,13 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
-# Add project root to path for relative imports when run directly
-sys.path.insert(0, str(Path(__file__).parent))
-
 
 # Configure logging
 def setup_logging(log_file: str | None = None) -> logging.Logger:
     """Setup logging with console and optional file handlers.
 
     Args:
-        log_file: Optional path to log file. If None, only console logging.
+        log_file: Optional path to log file.
 
     Returns:
         Configured logger instance.
@@ -58,18 +57,15 @@ def setup_logging(log_file: str | None = None) -> logging.Logger:
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
 
-    # Format with timestamp
     formatter = logging.Formatter(
         "%(asctime)s | %(levelname)-8s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     )
 
-    # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # File handler (optional)
     if log_file:
         Path(log_file).parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_file)
@@ -141,23 +137,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def set_seed(seed: int) -> None:
-    """Set random seed for reproducibility.
-
-    Args:
-        seed: Random seed value.
-    """
+    """Set random seed for reproducibility."""
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
 
 def log_gpu_memory(logger: logging.Logger, prefix: str = "") -> None:
-    """Log GPU memory usage if CUDA is available.
-
-    Args:
-        logger: Logger instance.
-        prefix: Optional prefix for the log message.
-    """
+    """Log GPU memory usage if CUDA is available."""
     if torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / (1024**2)
         reserved = torch.cuda.memory_reserved() / (1024**2)
@@ -198,23 +185,7 @@ def train_one_epoch(
     gradient_clip: float = 1.0,
     grad_accum_steps: int = 1,
 ) -> tuple[float, float]:
-    """Run one training epoch with mixed precision and gradient clipping.
-
-    Args:
-        model: The model to train.
-        loader: DataLoader for training data.
-        optimizer: Optimizer instance.
-        loss_fn: Loss function.
-        device: Device to train on.
-        epoch: Current epoch number.
-        logger: Logger instance.
-        scaler: Optional GradScaler for mixed precision.
-        gradient_clip: Max gradient norm (0 to disable).
-        grad_accum_steps: Number of gradient accumulation steps.
-
-    Returns:
-        Tuple of (average_loss, accuracy).
-    """
+    """Run one training epoch with mixed precision and gradient clipping."""
     model.train()
     total_loss = 0.0
     correct = 0
@@ -226,19 +197,16 @@ def train_one_epoch(
         try:
             xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
 
-            # Mixed precision context
             context = torch.cuda.amp.autocast() if scaler else nullcontext()
             with context:
                 pred = model(xb)
                 loss = loss_fn(pred, yb) / grad_accum_steps
 
-            # Backward pass with gradient scaling
             if scaler:
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
 
-            # Gradient accumulation and clipping
             if (batch_idx + 1) % grad_accum_steps == 0:
                 if scaler:
                     if gradient_clip > 0:
@@ -256,7 +224,6 @@ def train_one_epoch(
                     optimizer.step()
                 optimizer.zero_grad()
 
-            # Metrics (detach to avoid gradient accumulation)
             with torch.no_grad():
                 total_loss += loss.item() * xb.size(0) * grad_accum_steps
                 correct += (pred.argmax(dim=1) == yb).sum().item()
@@ -287,18 +254,7 @@ def validate(
     device: torch.device,
     logger: logging.Logger,
 ) -> tuple[float, float]:
-    """Run validation with memory cleanup.
-
-    Args:
-        model: The model to validate.
-        loader: DataLoader for validation data.
-        loss_fn: Loss function.
-        device: Device to use.
-        logger: Logger instance.
-
-    Returns:
-        Tuple of (average_loss, accuracy).
-    """
+    """Run validation with memory cleanup."""
     model.eval()
     total_loss = 0.0
     correct = 0
@@ -320,7 +276,6 @@ def validate(
         return total_loss / max(total, 1), correct / max(total, 1)
 
     finally:
-        # Cleanup after validation
         cleanup_memory()
         log_gpu_memory(logger, prefix="After validation | ")
 
@@ -334,17 +289,7 @@ def save_checkpoint(
     logger: logging.Logger,
     is_best: bool = False,
 ) -> None:
-    """Save training checkpoint.
-
-    Args:
-        model: Model to save.
-        optimizer: Optimizer state.
-        epoch: Current epoch.
-        val_acc: Validation accuracy.
-        path: Checkpoint path.
-        logger: Logger instance.
-        is_best: Whether this is the best model so far.
-    """
+    """Save training checkpoint."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -359,7 +304,6 @@ def save_checkpoint(
     torch.save(checkpoint, path)
     logger.info(f"Saved checkpoint to {path} (val_acc={val_acc:.4f})")
 
-    # Save best model separately
     if is_best:
         best_path = path.parent / f"best_{path.name}"
         torch.save(checkpoint, best_path)
@@ -372,17 +316,7 @@ def load_checkpoint(
     optimizer: torch.optim.Optimizer | None = None,
     logger: logging.Logger | None = None,
 ) -> tuple[nn.Module, torch.optim.Optimizer | None, int]:
-    """Load checkpoint for resume training.
-
-    Args:
-        path: Checkpoint path.
-        model: Model to load weights into.
-        optimizer: Optional optimizer to load state into.
-        logger: Optional logger instance.
-
-    Returns:
-        Tuple of (model, optimizer, start_epoch).
-    """
+    """Load checkpoint for resume training."""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {path}")
@@ -400,27 +334,60 @@ def load_checkpoint(
     return model, optimizer, start_epoch
 
 
-stub = modal.App("tiny-cats-model")
+# =============================================================================
+# Modal Configuration (ADR-022, ADR-023, ADR-024, ADR-025)
+# =============================================================================
 
+app = modal.App("tiny-cats-model")
+
+# Volume definitions (ADR-024: organized storage with explicit commits)
 volume_outputs = modal.Volume.from_name("cats-model-outputs", create_if_missing=True)
-volume_data = modal.Volume.from_name("cats-model-data", create_if_missing=True)
+volume_data = modal.Volume.from_name("cats-dataset", create_if_missing=True)
 
-LOCAL_SRC = Path(__file__).parent.parent.absolute()
-
+# Optimized container image (ADR-022: fast builds with uv_pip_install)
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .apt_install("wget", "tar", "curl")
-    .pip_install(
-        "torch>=2.0.0",
-        "torchvision>=0.15.0",
-        "Pillow>=9.0.0",
-        "tqdm>=4.65.0",
+    .apt_install("wget", "tar", "curl", "git")
+    .env(
+        {
+            "HF_XET_HIGH_PERFORMANCE": "1",  # Faster HuggingFace downloads
+            "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512",  # Memory optimization
+        }
     )
-    .add_local_dir(str(LOCAL_SRC), "/app", copy=True)
+    .uv_pip_install(
+        "torch==2.5.1",
+        "torchvision==0.20.1",
+        "pillow==11.0.0",
+        "tqdm==4.67.1",
+    )
+    .add_local_file("src/train.py", "/app/train.py")
+    .add_local_file("src/dataset.py", "/app/dataset.py")
+    .add_local_file("src/model.py", "/app/model.py")
 )
 
 
-@stub.function(
+def _initialize_container():
+    """Initialize container environment for faster training start (ADR-025)."""
+    import torch
+
+    # Setup paths
+    sys.path.insert(0, "/app/src")
+    os.chdir("/app")
+
+    # Pre-import heavy modules
+    import torchvision  # noqa: F401
+
+    # Warm up CUDA
+    if torch.cuda.is_available():
+        _ = torch.zeros(1).cuda()
+        dummy_input = torch.randn(1, 3, 32, 32).cuda()
+        dummy_conv = torch.nn.Conv2d(3, 16, 3).cuda()
+        _ = dummy_conv(dummy_input)
+        del dummy_input, dummy_conv
+        torch.cuda.empty_cache()
+
+
+@app.function(
     image=image,
     volumes={
         "/outputs": volume_outputs,
@@ -428,20 +395,26 @@ image = (
     },
     gpu="T4",
     timeout=3600,
+    # Retry configuration (ADR-023: automatic recovery from transient failures)
+    retries=modal.Retries(
+        max_retries=3,
+        backoff_coefficient=2.0,
+        initial_delay=10.0,
+        max_delay=60.0,  # Max allowed: 60 seconds
+    ),
 )
-def train_modal(
+def train_on_gpu(
     data_dir: str = "/data/cats",
     epochs: int = 10,
     batch_size: int = 32,
     lr: float = 1e-4,
     backbone: str = "resnet18",
-    output: str = "/outputs/cats_model.pt",
+    output: str | None = None,
     num_workers: int = 0,
     pretrained: bool = True,
     mixed_precision: bool = True,
     gradient_clip: float = 1.0,
     warmup_epochs: int = 2,
-    log_file: str = "/outputs/training.log",
 ) -> dict[str, Any]:
     """Modal function for GPU training with error handling.
 
@@ -451,19 +424,29 @@ def train_modal(
         batch_size: Batch size.
         lr: Learning rate.
         backbone: Model backbone.
-        output: Output checkpoint path.
+        output: Output checkpoint path (auto-generated if None).
         num_workers: DataLoader workers.
         pretrained: Use pretrained weights.
         mixed_precision: Enable AMP training.
         gradient_clip: Gradient clipping value.
         warmup_epochs: LR warmup epochs.
-        log_file: Path to log file.
 
     Returns:
         Dictionary with training status and output path.
     """
-    sys.path.insert(0, "/app/src")
-    os.chdir("/app")
+    # Initialize container (ADR-025: cold start optimization)
+    _initialize_container()
+
+    from datetime import datetime
+
+    # Create dated checkpoint directory (ADR-024: organized storage)
+    run_date = datetime.now().strftime("%Y-%m-%d")
+    checkpoint_dir = f"/outputs/checkpoints/classifier/{run_date}"
+    Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+
+    # Use dated directory for output and logs
+    output = output or f"{checkpoint_dir}/cats_model.pt"
+    log_file = f"{checkpoint_dir}/training.log"
 
     # Setup logging
     logger = setup_logging(log_file)
@@ -473,19 +456,18 @@ def train_modal(
     )
 
     try:
-        # Download dataset if needed
-        if not Path(data_dir).exists():
-            logger.info("Downloading dataset...")
+        # Check dataset cache (ADR-024: dataset caching in volume)
+        if not Path(data_dir).exists() or not list(Path(data_dir).iterdir()):
+            logger.info("Dataset not found, downloading...")
             Path("/data").mkdir(parents=True, exist_ok=True)
 
-            # Try Python download script first (more reliable in containers)
             result = subprocess.run(
                 ["python", "data/download.py"],
                 cwd="/app",
                 env={**os.environ, "DATA_DIR": "/data", "CATS_DIR": "/data/cats"},
                 capture_output=True,
                 text=True,
-                timeout=600,  # 10 minute timeout for download
+                timeout=600,
             )
 
             if result.returncode != 0:
@@ -519,28 +501,85 @@ def train_modal(
             logger=logger,
         )
 
+        # Commit volume after successful training (ADR-024: explicit commits)
+        volume_outputs.commit()
+        logger.info("Checkpoint committed to volume")
+
+        # Cleanup old checkpoints (keep last 5)
+        try:
+            from volume_utils import cleanup_old_checkpoints
+
+            cleanup_old_checkpoints(
+                volume_outputs, "/outputs/checkpoints/classifier", keep_last_n=5
+            )
+        except Exception as e:
+            logger.warning(f"Cleanup failed: {e}")
+
         logger.info("Training completed successfully")
         return {"status": "completed", "output": output, "val_acc": val_acc}
 
     except subprocess.CalledProcessError as e:
         logger.error(f"Dataset download failed: {e}")
         logger.error(f"stdout: {e.stdout}, stderr: {e.stderr}")
+        volume_outputs.commit()
         raise TrainingError(f"Dataset download failed: {e}") from e
 
     except RuntimeError as e:
         logger.error(f"Runtime error during training: {e}")
         log_gpu_memory(logger, "Before cleanup | ")
         cleanup_memory()
+        volume_outputs.commit()
         raise TrainingError(f"Training failed: {e}") from e
 
     except Exception as e:
         logger.error(f"Unexpected error: {e}", exc_info=True)
+        volume_outputs.commit()
         raise TrainingError(f"Training failed with unexpected error: {e}") from e
 
     finally:
-        # Final cleanup
         cleanup_memory()
         logger.info("Final memory cleanup completed")
+
+
+@app.local_entrypoint()
+def main(
+    data_dir: str = "/data/cats",
+    epochs: int = 10,
+    batch_size: int = 32,
+    lr: float = 1e-4,
+    backbone: str = "resnet18",
+    output: str | None = None,
+    num_workers: int = 0,
+    pretrained: bool = True,
+    mixed_precision: bool = True,
+    gradient_clip: float = 1.0,
+    warmup_epochs: int = 2,
+):
+    """Local entrypoint for Modal CLI.
+
+    Usage:
+        modal run src/train.py data/cats --epochs 20 --batch-size 64
+        modal run src/train.py -- --epochs 20 --batch-size 64 --backbone resnet34
+    """
+    result = train_on_gpu.remote(
+        data_dir=data_dir,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        backbone=backbone,
+        output=output,
+        num_workers=num_workers,
+        pretrained=pretrained,
+        mixed_precision=mixed_precision,
+        gradient_clip=gradient_clip,
+        warmup_epochs=warmup_epochs,
+    )
+    print(f"Training completed: {result}")
+
+
+# =============================================================================
+# Local Training Functions (unchanged from original)
+# =============================================================================
 
 
 def train(
@@ -559,28 +598,7 @@ def train(
     logger: logging.Logger | None = None,
     seed: int = 42,
 ) -> float:
-    """Full training loop with validation, checkpointing, and memory management.
-
-    Args:
-        data_dir: Path to dataset directory.
-        epochs: Number of epochs.
-        batch_size: Batch size.
-        lr: Learning rate.
-        backbone: Model backbone.
-        output: Output checkpoint path.
-        num_workers: DataLoader workers.
-        pretrained: Use pretrained weights.
-        mixed_precision: Enable AMP training.
-        gradient_clip: Gradient clipping value.
-        warmup_epochs: LR warmup epochs.
-        log_file: Path to log file.
-        logger: Logger instance.
-        seed: Random seed.
-
-    Returns:
-        Best validation accuracy achieved.
-    """
-    # Setup logging if not provided
+    """Full training loop with validation, checkpointing, and memory management."""
     if logger is None:
         logger = setup_logging(log_file)
 
@@ -588,16 +606,13 @@ def train(
     logger.info("Starting cats classifier training")
     logger.info(f"Configuration: {locals()}")
 
-    # Set seed for reproducibility
     set_seed(seed)
     logger.info(f"Random seed set to {seed}")
 
-    # Validate inputs
     data_path = Path(data_dir)
     if not data_path.exists():
         raise DataLoadError(f"Dataset directory not found: {data_path}")
 
-    # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
@@ -605,11 +620,9 @@ def train(
         logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
         log_gpu_memory(logger, "Initial | ")
 
-    # Import here to avoid circular imports
     from dataset import cats_dataloader
     from model import cats_model, count_parameters
 
-    # Create data loaders
     try:
         train_loader, val_loader = cats_dataloader(
             root=data_dir,
@@ -623,7 +636,6 @@ def train(
     except Exception as e:
         raise DataLoadError(f"Failed to create data loaders: {e}") from e
 
-    # Create model
     num_classes = len(train_loader.dataset.dataset.classes)  # type: ignore
     model = cats_model(
         num_classes=num_classes,
@@ -636,11 +648,9 @@ def train(
         f"Parameters: {count_parameters(model):,}"
     )
 
-    # Optimizer and loss
     optimizer = Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     loss_fn = nn.CrossEntropyLoss()
 
-    # Learning rate scheduler with warmup
     warmup_scheduler = LinearLR(
         optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs
     )
@@ -651,7 +661,6 @@ def train(
         milestones=[warmup_epochs],
     )
 
-    # Mixed precision scaler
     scaler = (
         torch.cuda.amp.GradScaler()
         if mixed_precision and torch.cuda.is_available()
@@ -660,15 +669,11 @@ def train(
     if scaler:
         logger.info("Mixed precision training enabled (AMP)")
 
-    # Gradient accumulation warning
     if batch_size < 32:
         logger.warning(f"Small batch size ({batch_size}) may affect training stability")
 
-    # Training loop with error handling
     best_val_acc = 0.0
     start_epoch = 1
-
-    # Handle graceful shutdown
     shutdown_requested = False
 
     def signal_handler(signum: int, frame: Any) -> None:
@@ -684,7 +689,6 @@ def train(
             epoch_start = time.time()
 
             try:
-                # Train
                 train_loss, train_acc = train_one_epoch(
                     model=model,
                     loader=train_loader,
@@ -697,7 +701,6 @@ def train(
                     gradient_clip=gradient_clip,
                 )
 
-                # Validate
                 val_loss, val_acc = validate(
                     model=model,
                     loader=val_loader,
@@ -706,14 +709,11 @@ def train(
                     logger=logger,
                 )
 
-                # Update scheduler
                 scheduler.step()
                 current_lr = scheduler.get_last_lr()[0]
 
-                # Timing
                 elapsed = time.time() - epoch_start
 
-                # Log epoch summary
                 logger.info(
                     f"Epoch {epoch:>3}/{epochs} | "
                     f"Train loss: {train_loss:.4f} acc: {train_acc:.3f} | "
@@ -722,7 +722,6 @@ def train(
                     f"Time: {elapsed:.1f}s"
                 )
 
-                # Save checkpoint
                 is_best = val_acc > best_val_acc
                 if is_best:
                     best_val_acc = val_acc
@@ -738,10 +737,8 @@ def train(
                         is_best=is_best,
                     )
 
-                # Memory cleanup after each epoch
                 cleanup_memory()
 
-                # Check for shutdown request
                 if shutdown_requested:
                     logger.info("Shutdown requested, saving checkpoint and stopping...")
                     save_checkpoint(
@@ -759,13 +756,11 @@ def train(
                 if "out of memory" in str(e).lower():
                     logger.error(f"OOM at epoch {epoch}, trying to recover...")
                     cleanup_memory()
-                    # Try to continue with next epoch
                     continue
                 raise
 
             except Exception as e:
                 logger.error(f"Error in epoch {epoch}: {e}", exc_info=True)
-                # Save checkpoint on error
                 save_checkpoint(
                     model=model,
                     optimizer=optimizer,
@@ -785,40 +780,8 @@ def train(
         return best_val_acc
 
     finally:
-        # Restore signal handlers
         signal.signal(signal.SIGINT, old_handler)
         signal.signal(signal.SIGTERM, old_handler_term)
-
-
-@stub.local_entrypoint()
-def main(
-    data_dir: str = "/data/cats",
-    epochs: int = 10,
-    batch_size: int = 32,
-    lr: float = 1e-4,
-    backbone: str = "resnet18",
-    output: str = "/outputs/cats_model.pt",
-    num_workers: int = 0,
-    pretrained: bool = True,
-    mixed_precision: bool = True,
-    gradient_clip: float = 1.0,
-    warmup_epochs: int = 2,
-):
-    """Local entrypoint for Modal CLI."""
-    result = train_modal.remote(
-        data_dir=data_dir,
-        epochs=epochs,
-        batch_size=batch_size,
-        lr=lr,
-        backbone=backbone,
-        output=output,
-        num_workers=num_workers,
-        pretrained=pretrained,
-        mixed_precision=mixed_precision,
-        gradient_clip=gradient_clip,
-        warmup_epochs=warmup_epochs,
-    )
-    print(f"Training result: {result}")
 
 
 if __name__ == "__main__":
