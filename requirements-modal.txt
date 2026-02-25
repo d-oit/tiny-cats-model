@@ -3,11 +3,11 @@
 # Use with: .uv_pip_install_from_requirements("requirements-modal.txt")
 
 # Core ML dependencies
-torch==2.5.1
+torch==2.8.0
 torchvision==0.20.1
 
 # Image processing
-pillow==11.0.0
+pillow==12.1.1
 
 # Progress bars
 tqdm==4.67.1
