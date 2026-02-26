@@ -14,13 +14,13 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import torch
-
 
 try:
     import mlflow
@@ -135,10 +135,8 @@ class ExperimentTracker:
         if not self._enabled or self.run is None:
             return
 
-        try:
+        with contextlib.suppress(Exception):
             mlflow.pytorch.log_model(model, artifact_path, **kwargs)
-        except Exception:
-            pass
 
     def log_artifact(
         self, local_path: str | Path, artifact_path: str | None = None
@@ -156,10 +154,8 @@ class ExperimentTracker:
         if not local_path.exists():
             return
 
-        try:
+        with contextlib.suppress(Exception):
             mlflow.log_artifact(str(local_path), artifact_path)
-        except Exception:
-            pass
 
     def log_image(self, image: torch.Tensor | Any, name: str) -> None:
         """Log an image tensor.
@@ -172,7 +168,6 @@ class ExperimentTracker:
             return
 
         try:
-            import numpy as np
             from PIL import Image
 
             if isinstance(image, torch.Tensor):
@@ -197,7 +192,7 @@ class ExperimentTracker:
         mlflow.end_run()
         self.run = None
 
-    def __enter__(self) -> "ExperimentTracker":
+    def __enter__(self) -> ExperimentTracker:
         """Context manager entry."""
         return self
 
