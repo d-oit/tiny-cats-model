@@ -17,7 +17,7 @@ export interface ModelConfig {
 
 export const MODEL_CONFIGS: Record<ModelType, ModelConfig> = {
   cats: {
-    modelPath: "https://huggingface.co/d4oit/tiny-cats-model/resolve/main/cats_classifier.onnx",
+    modelPath: "/cats_quantized.onnx",
     imgDims: [224, 224],
     numClasses: 2,
     classNames: ["cat", "not_cat"],
@@ -55,7 +55,7 @@ export interface GeneratorConfig {
 }
 
 export const GENERATOR_CONFIG: GeneratorConfig = {
-  modelPath: "https://huggingface.co/d4oit/tiny-cats-model/resolve/main/cats_dit.onnx",
+  modelPath: "/generator_quantized.onnx",
   imgDims: [128, 128],
   numBreeds: 13,
   defaultSteps: 50,
