@@ -450,7 +450,7 @@ def upload_to_huggingface(
 
     # Create temporary directory for upload
     with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir = Path(tmpdir)
+        tmpdir_path = Path(tmpdir)
 
         # Load evaluation and benchmark results
         evaluation_results = None
@@ -470,14 +470,14 @@ def upload_to_huggingface(
             benchmark_results=benchmark_results,
             repo_id=repo_id,
         )
-        card.save(tmpdir / "README.md")
+        card.save(tmpdir_path / "README.md")
 
         # Organize files for upload
-        classifier_dir = tmpdir / "classifier"
-        generator_dir = tmpdir / "generator"
-        evaluation_dir = tmpdir / "evaluation"
-        benchmarks_dir = tmpdir / "benchmarks"
-        samples_upload_dir = tmpdir / "samples"
+        classifier_dir = tmpdir_path / "classifier"
+        generator_dir = tmpdir_path / "generator"
+        evaluation_dir = tmpdir_path / "evaluation"
+        benchmarks_dir = tmpdir_path / "benchmarks"
+        samples_upload_dir = tmpdir_path / "samples"
 
         classifier_dir.mkdir(exist_ok=True)
         generator_dir.mkdir(exist_ok=True)

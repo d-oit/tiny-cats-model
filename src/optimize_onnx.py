@@ -192,7 +192,7 @@ class GeneratorCalibrationDataReader(CalibrationDataReader):
                 }
             )
 
-        return data
+        return data  # type: ignore[return-value]
 
     def get_next(self) -> dict[str, np.ndarray] | None:
         """Get next calibration sample.
