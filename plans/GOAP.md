@@ -357,6 +357,26 @@ Build a cats classifier and generator with web frontend, following the architect
   - ✅ Evaluation complete: 104 samples generated across 13 breeds
   - ✅ ADR-019: Sample evaluation results documented
 
+### Phase 15: Implementation Gaps (ADR-033)
+
+**Analysis:** ADR-033 documents critical gaps identified by analysis swarm.
+
+#### Critical Fixes (Blocking)
+- [ ] Add mlflow to requirements.txt (priority: high)
+- [ ] Create src/export_classifier_onnx.py for frontend classify (priority: high)
+- [ ] Align frontend model paths with exported ONNX files (priority: high)
+- [ ] Quantize generator.onnx (132MB → smaller) (priority: high)
+
+#### Important Fixes
+- [ ] Add WebGPU fallback to WASM in inference.worker.ts (priority: medium)
+- [ ] Add E2E tests for inference and generation (priority: medium)
+- [ ] Add automated HuggingFace upload to CI workflow (priority: medium)
+
+#### Minor Fixes
+- [ ] Add offline fallback if HuggingFace unavailable (priority: low)
+- [ ] Add file size validation on image upload (priority: low)
+- [ ] Test Python 3.12 compatibility (Modal uses 3.12) (priority: low)
+
 ### Success Metrics Status
 | Metric | Target | Status |
 |--------|--------|--------|
