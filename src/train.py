@@ -42,6 +42,8 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
+from experiment_tracker import ExperimentTracker
+
 
 # Configure logging
 def setup_logging(log_file: str | None = None) -> logging.Logger:
@@ -656,6 +658,23 @@ def train(
         f"Parameters: {count_parameters(model):,}"
     )
 
+    tracker = ExperimentTracker("tiny-cats-classifier")
+    params = {
+        "backbone": backbone,
+        "num_classes": num_classes,
+        "batch_size": batch_size,
+        "learning_rate": lr,
+        "pretrained": pretrained,
+        "mixed_precision": mixed_precision,
+        "gradient_clip": gradient_clip,
+        "warmup_epochs": warmup_epochs,
+        "epochs": epochs,
+        "seed": seed,
+    }
+    tracker.start_run(
+        params, run_name=f"{backbone}_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    )
+
     optimizer = Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     loss_fn = nn.CrossEntropyLoss()
 
@@ -730,6 +749,18 @@ def train(
                     f"Time: {elapsed:.1f}s"
                 )
 
+                tracker.log_metrics(
+                    {
+                        "train_loss": train_loss,
+                        "train_accuracy": train_acc,
+                        "val_loss": val_loss,
+                        "val_accuracy": val_acc,
+                        "learning_rate": current_lr,
+                        "epoch": epoch,
+                    },
+                    step=epoch,
+                )
+
                 is_best = val_acc > best_val_acc
                 if is_best:
                     best_val_acc = val_acc
@@ -784,6 +815,10 @@ def train(
         logger.info(f"Training complete. Best val accuracy: {best_val_acc:.4f}")
         logger.info(f"Model saved to: {output}")
         log_gpu_memory(logger, "Final | ")
+
+        tracker.log_metrics({"best_val_accuracy": best_val_acc})
+        tracker.log_artifact(output)
+        tracker.end_run()
 
         return best_val_acc
 
