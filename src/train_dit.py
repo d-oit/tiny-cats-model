@@ -533,7 +533,9 @@ def create_dataloader(
     from dataset import build_enhanced_transforms
 
     transform = build_enhanced_transforms(
-        train=True, image_size=image_size, augmentation_level=augmentation_level  # type: ignore[arg-type]
+        train=True,
+        image_size=image_size,
+        augmentation_level=augmentation_level,  # type: ignore[arg-type]
     )
     dataset = ImageFolder(data_dir, transform=transform)
 
