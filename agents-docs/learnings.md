@@ -16,6 +16,36 @@ After each task, capture learnings here. Use this for continuous improvement.
 
 ## Key Learnings
 
+### feat: fix frontend model paths, quantize generator, add WebGPU fallback
+
+**Date**: 2026-02-26 09:25:00 +0000
+**Type**: feature
+**Areas**: source, frontend, ml
+
+**What worked**: 
+- Analysis swarm (RYAN, FLASH, SOCRATES) effectively identified implementation gaps
+- Using local quantized ONNX models instead of HuggingFace URLs enables frontend to work without model upload
+- WebGPU fallback pattern in inference.worker.ts was replicable to generation.worker.ts
+
+**Issues encountered**:
+- Generator ONNX was 132MB (too large for web)
+- Frontend constants.ts pointed to HuggingFace URLs that don't exist yet
+- Mypy type error in experiment_tracker.py (self.run type annotation)
+
+**Fix applied**:
+- Ran optimize_onnx.py on generator.onnx → 33MB (75% reduction)
+- Changed constants.ts to use local paths (/cats_quantized.onnx, /generator_quantized.onnx)
+- Added getExecutionProvider() and loadOrt() to generation.worker.ts
+- Added type annotation `self.run: Any = None` to fix mypy
+
+**Pattern extracted**:
+1. Always use local models during development, upload to HuggingFace as separate step
+2. WebGPU fallback pattern: getExecutionProvider() → loadOrt() → use ortInstance for tensors
+3. When adding new dependencies ( mypy locallymlflow), run before pushing
+
+**Related**: ADR-033, plans/GOAP.md Phase 15
+
+
 ### feat: add ci-monitor skill and update GOAP progress
 
 **Date**: 2026-02-24 17:33:07 +0000
