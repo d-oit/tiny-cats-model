@@ -97,6 +97,8 @@ class GenerationEngine {
   async loadModel(): Promise<string> {
     console.log("Loading generator model...");
     try {
+      console.log("Fetching model from:", this.config.modelPath);
+
       ortInstance = await loadOrt();
       this.executionProvider = (await getExecutionProvider())[0];
       console.log("Using execution provider:", this.executionProvider);
