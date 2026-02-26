@@ -360,9 +360,10 @@ Build a cats classifier and generator with web frontend, following the architect
 ### Phase 15: Implementation Gaps (ADR-033)
 
 **Analysis:** ADR-033 documents critical gaps identified by analysis swarm.
+**Status:** In Progress - Implementing missing features for HF Hub integration.
 
 #### Critical Fixes (Blocking)
-- [ ] Add mlflow to requirements.txt (priority: high)
+- [x] Add mlflow to requirements.txt (priority: high) - **Already present**
 - [ ] Create src/export_classifier_onnx.py for frontend classify (priority: high)
 - [ ] Align frontend model paths with exported ONNX files (priority: high)
 - [ ] Quantize generator.onnx (132MB → smaller) (priority: high)
@@ -376,6 +377,82 @@ Build a cats classifier and generator with web frontend, following the architect
 - [ ] Add offline fallback if HuggingFace unavailable (priority: low)
 - [ ] Add file size validation on image upload (priority: low)
 - [ ] Test Python 3.12 compatibility (Modal uses 3.12) (priority: low)
+
+### Phase 16: HuggingFace Hub Integration (ADR-034, ADR-035)
+
+**Decision:** Load models directly from HuggingFace Hub CDN instead of bundling with frontend.
+**Benefits:** Version control, CDN caching, smaller frontend bundle, automatic updates.
+
+#### Model Loading Strategy
+- [ ] Update frontend constants.ts to use HF Hub URLs (https://huggingface.co/d4oit/tiny-cats-model/resolve/main/)
+- [ ] Add fallback to local models if HF Hub unavailable
+- [ ] Ensure CORS is handled properly
+- [ ] Update generator loading to use quantized version
+
+#### Automated Upload Pipeline
+- [ ] Add upload step to train.yml after classifier training
+- [ ] Add upload step to train.yml after DiT training
+- [ ] Use HF_TOKEN secret for authentication
+- [ ] Upload both .pt and .onnx versions
+- [ ] Create/update model card on first upload
+
+#### E2E Testing
+- [ ] Classification page: upload image, verify result
+- [ ] Generation page: select breed, generate image, verify output
+- [ ] Benchmark page: verify metrics display
+
+### Phase 17: Full Model Training & Deployment (ADR-035)
+
+**Goal:** Train full TinyDiT model (300k steps) with enhanced augmentation, comprehensive testing, and automated HuggingFace upload.
+
+#### Phase 17.1: Enhanced Training Configuration
+- [ ] Update dataset.py with advanced augmentation (rotation, color jitter, affine)
+- [ ] Update train_dit.py with gradient accumulation (effective batch 512)
+- [ ] Configure 300k step training with EMA
+- [ ] Add multi-scale training support
+- [ ] **A01:** Run Modal GPU training (300k steps, A10G)
+
+#### Phase 17.2: Comprehensive Test Suite
+- [ ] Add unit tests: edge cases (empty images, extreme aspects)
+- [ ] Add integration tests: checkpoint resume, OOM recovery
+- [ ] Add E2E Playwright tests: classification page
+- [ ] Add E2E Playwright tests: generation page  
+- [ ] Add E2E Playwright tests: benchmark page
+- [ ] **A02:** Run full test suite with coverage report
+
+#### Phase 17.3: Evaluation & Benchmarks
+- [ ] Create evaluate_full.py (FID, IS, Precision/Recall)
+- [ ] Create benchmark_inference.py (latency, throughput, memory)
+- [ ] Generate evaluation report with sample grids
+- [ ] **A03:** Run evaluation on trained model
+- [ ] **A04:** Run benchmarks and record metrics
+
+#### Phase 17.4: HuggingFace Upload Automation
+- [ ] Create upload_to_huggingface.py with model card
+- [ ] Add auto-upload to train.yml on success
+- [ ] Upload classifier (PT + ONNX quantized)
+- [ ] Upload generator (PT + ONNX quantized)
+- [ ] Upload evaluation results & benchmarks
+- [ ] **A05:** Upload to d4oit/tiny-cats-model
+
+#### Phase 17.5: Documentation Updates
+- [ ] Update README.md with training guide
+- [ ] Update AGENTS.md with new workflows
+- [ ] Create HuggingFace model card
+- [ ] Add tutorial notebooks
+- [ ] **A06:** Update all documentation
+
+#### GOAP Action Status for Phase 17
+| Action | Status | Phase | Skill | Completed At |
+|--------|--------|-------|-------|--------------|
+| A01: Run Modal GPU training | ⏳ Pending | 17.1 | model-training | - |
+| A02: Run full test suite | ⏳ Pending | 17.2 | testing-workflow | - |
+| A03: Run evaluation | ⏳ Pending | 17.3 | model-training | - |
+| A04: Run benchmarks | ⏳ Pending | 17.3 | model-training | - |
+| A05: Upload to HuggingFace | ⏳ Pending | 17.4 | model-training | - |
+| A06: Update documentation | ⏳ Pending | 17.5 | agents-md | - |
+
+**Progress:** 0/6 actions complete (0%)
 
 ### Success Metrics Status
 | Metric | Target | Status |
@@ -392,6 +469,9 @@ Build a cats classifier and generator with web frontend, following the architect
 | HuggingFace Publishing | Safetensors + model card | ✅ Ready (ADR-026) |
 | Model Validation | Automated gates | ✅ Ready (ADR-028) |
 | Experiment Tracking | MLflow integration | 📝 Documented (ADR-027) |
+| HF Hub Loading | CDN delivery | ⏳ Phase 16 Planned |
+| Generator Quantization | <50MB | ⏳ Phase 16 Planned |
+| E2E Tests | Full coverage | ⏳ Phase 16 Planned |
 
 ## Success Metrics
 - Dataset: 12 cat breeds + other class ready

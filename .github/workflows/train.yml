@@ -150,24 +150,63 @@ jobs:
         run: |
           pip install modal
           modal volume get cats-model-outputs /outputs/cats_classifier.onnx ./cats_classifier.onnx
+          modal volume get cats-model-outputs /outputs/best_cats_model.pt ./best_cats_model.pt || true
 
       - name: Upload to Hugging Face Hub
-        if: vars.HF_TOKEN != ''
+        if: env.HF_TOKEN != ''
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          pip install huggingface_hub
+          pip install huggingface_hub safetensors pillow
+
+          # Run evaluation if generator checkpoint exists
+          if [ -f "tinydit_final.pt" ]; then
+            echo "Running evaluation..."
+            python src/evaluate_full.py --checkpoint tinydit_final.pt \
+              --generate-samples --num-samples 16 --all-breeds \
+              --output-dir samples/evaluation \
+              --report-path evaluation_report.json || true
+          fi
+
+          # Run benchmarks if models exist
+          if [ -f "tinydit_final.pt" ]; then
+            echo "Running benchmarks..."
+            python src/benchmark_inference.py --model tinydit_final.pt \
+              --device cpu --num-warmup 5 --num-runs 20 \
+              --benchmark-throughput --batch-sizes 1,4,8 \
+              --report-path benchmark_report.json || true
+          fi
+
+          # Use comprehensive upload utility
+          python src/upload_to_huggingface.py \
+            --classifier best_cats_model.pt \
+            --generator tinydit_final.pt \
+            --onnx-classifier cats_classifier.onnx \
+            --onnx-generator generator.onnx \
+            --evaluation-report evaluation_report.json \
+            --benchmark-report benchmark_report.json \
+            --samples-dir samples/evaluation \
+            --repo-id d4oit/tiny-cats-model \
+            --commit-message "Upload full model package from GitHub Actions" || \
           python -c "
           from huggingface_hub import HfApi
           api = HfApi()
-          api.upload_file(
-              path_or_fileobj='cats_classifier.onnx',
-              path_in_repo='cats_classifier.onnx',
-              repo_id='d4oit/tiny-cats-model',
-              repo_type='model',
-              commit_message='Upload classifier from GitHub Actions'
-          )
-          print('Classifier uploaded to HF Hub')
+          
+          # Fallback: upload individual files
+          import os
+          if os.path.exists('cats_classifier.onnx'):
+              api.upload_file('cats_classifier.onnx', 'classifier/model.onnx', 'd4oit/tiny-cats-model')
+          if os.path.exists('cats_quantized.onnx'):
+              api.upload_file('cats_quantized.onnx', 'classifier/model_quantized.onnx', 'd4oit/tiny-cats-model')
+          if os.path.exists('best_cats_model.pt'):
+              api.upload_file('best_cats_model.pt', 'classifier/model.pt', 'd4oit/tiny-cats-model')
+          if os.path.exists('generator.onnx'):
+              api.upload_file('generator.onnx', 'generator/model.onnx', 'd4oit/tiny-cats-model')
+          if os.path.exists('generator_quantized.onnx'):
+              api.upload_file('generator_quantized.onnx', 'generator/model_quantized.onnx', 'd4oit/tiny-cats-model')
+          if os.path.exists('tinydit_final.pt'):
+              api.upload_file('tinydit_final.pt', 'generator/model.pt', 'd4oit/tiny-cats-model')
+          print('Files uploaded successfully')
           "
 
   train-dit:
@@ -202,22 +241,54 @@ jobs:
         run: |
           pip install modal
           modal volume get dit-outputs /outputs/cats_dit.onnx ./cats_dit.onnx
+          modal volume get dit-outputs /outputs/generator.onnx ./generator.onnx || true
+          modal volume get dit-outputs /outputs/tinydit_final.pt ./tinydit_final.pt || true
 
       - name: Upload to Hugging Face Hub
-        if: vars.HF_TOKEN != ''
+        if: env.HF_TOKEN != ''
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          pip install huggingface_hub
+          pip install huggingface_hub safetensors pillow
+
+          # Run evaluation if generator checkpoint exists
+          if [ -f "tinydit_final.pt" ]; then
+            echo "Running evaluation..."
+            python src/evaluate_full.py --checkpoint tinydit_final.pt \
+              --generate-samples --num-samples 16 --all-breeds \
+              --output-dir samples/evaluation \
+              --report-path evaluation_report.json || true
+          fi
+
+          # Run benchmarks if models exist
+          if [ -f "tinydit_final.pt" ] || [ -f "generator.onnx" ]; then
+            echo "Running benchmarks..."
+            python src/benchmark_inference.py --model tinydit_final.pt \
+              --device cpu --num-warmup 5 --num-runs 20 \
+              --benchmark-throughput --batch-sizes 1,4,8 \
+              --report-path benchmark_report.json || true
+          fi
+
+          # Use comprehensive upload utility
+          python src/upload_to_huggingface.py \
+            --generator tinydit_final.pt \
+            --onnx-generator generator.onnx \
+            --evaluation-report evaluation_report.json \
+            --benchmark-report benchmark_report.json \
+            --samples-dir samples/evaluation \
+            --repo-id d4oit/tiny-cats-model \
+            --commit-message "Upload DiT model package from GitHub Actions" || \
           python -c "
           from huggingface_hub import HfApi
           api = HfApi()
-          api.upload_file(
-              path_or_fileobj='cats_dit.onnx',
-              path_in_repo='cats_dit.onnx',
-              repo_id='d4oit/tiny-cats-model',
-              repo_type='model',
-              commit_message='Upload DiT from GitHub Actions'
-          )
-          print('DiT uploaded to HF Hub')
+          
+          # Fallback: upload individual files
+          import os
+          if os.path.exists('generator.onnx'):
+              api.upload_file('generator.onnx', 'generator/model.onnx', 'd4oit/tiny-cats-model')
+          if os.path.exists('generator_quantized.onnx'):
+              api.upload_file('generator_quantized.onnx', 'generator/model_quantized.onnx', 'd4oit/tiny-cats-model')
+          if os.path.exists('tinydit_final.pt'):
+              api.upload_file('tinydit_final.pt', 'generator/model.pt', 'd4oit/tiny-cats-model')
+          print('Files uploaded successfully')
           "

@@ -1,0 +1,25 @@
+{
+  "model_info": {
+    "name": "TinyDiT (PyTorch)",
+    "checkpoint": "checkpoints/tinydit_final.pt",
+    "device": "cpu",
+    "image_size": 128,
+    "step": 0,
+    "total_parameters": 33063168,
+    "trainable_parameters": 33063168,
+    "total_size_mb": 126.1259765625,
+    "trainable_size_mb": 126.1259765625
+  },
+  "latency_ms": {
+    "p50": 57.40655499994318,
+    "p95": 64.03280949989494,
+    "p99": 64.62180989989065,
+    "mean": 57.40655499994318,
+    "std": 7.362504999946395,
+    "min": 50.04404999999679,
+    "max": 64.76905999988958
+  },
+  "throughput_images_per_sec": {},
+  "memory": {},
+  "timestamp": "2026-02-26 16:47:20"
+}

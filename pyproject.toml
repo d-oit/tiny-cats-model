@@ -108,6 +108,9 @@ ignore = ["E203", "E501"]
 testpaths = ["tests"]
 addopts = "-v"
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
 
 [tool.coverage.run]
 source = ["."]

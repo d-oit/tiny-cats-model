@@ -6,8 +6,14 @@ export const PAGES = [
 
 export type ModelType = "cats";
 
+// HuggingFace Hub base URL for model loading (ADR-034)
+// Models are loaded from HF Hub CDN with local fallback
+export const HF_HUB_BASE_URL =
+  "https://huggingface.co/d4oit/tiny-cats-model/resolve/main/";
+
 export interface ModelConfig {
   modelPath: string;
+  localFallback: string;
   imgDims: number[];
   numClasses: number;
   classNames: string[];
@@ -17,7 +23,8 @@ export interface ModelConfig {
 
 export const MODEL_CONFIGS: Record<ModelType, ModelConfig> = {
   cats: {
-    modelPath: "/cats_quantized.onnx",
+    modelPath: HF_HUB_BASE_URL + "cats_quantized.onnx",
+    localFallback: "/models/cats_quantized.onnx",
     imgDims: [224, 224],
     numClasses: 2,
     classNames: ["cat", "not_cat"],
@@ -44,6 +51,7 @@ export const CAT_BREEDS = [
 
 export interface GeneratorConfig {
   modelPath: string;
+  localFallback: string;
   imgDims: number[];
   numBreeds: number;
   defaultSteps: number;
@@ -55,7 +63,8 @@ export interface GeneratorConfig {
 }
 
 export const GENERATOR_CONFIG: GeneratorConfig = {
-  modelPath: "/generator_quantized.onnx",
+  modelPath: HF_HUB_BASE_URL + "generator_quantized.onnx",
+  localFallback: "/models/generator_quantized.onnx",
   imgDims: [128, 128],
   numBreeds: 13,
   defaultSteps: 50,

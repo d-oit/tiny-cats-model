@@ -60,6 +60,35 @@ export interface GenerationOptions {
   noiseSeed?: number;
 }
 
+/**
+ * Load model with HF Hub primary and local fallback (ADR-034)
+ */
+async function fetchModelWithFallback(primaryPath: string, fallbackPath: string): Promise<ArrayBuffer> {
+  // Try primary (HF Hub) first
+  try {
+    console.log(`Loading model from HF Hub: ${primaryPath}`);
+    const response = await fetch(primaryPath, { mode: "cors", credentials: "omit" });
+    if (!response.ok) {
+      throw new Error(`HF Hub returned ${response.status}`);
+    }
+    const data = await response.arrayBuffer();
+    console.log("Model loaded successfully from HF Hub");
+    return data;
+  } catch (error) {
+    console.warn(`HF Hub load failed: ${error}`);
+    console.log(`Falling back to local model: ${fallbackPath}`);
+    
+    // Fall back to local model
+    const response = await fetch(fallbackPath, { mode: "cors", credentials: "omit" });
+    if (!response.ok) {
+      throw new Error(`Local model also failed: ${response.status}`);
+    }
+    const data = await response.arrayBuffer();
+    console.log("Model loaded successfully from local fallback");
+    return data;
+  }
+}
+
 class GenerationEngine {
   session: ort.InferenceSession | null = null;
   config: GeneratorConfig = GENERATOR_CONFIG;
@@ -68,17 +97,15 @@ class GenerationEngine {
   async loadModel(): Promise<string> {
     console.log("Loading generator model...");
     try {
-      console.log("Fetching model from:", this.config.modelPath);
-
       ortInstance = await loadOrt();
       this.executionProvider = (await getExecutionProvider())[0];
       console.log("Using execution provider:", this.executionProvider);
 
-      const response = await fetch(this.config.modelPath, { mode: "cors", credentials: "omit" });
-      if (!response.ok) {
-        throw new Error(`Failed to fetch model: ${response.status}`);
-      }
-      const modelData = await response.arrayBuffer();
+      // Use HF Hub with local fallback (ADR-034)
+      const modelData = await fetchModelWithFallback(
+        this.config.modelPath,
+        this.config.localFallback
+      );
       const modelDataUint8 = new Uint8Array(modelData);
 
       console.log("Creating inference session...");
