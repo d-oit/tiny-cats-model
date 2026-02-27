@@ -63,12 +63,8 @@ export interface GeneratorConfig {
 }
 
 export const GENERATOR_CONFIG: GeneratorConfig = {
-<<<<<<< HEAD
   modelPath: HF_HUB_BASE_URL + "generator_quantized.onnx",
   localFallback: "/models/generator_quantized.onnx",
-=======
-  modelPath: "/generator_quantized.onnx",
->>>>>>> origin/main
   imgDims: [128, 128],
   numBreeds: 13,
   defaultSteps: 50,
