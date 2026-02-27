@@ -454,6 +454,37 @@ Build a cats classifier and generator with web frontend, following the architect
 
 **Progress:** 5/6 actions complete (83%)
 
+### Phase 18: High-Accuracy Training (ADR-036)
+
+**Goal:** Train improved TinyDiT model (400k steps, effective batch 512) for better sample quality and lower FID.
+
+#### Phase 18.1: Training Configuration
+- [x] Document high-accuracy configuration (ADR-036)
+- [ ] **A01:** Run 400k step training with gradient accumulation
+- [ ] **A02:** Monitor training progress and checkpoints
+
+#### Phase 18.2: Evaluation & Metrics
+- [ ] Generate evaluation samples (500+ images)
+- [ ] Compute FID, IS, Precision/Recall
+- [ ] Run inference benchmarks
+- [ ] **A03:** Compare with baseline (200k steps)
+
+#### Phase 18.3: Deployment
+- [ ] Export to ONNX (quantized)
+- [ ] Upload to HuggingFace (new version)
+- [ ] Update frontend with new model
+- [ ] **A04:** Deploy high-accuracy model
+
+#### GOAP Action Status for Phase 18
+| Action | Status | Phase | Skill | Completed At |
+|--------|--------|-------|-------|--------------|
+| A01: Run 400k step training | ⏳ Pending | 18.1 | model-training | - |
+| A02: Monitor training | ⏳ Pending | 18.1 | model-training | - |
+| A03: Evaluate & compare | ⏳ Pending | 18.2 | model-training | - |
+| A04: Deploy model | ⏳ Pending | 18.3 | model-training | - |
+
+**Progress:** 0/4 actions complete (0%)
+
 ### Success Metrics Status
 | Metric | Target | Status |
 |--------|--------|--------|
@@ -466,12 +497,13 @@ Build a cats classifier and generator with web frontend, following the architect
 | Code Quality | 2026 stack | ✅ ADR-016 (Ruff) - All workflows migrated |
 | Training | 200k steps with EMA | ✅ Complete (checkpoint: tinydit_final.pt) |
 | Evaluation | Generated samples | ✅ Complete (104 samples, ADR-019) |
-| HuggingFace Publishing | Safetensors + model card | ✅ Ready (ADR-026) |
+| HuggingFace Publishing | Safetensors + model card | ✅ Complete (Phase 17 A05) |
 | Model Validation | Automated gates | ✅ Ready (ADR-028) |
 | Experiment Tracking | MLflow integration | 📝 Documented (ADR-027) |
 | HF Hub Loading | CDN delivery | ✅ Complete (Phase 17 A05) |
 | Generator Quantization | <50MB | ✅ Complete (33.8MB ONNX) |
 | E2E Tests | Full coverage | ⏳ Phase 16 Planned |
+| **High-Accuracy Training** | **400k steps, batch 512** | **📝 Planned (Phase 18, ADR-036)** |
 
 ## Success Metrics
 - Dataset: 12 cat breeds + other class ready
@@ -496,15 +528,16 @@ Build a cats classifier and generator with web frontend, following the architect
 | Conditioning | Breed one-hot (13 classes) |
 
 ### Training Configuration
-| Parameter | Value |
-|-----------|-------|
-| Steps | 200,000 |
-| Batch Size | 256 |
-| Learning Rate | 1e-4 |
-| Optimizer | AdamW (β1=0.9, β2=0.95) |
-| Weight Decay | 0.05 |
-| EMA Beta | 0.9999 |
-| Loss | Flow matching (v or x prediction) |
+| Parameter | Current (200k) | High-Accuracy (400k) |
+|-----------|----------------|----------------------|
+| Steps | 200,000 | 400,000 |
+| Batch Size | 256 | 256 (effective 512 with grad accum) |
+| Learning Rate | 1e-4 | 5e-5 |
+| Warmup Steps | 10,000 | 15,000 |
+| Augmentation | Basic | Full (rotation, color, affine) |
+| Gradient Accumulation | 1 | 2 |
+| Expected FID | ~50-70 | ~30-40 |
+| Modal Cost | ~$5-10 | ~$15-25 |
 
 ### Training Commands (Modal CLI)
 
@@ -517,7 +550,7 @@ modal run src/train.py data/cats --epochs 20 --batch-size 64
 python src/train.py data/cats --epochs 1 --batch-size 8
 ```
 
-**DiT Training:**
+**DiT Training (Current - 200k steps):**
 ```bash
 # Modal GPU training (recommended)
 modal run src/train_dit.py data/cats --steps 200000 --batch-size 256
@@ -526,7 +559,23 @@ modal run src/train_dit.py data/cats --steps 200000 --batch-size 256
 python src/train_dit.py data/cats --steps 100 --batch-size 8
 ```
 
+**DiT Training (High-Accuracy - 400k steps, ADR-036):**
+```bash
+# High-accuracy configuration (recommended for production)
+modal run src/train_dit.py data/cats \
+  --steps 400000 \
+  --batch-size 256 \
+  --gradient-accumulation-steps 2 \
+  --lr 5e-5 \
+  --warmup-steps 15000 \
+  --augmentation-level full
+
+# Local CPU testing (debug)
+python src/train_dit.py data/cats --steps 100 --batch-size 8
+```
+
 See ADR-020 for complete Modal CLI reference.
+See ADR-036 for high-accuracy training configuration.
 
 ### Frontend Stack
 - **Framework**: React 18 + TypeScript
