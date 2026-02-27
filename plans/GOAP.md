@@ -485,6 +485,82 @@ Build a cats classifier and generator with web frontend, following the architect
 
 **Progress:** 0/4 actions complete (0%)
 
+### Phase 19: Tutorial & Documentation Enhancement (ADR-038)
+
+**Goal:** Create interactive tutorials and comprehensive documentation for users.
+
+#### Phase 19.1: Tutorial Notebooks
+- [x] Create ADR-038: Tutorial Notebooks Design
+- [ ] **A01:** Create `notebooks/01_quickstart_classification.ipynb`
+- [ ] **A02:** Create `notebooks/02_conditional_generation.ipynb`
+- [ ] **A03:** Create `notebooks/03_training_fine_tuning.ipynb`
+- [ ] **A04:** Add sample test images to `notebooks/assets/`
+
+#### Phase 19.2: Documentation Updates
+- [ ] Add notebooks to README.md with Colab badges
+- [ ] Create `notebooks/README.md` with usage guide
+- [ ] Update AGENTS.md with tutorial links
+- [ ] **A05:** Test all notebooks end-to-end
+
+#### Phase 19.3: Distribution
+- [ ] Upload notebooks to HuggingFace datasets
+- [ ] Create Google Colab versions
+- [ ] Add notebook links to model card
+- [ ] **A06:** Share tutorials with community
+
+#### GOAP Action Status for Phase 19
+| Action | Status | Phase | Skill | Completed At |
+|--------|--------|-------|-------|--------------|
+| A01: Create classification notebook | ⏳ Pending | 19.1 | agents-md | - |
+| A02: Create generation notebook | ⏳ Pending | 19.1 | agents-md | - |
+| A03: Create training notebook | ⏳ Pending | 19.1 | agents-md | - |
+| A04: Add test assets | ⏳ Pending | 19.1 | testing-workflow | - |
+| A05: Test notebooks | ⏳ Pending | 19.2 | testing-workflow | - |
+| A06: Distribute tutorials | ⏳ Pending | 19.3 | git-workflow | - |
+
+**Progress:** 0/6 actions complete (0%)
+
+### Phase 20: CI/CD Automation (ADR-039)
+
+**Goal:** Automate HuggingFace upload and deployment pipeline.
+
+#### Phase 20.1: Secret Management
+- [x] Create ADR-039: Automated HuggingFace CI Upload
+- [ ] **A01:** Configure HF_TOKEN in GitHub Secrets
+- [ ] Verify token has write permissions
+
+#### Phase 20.2: Workflow Implementation
+- [ ] Create `.github/workflows/upload-hub.yml`
+- [ ] Add artifact download steps
+- [ ] Add upload step with HF_TOKEN
+- [ ] **A02:** Add verification and rollback steps
+
+#### Phase 20.3: Testing & Validation
+- [ ] Test workflow with manual trigger
+- [ ] Verify upload succeeds
+- [ ] Test failure notification
+- [ ] **A03:** Test rollback procedure
+
+#### Phase 20.4: E2E Test Coverage (ADR-037)
+- [x] Create ADR-037: E2E Testing Strategy 2026
+- [ ] **A04:** Expand classification tests (60+ tests)
+- [ ] **A05:** Expand generation tests (80+ tests)
+- [ ] **A06:** Expand benchmark tests (75+ tests)
+- [ ] **A07:** Add CI integration for E2E tests
+
+#### GOAP Action Status for Phase 20
+| Action | Status | Phase | Skill | Completed At |
+|--------|--------|-------|-------|--------------|
+| A01: Configure HF_TOKEN | ⏳ Pending | 20.1 | security | - |
+| A02: Create upload workflow | ⏳ Pending | 20.2 | gh-actions | - |
+| A03: Test workflow | ⏳ Pending | 20.3 | testing-workflow | - |
+| A04: Classification tests | ⏳ Pending | 20.4 | testing-workflow | - |
+| A05: Generation tests | ⏳ Pending | 20.4 | testing-workflow | - |
+| A06: Benchmark tests | ⏳ Pending | 20.4 | testing-workflow | - |
+| A07: E2E CI integration | ⏳ Pending | 20.4 | gh-actions | - |
+
+**Progress:** 0/7 actions complete (0%)
+
 ### Success Metrics Status
 | Metric | Target | Status |
 |--------|--------|--------|
@@ -502,8 +578,10 @@ Build a cats classifier and generator with web frontend, following the architect
 | Experiment Tracking | MLflow integration | 📝 Documented (ADR-027) |
 | HF Hub Loading | CDN delivery | ✅ Complete (Phase 17 A05) |
 | Generator Quantization | <50MB | ✅ Complete (33.8MB ONNX) |
-| E2E Tests | Full coverage | ⏳ Phase 16 Planned |
+| E2E Tests | Full coverage | 📝 Planned (Phase 20, ADR-037) |
 | **High-Accuracy Training** | **400k steps, batch 512** | **📝 Planned (Phase 18, ADR-036)** |
+| **Tutorial Notebooks** | **3 interactive notebooks** | **📝 Planned (Phase 19, ADR-038)** |
+| **CI/CD Automation** | **Automated HF upload** | **📝 Planned (Phase 20, ADR-039)** |
 
 ## Success Metrics
 - Dataset: 12 cat breeds + other class ready
