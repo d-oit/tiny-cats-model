@@ -50,11 +50,20 @@ After each task, capture learnings here. Use this for continuous improvement.
 
 **Date**: 2026-02-24 17:33:07 +0000
 **Type**: feature
-**Areas**: documentation
+**Areas**: documentation, ci-cd
 
-**Pattern**: [To be documented - what reusable lesson applies?]
+**Pattern**: CI monitoring skill with specialist agent coordination.
 
-**Related**: [Link to ADR if applicable]
+**What worked**:
+- Created dedicated skill for monitoring CI runs and coordinating fixes
+- Skill coordinates with other specialist agents (code-quality, testing-workflow, gh-actions)
+
+**Pattern extracted**:
+1. Use dedicated monitoring skill for CI observability
+2. Coordinate specialist agents based on failure type
+3. Document in GOAP.md with clear action items
+
+**Related**: plans/GOAP.md
 
 
 
@@ -64,9 +73,30 @@ After each task, capture learnings here. Use this for continuous improvement.
 **Type**: feature
 **Areas**: source, ci-cd, documentation
 
-**Pattern**: [To be documented - what reusable lesson applies?]
+**Pattern**: Ruff-based linting with pre-commit hooks.
 
-**Related**: [Link to ADR if applicable]
+**What worked**:
+- Ruff replaces flake8 + isort (10-100x faster)
+- Pre-commit hooks provide fast local feedback
+- Single config file (ruff.toml) as source of truth
+
+**Issues encountered**:
+- Multiple config files during transition (.flake8 + ruff.toml)
+- Learning curve for ruff-specific rules
+
+**Fix applied**:
+1. Created ruff.toml with comprehensive rules
+2. Created .pre-commit-config.yaml with ruff-pre-commit
+3. Updated quality-gate.sh to use ruff
+4. Removed flake8/isort from requirements.txt
+
+**Pattern extracted**:
+1. Ruff is the 2026 standard for Python linting
+2. Pre-commit + CI: fast local feedback + ultimate gatekeeper
+3. Use pre-commit install for local hooks, CI for thorough checks
+4. Run `ruff check . --fix && ruff format .` for auto-fixes
+
+**Related**: ADR-016, ADR-014
 
 
 
@@ -76,9 +106,18 @@ After each task, capture learnings here. Use this for continuous improvement.
 **Type**: bugfix
 **Areas**: source
 
-**Pattern**: [To be documented - what reusable lesson applies?]
+**Pattern**: Frontend build fixes via TypeScript config.
 
-**Related**: [Link to ADR if applicable]
+**What worked**:
+- Updated tsconfig.json for proper module resolution
+- Fixed import paths for TypeScript 5.8 compatibility
+
+**Pattern extracted**:
+1. Keep TypeScript updated (currently 5.8)
+2. Check npm ci && npm run build locally before pushing frontend changes
+3. Use @skill agent-browser for complex frontend issues
+
+**Related**: ADR-018
 
 
 
@@ -88,9 +127,19 @@ After each task, capture learnings here. Use this for continuous improvement.
 **Type**: bugfix
 **Areas**: tests, source
 
-**Pattern**: [To be documented - what reusable lesson applies?]
+**Pattern**: Import order and line length fixes (see ADR-012).
 
-**Related**: [Link to ADR if applicable]
+**What worked**:
+- Auto-fix with ruff: `ruff check . --fix`
+- Manual fix for import order (move sys.path.insert before imports)
+
+**Pattern extracted**:
+1. Run `ruff check . --fix && ruff format .` for auto-fixes
+2. Move sys.path.insert before all imports in test/eval scripts
+3. Verify with `flake8 .` (reads .flake8 config)
+4. Run quality gate before every push
+
+**Related**: ADR-012
 
 
 ### feat: implement missing GOAP tasks for Phase 4, 5, and 6
@@ -99,9 +148,20 @@ After each task, capture learnings here. Use this for continuous improvement.
 **Type**: feature
 **Areas**: source, documentation, ci-cd
 
-**Pattern**: [To be documented - what reusable lesson applies?]
+**Pattern**: GOAP-driven task implementation with phase tracking.
 
-**Related**: [Link to ADR if applicable]
+**What worked**:
+- Systematic phase-based implementation
+- Clear tracking in plans/GOAP.md
+- Specialist agents coordinated for different task types
+
+**Pattern extracted**:
+1. Use GOAP (Goal-Oriented Action Planning) for project tracking
+2. Break large features into phases
+3. Track completion status in GOAP.md
+4. Link related ADRs to GOAP phases
+
+**Related**: plans/GOAP.md
 
 
 
@@ -111,9 +171,30 @@ After each task, capture learnings here. Use this for continuous improvement.
 **Type**: feature
 **Areas**: documentation, ci-cd
 
-**Pattern**: [To be documented - what reusable lesson applies?]
+**Pattern**: Modern GitHub Actions workflow configuration.
 
-**Related**: [Link to ADR if applicable]
+**What worked**:
+- Smart concurrency groups by PR number (not branch)
+- workflow_dispatch for manual triggers
+- Frontend build job in CI pipeline
+
+**Issues encountered**:
+- Cancelled runs showing as "failing" in PR status
+- Branch protection not configured
+
+**Fix applied**:
+1. Updated concurrency: `${{ github.event.pull_request.number || github.sha }}`
+2. Added cancel-in-progress only for PRs
+3. Added workflow_dispatch with debug input
+4. Created deploy.yml for GitHub Pages
+
+**Pattern extracted**:
+1. Use PR number in concurrency groups (2026 standard)
+2. Only cancel in-progress for PRs, not main branch
+3. Add workflow_dispatch for manual debugging
+4. Configure branch protection on main (requires admin)
+
+**Related**: ADR-013
 
 
 
@@ -123,9 +204,19 @@ After each task, capture learnings here. Use this for continuous improvement.
 **Type**: bugfix
 **Areas**: source, documentation, tests
 
-**Pattern**: [To be documented - what reusable lesson applies?]
+**Pattern**: Import order fix pattern (foundational for ADR-012).
 
-**Related**: [Link to ADR if applicable]
+**What worked**:
+- Moving sys.path.insert before all imports in test scripts
+- Using ruff for auto-fixes (replaced by ruff, kept for backward compat)
+
+**Pattern extracted**:
+1. Import order: stdlib → sys.path manipulation → third-party → local
+2. Always put sys.path.insert before any imports
+3. Use ruff: `ruff check . --fix` (handles this automatically)
+4. Verify: `flake8 .` or `ruff check .`
+
+**Related**: ADR-012
 
 
 ### fix: align quality gate with CI pipeline (ADR-014)
@@ -355,16 +446,16 @@ agents-docs/
 - Use `# type: ignore` sparingly with comments
 
 ### 3. Code Quality
-- Line length: 88 chars (black default)
-- Run `ruff check . --fix && black .` before commit
+- Line length: 88 chars (ruff/black standard)
+- Run `ruff check . --fix && ruff format .` before commit
 - Tests required for new features
 - **Quality gate**: `bash scripts/quality-gate.sh` before every push
 
 ### 3b. Linting Fix Pattern (ADR-012)
 When CI fails on linting:
-1. Run `ruff check . --fix && black .` (auto-fix 90%)
+1. Run `ruff check . --fix && ruff format .` (auto-fix 90%)
 2. Manual fix remaining E402 (import order) errors
-3. Verify locally: `flake8 .` (reads .flake8 config)
+3. Verify locally: `flake8 .` or `ruff check .`
 4. Commit → push → monitor CI with `gh run watch <id>`
 
 ### 3c. Quality Gate Parity Pattern (ADR-014)
@@ -372,13 +463,13 @@ When CI fails on linting:
 
 **Checklist for New CI Checks**:
 1. Add check to `scripts/quality-gate.sh`
-2. Create/update config file (`.flake8`, `pyproject.toml`)
+2. Create/update config file (`.flake8`, `pyproject.toml`, `ruff.toml`)
 3. Update CI to read from config file
 4. Test locally: `bash scripts/quality-gate.sh`
 5. Verify CI passes with same checks
 
 **Configuration Alignment**:
-- Black line-length: 88 (in `pyproject.toml`)
+- Black/ruff line-length: 88 (in `pyproject.toml`, `ruff.toml`)
 - Flake8 config: `.flake8` file (not inline in CI)
 - isort profile: black (in `pyproject.toml`)
 - mypy: `--ignore-missing-imports` (both local and CI)
@@ -386,8 +477,41 @@ When CI fails on linting:
 **Pre-commit Hook**:
 ```bash
 # Install to run quality gate automatically before each commit
-bash scripts/install-hooks.sh
+pip install pre-commit
+pre-commit install
 ```
+
+### 3d. Ruff-Based Linting (ADR-016)
+**2026 Standard**: Ruff replaces flake8 + isort + pydocstyle.
+
+```bash
+# Install ruff
+pip install ruff
+
+# Auto-fix and format
+ruff check . --fix
+ruff format .
+
+# Check only (for CI)
+ruff check .
+ruff format --check .
+```
+
+**Config** (`ruff.toml`):
+```toml
+line-length = 88
+target-version = "py310"
+
+[lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "N", "RUF"]
+ignore = ["E501"]
+```
+
+**Why Ruff**:
+- 10-100x faster than flake8
+- Auto-fix support
+- Single config file
+- Active maintenance (astral-sh)
 
 ### 4. CI/CD Discipline
 - Never merge if CI fails
@@ -471,6 +595,9 @@ workflow_dispatch:
 4. **Concurrency Controls**: GitHub Actions parallelization
 5. **Modern Caching**: pip cache in CI workflows
 6. **Timeout Limits**: 10 min CI, 1 hour training
+7. **Ruff-Based Linting**: 10-100x faster than flake8 (ADR-016)
+8. **Pre-commit + CI**: Fast local feedback + ultimate gatekeeper
+9. **Smart Concurrency**: PR-number-based grouping (ADR-013)
 
 ---
 
@@ -488,3 +615,7 @@ workflow_dispatch:
 - [ADR-001](../plans/ADR-001-agent-skill-structure.md) - Skill structure
 - [ADR-006](../plans/ADR-006-ci-fix-workflow.md) - CI fix workflow
 - [ADR-007](../plans/ADR-007-modal-training-fix.md) - Modal training
+- [ADR-012](../plans/ADR-012-flake8-linting-fixes.md) - Flake8 linting fixes
+- [ADR-013](../plans/ADR-013-github-actions-workflow-optimization-2026.md) - GitHub Actions 2026
+- [ADR-014](../plans/ADR-014-quality-gate-ci-alignment.md) - Quality gate CI alignment
+- [ADR-016](../plans/ADR-016-modern-python-code-quality-2026.md) - Modern code quality 2026

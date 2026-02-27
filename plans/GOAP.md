@@ -360,22 +360,130 @@ Build a cats classifier and generator with web frontend, following the architect
 ### Phase 15: Implementation Gaps (ADR-033)
 
 **Analysis:** ADR-033 documents critical gaps identified by analysis swarm.
+**Status:** Completed - All features implemented (ADR-034, ADR-035).
 
 #### Critical Fixes (Blocking)
-- [ ] Add mlflow to requirements.txt (priority: high)
-- [ ] Create src/export_classifier_onnx.py for frontend classify (priority: high)
-- [ ] Align frontend model paths with exported ONNX files (priority: high)
-- [ ] Quantize generator.onnx (132MB → smaller) (priority: high)
+- [x] Add mlflow to requirements.txt (priority: high) - **Already present**
+- [x] Create src/export_classifier_onnx.py for frontend classify (priority: high)
+- [x] Align frontend model paths with exported ONNX files (priority: high) - **HF Hub integration**
+- [x] Quantize generator.onnx (132MB → smaller) (priority: high) - **33MB quantized**
 
 #### Important Fixes
-- [ ] Add WebGPU fallback to WASM in inference.worker.ts (priority: medium)
-- [ ] Add E2E tests for inference and generation (priority: medium)
-- [ ] Add automated HuggingFace upload to CI workflow (priority: medium)
+- [x] Add WebGPU fallback to WASM in inference.worker.ts (priority: medium) - **Completed 2026-02-26**
+- [x] Add E2E tests for inference and generation (priority: medium) - **4 E2E test specs exist**
+- [ ] Add automated HuggingFace upload to CI workflow (priority: medium) - **Requires HF_TOKEN**
 
 #### Minor Fixes
-- [ ] Add offline fallback if HuggingFace unavailable (priority: low)
-- [ ] Add file size validation on image upload (priority: low)
-- [ ] Test Python 3.12 compatibility (Modal uses 3.12) (priority: low)
+- [x] Add offline fallback if HuggingFace unavailable (priority: low) - **ADR-034 localFallback**
+- [x] Add file size validation on image upload (priority: low) - **Completed 2026-02-27 (10MB limit)**
+- [x] Test Python 3.12 compatibility (Modal uses 3.12) (priority: low) - **Verified on Python 3.12.1**
+
+### Phase 16: HuggingFace Hub Integration (ADR-034, ADR-035)
+
+**Decision:** Load models directly from HuggingFace Hub CDN instead of bundling with frontend.
+**Benefits:** Version control, CDN caching, smaller frontend bundle, automatic updates.
+
+#### Model Loading Strategy
+- [x] Update frontend constants.ts to use HF Hub URLs (https://huggingface.co/d4oit/tiny-cats-model/resolve/main/)
+- [x] Add fallback to local models if HF Hub unavailable
+- [x] Ensure CORS is handled properly
+- [x] Update generator loading to use quantized version
+
+#### Automated Upload Pipeline
+- [x] Add upload step to train.yml after classifier training
+- [x] Add upload step to train.yml after DiT training
+- [x] Use HF_TOKEN secret for authentication
+- [x] Upload both .pt and .onnx versions
+- [x] Create/update model card on first upload
+
+#### E2E Testing
+- [x] Classification page: upload image, verify result (241 tests)
+- [x] Generation page: select breed, generate image, verify output
+- [x] Benchmark page: verify metrics display
+
+### Phase 17: Full Model Training & Deployment (ADR-035)
+
+**Goal:** Train full TinyDiT model (300k steps) with enhanced augmentation, comprehensive testing, and automated HuggingFace upload.
+
+#### Phase 17.1: Enhanced Training Configuration
+- [x] Update dataset.py with advanced augmentation (rotation, color jitter, affine)
+- [x] Update train_dit.py with gradient accumulation (effective batch 512)
+- [x] Configure 300k step training with EMA
+- [x] Add multi-scale training support
+- [ ] **A01:** Run Modal GPU training (300k steps, A10G)
+
+#### Phase 17.2: Comprehensive Test Suite
+- [x] Add unit tests: edge cases (empty images, extreme aspects)
+- [x] Add integration tests: checkpoint resume, OOM recovery
+- [x] Add E2E Playwright tests: classification page (60+ tests)
+- [x] Add E2E Playwright tests: generation page (80+ tests)
+- [x] Add E2E Playwright tests: benchmark page (75+ tests)
+- [x] **A02:** Run full test suite with coverage report ✅
+
+#### Phase 17.3: Evaluation & Benchmarks
+- [x] Create evaluate_full.py (FID, IS, Precision/Recall)
+- [x] Create benchmark_inference.py (latency, throughput, memory)
+- [x] Generate evaluation report with sample grids - **Completed 2026-02-27: 13 samples (1 per breed)**
+- [x] **A03:** Run evaluation on trained model ✅ **2026-02-27**
+- [x] **A04:** Run benchmarks and record metrics ✅ **2026-02-27: p50=19.4ms, p95=35.9ms, p99=48.3ms**
+
+#### Phase 17.4: HuggingFace Upload Automation
+- [x] Create upload_to_huggingface.py with model card
+- [x] Add auto-upload to train.yml on success
+- [x] Upload classifier (ONNX quantized) - **2026-02-27: 11.2MB**
+- [x] Upload generator (PT + ONNX quantized) - **2026-02-27: 132MB + 33.8MB**
+- [x] Upload evaluation results & benchmarks - **2026-02-27**
+- [x] **A05:** Upload to d4oit/tiny-cats-model - **✅ Complete: https://huggingface.co/d4oit/tiny-cats-model**
+
+#### Phase 17.5: Documentation Updates
+- [x] Update README.md with training guide
+- [x] Update AGENTS.md with new workflows
+- [x] Create HuggingFace model card (in upload_to_huggingface.py)
+- [ ] Add tutorial notebooks
+- [x] **A06:** Update all documentation
+
+#### GOAP Action Status for Phase 17
+| Action | Status | Phase | Skill | Completed At |
+|--------|--------|-------|-------|--------------|
+| A01: Run Modal GPU training | ⏳ Pending | 17.1 | model-training | - |
+| A02: Run full test suite | ✅ Complete | 17.2 | testing-workflow | 2026-02-26 |
+| A03: Run evaluation | ✅ Complete | 17.3 | model-training | 2026-02-27 |
+| A04: Run benchmarks | ✅ Complete | 17.3 | model-training | 2026-02-27 |
+| A05: Upload to HuggingFace | ✅ Complete | 17.4 | model-training | 2026-02-27 |
+| A06: Update documentation | ✅ Complete | 17.5 | agents-md | 2026-02-27 |
+
+**Progress:** 5/6 actions complete (83%)
+
+### Phase 18: High-Accuracy Training (ADR-036)
+
+**Goal:** Train improved TinyDiT model (400k steps, effective batch 512) for better sample quality and lower FID.
+
+#### Phase 18.1: Training Configuration
+- [x] Document high-accuracy configuration (ADR-036)
+- [ ] **A01:** Run 400k step training with gradient accumulation
+- [ ] **A02:** Monitor training progress and checkpoints
+
+#### Phase 18.2: Evaluation & Metrics
+- [ ] Generate evaluation samples (500+ images)
+- [ ] Compute FID, IS, Precision/Recall
+- [ ] Run inference benchmarks
+- [ ] **A03:** Compare with baseline (200k steps)
+
+#### Phase 18.3: Deployment
+- [ ] Export to ONNX (quantized)
+- [ ] Upload to HuggingFace (new version)
+- [ ] Update frontend with new model
+- [ ] **A04:** Deploy high-accuracy model
+
+#### GOAP Action Status for Phase 18
+| Action | Status | Phase | Skill | Completed At |
+|--------|--------|-------|-------|--------------|
+| A01: Run 400k step training | ⏳ Pending | 18.1 | model-training | - |
+| A02: Monitor training | ⏳ Pending | 18.1 | model-training | - |
+| A03: Evaluate & compare | ⏳ Pending | 18.2 | model-training | - |
+| A04: Deploy model | ⏳ Pending | 18.3 | model-training | - |
+
+**Progress:** 0/4 actions complete (0%)
 
 ### Success Metrics Status
 | Metric | Target | Status |
@@ -389,9 +497,13 @@ Build a cats classifier and generator with web frontend, following the architect
 | Code Quality | 2026 stack | ✅ ADR-016 (Ruff) - All workflows migrated |
 | Training | 200k steps with EMA | ✅ Complete (checkpoint: tinydit_final.pt) |
 | Evaluation | Generated samples | ✅ Complete (104 samples, ADR-019) |
-| HuggingFace Publishing | Safetensors + model card | ✅ Ready (ADR-026) |
+| HuggingFace Publishing | Safetensors + model card | ✅ Complete (Phase 17 A05) |
 | Model Validation | Automated gates | ✅ Ready (ADR-028) |
 | Experiment Tracking | MLflow integration | 📝 Documented (ADR-027) |
+| HF Hub Loading | CDN delivery | ✅ Complete (Phase 17 A05) |
+| Generator Quantization | <50MB | ✅ Complete (33.8MB ONNX) |
+| E2E Tests | Full coverage | ⏳ Phase 16 Planned |
+| **High-Accuracy Training** | **400k steps, batch 512** | **📝 Planned (Phase 18, ADR-036)** |
 
 ## Success Metrics
 - Dataset: 12 cat breeds + other class ready
@@ -416,15 +528,16 @@ Build a cats classifier and generator with web frontend, following the architect
 | Conditioning | Breed one-hot (13 classes) |
 
 ### Training Configuration
-| Parameter | Value |
-|-----------|-------|
-| Steps | 200,000 |
-| Batch Size | 256 |
-| Learning Rate | 1e-4 |
-| Optimizer | AdamW (β1=0.9, β2=0.95) |
-| Weight Decay | 0.05 |
-| EMA Beta | 0.9999 |
-| Loss | Flow matching (v or x prediction) |
+| Parameter | Current (200k) | High-Accuracy (400k) |
+|-----------|----------------|----------------------|
+| Steps | 200,000 | 400,000 |
+| Batch Size | 256 | 256 (effective 512 with grad accum) |
+| Learning Rate | 1e-4 | 5e-5 |
+| Warmup Steps | 10,000 | 15,000 |
+| Augmentation | Basic | Full (rotation, color, affine) |
+| Gradient Accumulation | 1 | 2 |
+| Expected FID | ~50-70 | ~30-40 |
+| Modal Cost | ~$5-10 | ~$15-25 |
 
 ### Training Commands (Modal CLI)
 
@@ -437,7 +550,7 @@ modal run src/train.py data/cats --epochs 20 --batch-size 64
 python src/train.py data/cats --epochs 1 --batch-size 8
 ```
 
-**DiT Training:**
+**DiT Training (Current - 200k steps):**
 ```bash
 # Modal GPU training (recommended)
 modal run src/train_dit.py data/cats --steps 200000 --batch-size 256
@@ -446,7 +559,23 @@ modal run src/train_dit.py data/cats --steps 200000 --batch-size 256
 python src/train_dit.py data/cats --steps 100 --batch-size 8
 ```
 
+**DiT Training (High-Accuracy - 400k steps, ADR-036):**
+```bash
+# High-accuracy configuration (recommended for production)
+modal run src/train_dit.py data/cats \
+  --steps 400000 \
+  --batch-size 256 \
+  --gradient-accumulation-steps 2 \
+  --lr 5e-5 \
+  --warmup-steps 15000 \
+  --augmentation-level full
+
+# Local CPU testing (debug)
+python src/train_dit.py data/cats --steps 100 --batch-size 8
+```
+
 See ADR-020 for complete Modal CLI reference.
+See ADR-036 for high-accuracy training configuration.
 
 ### Frontend Stack
 - **Framework**: React 18 + TypeScript
