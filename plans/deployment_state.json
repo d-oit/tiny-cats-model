@@ -1,13 +1,13 @@
 {
   "deployment_id": "deploy-2026-02-25-001",
   "started_at": "2026-02-25T19:00:00Z",
-  "updated_at": "2026-02-27T09:20:00Z",
+  "updated_at": "2026-02-27T10:20:00Z",
   "current_phase": "phase_5_deployment",
-  "last_action": "A15",
+  "last_action": "A26",
   "actions_completed": [
     "A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10", "A11",
     "A12", "A13", "A14", "A15", "A16", "A17", "A18", "A19", "A20", "A21",
-    "A23", "A24", "A25"
+    "A23", "A24", "A25", "A26"
   ],
   "actions_pending": [],
   "world_state": {
@@ -42,22 +42,25 @@
       ],
       "pushed": true,
       "pr_created": true,
-      "pr_number": 21
+      "pr_number": 21,
+      "latest_commit": "7b31caf fix(model): handle checkpoint formats with metadata"
     },
     "ci_state": {
-      "pipeline_running": false,
-      "pipeline_passed": true,
+      "pipeline_running": true,
+      "pipeline_passed": false,
       "failures_detected": [
         "TypeScript WebGPU type error in frontend build",
         "Modal Python path error: No module named 'dataset'",
         "Vite worker format error: Invalid value 'iife'",
-        "TypeScript unused variable 'path' in inference.worker.ts"
+        "TypeScript unused variable 'path' in inference.worker.ts",
+        "Checkpoint format mismatch in test_model.py (2 tests)"
       ],
       "failures_resolved": [
         "Cast navigator.gpu with 'as any' to avoid type error (commit 7e0103e)",
         "Changed sys.path from /app/src to /app (commit 667ec70, ADR-030)",
         "Set worker.format to 'es' in vite.config.ts (commit 1f2c764)",
-        "Prefixed unused parameter with underscore (2026-02-27)"
+        "Prefixed unused parameter with underscore (2026-02-27)",
+        "Fixed load_checkpoint to handle metadata in checkpoints (commit 7b31caf)"
       ]
     },
     "deployment_state": {
@@ -121,6 +124,16 @@
       "resolved_at": "2026-02-25T19:21:00Z",
       "commit": "1f2c764",
       "status": "resolved"
+    },
+    {
+      "id": "issue-004",
+      "type": "test_failure",
+      "description": "Checkpoint format mismatch in test_model.py",
+      "error": "test_load_full_checkpoint_with_metadata and test_load_checkpoint_with_extra_keys failing",
+      "resolution": "Fixed load_checkpoint() to extract model_state_dict from full checkpoint format and ignore extra keys",
+      "resolved_at": "2026-02-27T10:15:00Z",
+      "commit": "7b31caf",
+      "status": "resolved"
     }
   ],
   "verification_results": {
@@ -156,16 +169,18 @@
     "All CI checks passing: CI, Train, CodeQL, Automatic Dependency Submission",
     "Analysis swarm completed - 90% confidence in production readiness",
     "Modal import tests passed - both train.py and train_dit.py work correctly",
-    "Next steps: Merge PR, set HF_TOKEN, run upload_to_hub.py"
+    "Next steps: Merge PR, set HF_TOKEN, run upload_to_hub.py",
+    "2026-02-27: Fixed checkpoint format handling in load_checkpoint() - 2 tests now passing",
+    "2026-02-27: CI monitoring in progress for latest fix commit"
   ],
   "pr_status": {
     "number": 21,
     "url": "https://github.com/d-oit/tiny-cats-model/pull/21",
     "state": "OPEN",
     "mergeable": true,
-    "ci_status": "all_passed",
-    "commits_count": 9,
+    "ci_status": "in_progress",
+    "commits_count": 10,
     "created_at": "2026-02-25T19:17:00Z",
-    "updated_at": "2026-02-25T19:35:00Z"
+    "updated_at": "2026-02-27T10:15:00Z"
   }
 }
