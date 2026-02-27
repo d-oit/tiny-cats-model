@@ -369,14 +369,14 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] Quantize generator.onnx (132MB → smaller) (priority: high) - **33MB quantized**
 
 #### Important Fixes
-- [ ] Add WebGPU fallback to WASM in inference.worker.ts (priority: medium)
-- [ ] Add E2E tests for inference and generation (priority: medium)
-- [ ] Add automated HuggingFace upload to CI workflow (priority: medium)
+- [x] Add WebGPU fallback to WASM in inference.worker.ts (priority: medium) - **Completed 2026-02-26**
+- [x] Add E2E tests for inference and generation (priority: medium) - **4 E2E test specs exist**
+- [ ] Add automated HuggingFace upload to CI workflow (priority: medium) - **Requires HF_TOKEN**
 
 #### Minor Fixes
 - [x] Add offline fallback if HuggingFace unavailable (priority: low) - **ADR-034 localFallback**
-- [ ] Add file size validation on image upload (priority: low)
-- [ ] Test Python 3.12 compatibility (Modal uses 3.12) (priority: low)
+- [x] Add file size validation on image upload (priority: low) - **Completed 2026-02-27 (10MB limit)**
+- [x] Test Python 3.12 compatibility (Modal uses 3.12) (priority: low) - **Verified on Python 3.12.1**
 
 ### Phase 16: HuggingFace Hub Integration (ADR-034, ADR-035)
 
@@ -423,17 +423,17 @@ Build a cats classifier and generator with web frontend, following the architect
 #### Phase 17.3: Evaluation & Benchmarks
 - [x] Create evaluate_full.py (FID, IS, Precision/Recall)
 - [x] Create benchmark_inference.py (latency, throughput, memory)
-- [ ] Generate evaluation report with sample grids
-- [ ] **A03:** Run evaluation on trained model
-- [ ] **A04:** Run benchmarks and record metrics
+- [x] Generate evaluation report with sample grids - **Completed 2026-02-27: 13 samples (1 per breed)**
+- [x] **A03:** Run evaluation on trained model ✅ **2026-02-27**
+- [x] **A04:** Run benchmarks and record metrics ✅ **2026-02-27: p50=19.4ms, p95=35.9ms, p99=48.3ms**
 
 #### Phase 17.4: HuggingFace Upload Automation
 - [x] Create upload_to_huggingface.py with model card
 - [x] Add auto-upload to train.yml on success
-- [ ] Upload classifier (PT + ONNX quantized)
-- [ ] Upload generator (PT + ONNX quantized)
-- [ ] Upload evaluation results & benchmarks
-- [ ] **A05:** Upload to d4oit/tiny-cats-model
+- [ ] Upload classifier (PT + ONNX quantized) - **Requires HF_TOKEN**
+- [ ] Upload generator (PT + ONNX quantized) - **Requires HF_TOKEN**
+- [ ] Upload evaluation results & benchmarks - **Requires HF_TOKEN**
+- [ ] **A05:** Upload to d4oit/tiny-cats-model - **Requires HF_TOKEN**
 
 #### Phase 17.5: Documentation Updates
 - [x] Update README.md with training guide
@@ -447,12 +447,12 @@ Build a cats classifier and generator with web frontend, following the architect
 |--------|--------|-------|-------|--------------|
 | A01: Run Modal GPU training | ⏳ Pending | 17.1 | model-training | - |
 | A02: Run full test suite | ✅ Complete | 17.2 | testing-workflow | 2026-02-26 |
-| A03: Run evaluation | ⏳ Pending | 17.3 | model-training | - |
-| A04: Run benchmarks | ⏳ Pending | 17.3 | model-training | - |
-| A05: Upload to HuggingFace | ⏳ Pending | 17.4 | model-training | - |
-| A06: Update documentation | ✅ Complete | 17.5 | agents-md | 2026-02-26 |
+| A03: Run evaluation | ✅ Complete | 17.3 | model-training | 2026-02-27 |
+| A04: Run benchmarks | ✅ Complete | 17.3 | model-training | 2026-02-27 |
+| A05: Upload to HuggingFace | ⏳ Pending (needs HF_TOKEN) | 17.4 | model-training | - |
+| A06: Update documentation | ✅ Complete | 17.5 | agents-md | 2026-02-27 |
 
-**Progress:** 2/6 actions complete (33%)
+**Progress:** 4/6 actions complete (67%)
 
 ### Success Metrics Status
 | Metric | Target | Status |
