@@ -65,7 +65,9 @@
     },
     "deployment_state": {
       "validation_gates_passed": true,
-      "model_uploaded_hub": false,
+      "model_uploaded_hub": true,
+      "model_uploaded_hub_url": "https://huggingface.co/d4oit/tiny-cats-model",
+      "model_uploaded_hub_at": "2026-02-27T19:25:16Z",
       "mlflow_integrated": false,
       "modal_training_fixed": true,
       "modal_imports_verified": true,
@@ -73,7 +75,9 @@
       "file_size_validation_added": true,
       "evaluation_completed": true,
       "benchmarks_completed": true,
-      "python312_verified": true
+      "python312_verified": true,
+      "upload_artifacts_ready": true,
+      "upload_script_verified": true
     },
     "documentation_state": {
       "goap_updated": true,

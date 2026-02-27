@@ -430,10 +430,10 @@ Build a cats classifier and generator with web frontend, following the architect
 #### Phase 17.4: HuggingFace Upload Automation
 - [x] Create upload_to_huggingface.py with model card
 - [x] Add auto-upload to train.yml on success
-- [ ] Upload classifier (PT + ONNX quantized) - **Requires HF_TOKEN**
-- [ ] Upload generator (PT + ONNX quantized) - **Requires HF_TOKEN**
-- [ ] Upload evaluation results & benchmarks - **Requires HF_TOKEN**
-- [ ] **A05:** Upload to d4oit/tiny-cats-model - **Requires HF_TOKEN**
+- [x] Upload classifier (ONNX quantized) - **2026-02-27: 11.2MB**
+- [x] Upload generator (PT + ONNX quantized) - **2026-02-27: 132MB + 33.8MB**
+- [x] Upload evaluation results & benchmarks - **2026-02-27**
+- [x] **A05:** Upload to d4oit/tiny-cats-model - **✅ Complete: https://huggingface.co/d4oit/tiny-cats-model**
 
 #### Phase 17.5: Documentation Updates
 - [x] Update README.md with training guide
@@ -449,10 +449,10 @@ Build a cats classifier and generator with web frontend, following the architect
 | A02: Run full test suite | ✅ Complete | 17.2 | testing-workflow | 2026-02-26 |
 | A03: Run evaluation | ✅ Complete | 17.3 | model-training | 2026-02-27 |
 | A04: Run benchmarks | ✅ Complete | 17.3 | model-training | 2026-02-27 |
-| A05: Upload to HuggingFace | ⏳ Pending (needs HF_TOKEN) | 17.4 | model-training | - |
+| A05: Upload to HuggingFace | ✅ Complete | 17.4 | model-training | 2026-02-27 |
 | A06: Update documentation | ✅ Complete | 17.5 | agents-md | 2026-02-27 |
 
-**Progress:** 4/6 actions complete (67%)
+**Progress:** 5/6 actions complete (83%)
 
 ### Success Metrics Status
 | Metric | Target | Status |
@@ -469,8 +469,8 @@ Build a cats classifier and generator with web frontend, following the architect
 | HuggingFace Publishing | Safetensors + model card | ✅ Ready (ADR-026) |
 | Model Validation | Automated gates | ✅ Ready (ADR-028) |
 | Experiment Tracking | MLflow integration | 📝 Documented (ADR-027) |
-| HF Hub Loading | CDN delivery | ⏳ Phase 16 Planned |
-| Generator Quantization | <50MB | ⏳ Phase 16 Planned |
+| HF Hub Loading | CDN delivery | ✅ Complete (Phase 17 A05) |
+| Generator Quantization | <50MB | ✅ Complete (33.8MB ONNX) |
 | E2E Tests | Full coverage | ⏳ Phase 16 Planned |
 
 ## Success Metrics
