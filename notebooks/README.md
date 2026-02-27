@@ -4,19 +4,11 @@ Interactive Jupyter notebooks for learning the tiny-cats-model.
 
 ## Quick Start
 
-| Notebook | Description | Runtime |
-|----------|-------------|---------|
-| [01_quickstart_classification.ipynb](01_quickstart_classification.ipynb) | Classify cat breeds using ONNX model | CPU/GPU |
-| [02_conditional_generation.ipynb](02_conditional_generation.ipynb) | Generate cat images with diffusion model | GPU recommended |
-| [03_training_fine_tuning.ipynb](03_training_fine_tuning.ipynb) | Train or fine-tune your own model | GPU required |
-
-## Google Colab
-
-Run these notebooks directly in Google Colab:
-
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/d-oit/tiny-cats-model/blob/main/notebooks/01_quickstart_classification.ipynb)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/d-oit/tiny-cats-model/blob/main/notebooks/02_conditional_generation.ipynb)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/d-oit/tiny-cats-model/blob/main/notebooks/03_training_fine_tuning.ipynb)
+| Notebook | Description | Runtime | Colab |
+|----------|-------------|---------|-------|
+| [01: Classification](01_quickstart_classification.ipynb) | Classify cat breeds using ONNX model | CPU/GPU | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/d-oit/tiny-cats-model/blob/main/notebooks/01_quickstart_classification.ipynb) |
+| [02: Generation](02_conditional_generation.ipynb) | Generate cat images with diffusion model | GPU recommended | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/d-oit/tiny-cats-model/blob/main/notebooks/02_conditional_generation.ipynb) |
+| [03: Training](03_training_fine_tuning.ipynb) | Train or fine-tune your own model | GPU required | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/d-oit/tiny-cats-model/blob/main/notebooks/03_training_fine_tuning.ipynb) |
 
 ## Setup
 
