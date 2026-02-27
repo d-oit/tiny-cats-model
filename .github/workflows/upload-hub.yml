@@ -28,7 +28,7 @@ jobs:
           pip install huggingface_hub
       
       - name: Download checkpoint artifact
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v6
         with:
           workflow: train.yml
           branch: main
@@ -37,7 +37,7 @@ jobs:
         continue-on-error: true
       
       - name: Download evaluation artifact
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v6
         with:
           workflow: train.yml
           branch: main
@@ -46,7 +46,7 @@ jobs:
         continue-on-error: true
       
       - name: Download benchmark artifact
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v6
         with:
           workflow: train.yml
           branch: main
