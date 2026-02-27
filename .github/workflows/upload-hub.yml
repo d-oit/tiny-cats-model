@@ -1,0 +1,115 @@
+name: Upload to HuggingFace Hub
+
+on:
+  workflow_run:
+    workflows: ["Train"]
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    timeout-minutes: 30
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install huggingface_hub
+      
+      - name: Download checkpoint artifact
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: train.yml
+          branch: main
+          name: checkpoints
+          path: checkpoints/
+        continue-on-error: true
+      
+      - name: Download evaluation artifact
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: train.yml
+          branch: main
+          name: evaluation-report
+          path: evaluation/
+        continue-on-error: true
+      
+      - name: Download benchmark artifact
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: train.yml
+          branch: main
+          name: benchmark-report
+          path: benchmarks/
+        continue-on-error: true
+      
+      - name: Check if generator checkpoint exists
+        id: check-generator
+        run: |
+          if [ -f "checkpoints/tinydit_final.pt" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Upload to HuggingFace Hub
+        if: steps.check-generator.outputs.exists == 'true'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python src/upload_to_huggingface.py \
+            --generator checkpoints/tinydit_final.pt \
+            --onnx-generator frontend/public/models/generator_quantized.onnx \
+            --onnx-classifier frontend/public/models/cats_quantized.onnx \
+            --evaluation-report evaluation/evaluation_report.json \
+            --benchmark-report benchmarks/benchmark_report.json \
+            --samples-dir samples/evaluation_test \
+            --repo-id d4oit/tiny-cats-model \
+            --commit-message "Auto-upload: ${{ github.sha }}"
+      
+      - name: Verify upload
+        if: steps.check-generator.outputs.exists == 'true'
+        run: |
+          python -c "
+          from huggingface_hub import list_repo_files
+          files = list_repo_files('d4oit/tiny-cats-model')
+          required = ['generator/model.pt', 'generator/model.onnx', 'classifier/model.onnx']
+          missing = [f for f in required if f not in files]
+          if missing:
+              print(f'❌ Missing files: {missing}')
+              exit(1)
+          print('✅ Upload verified successfully')
+          "
+      
+      - name: Upload failure notification
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 HuggingFace Upload Failed',
+              body: `Upload failed in workflow run
+            
+              **Workflow:** ${context.workflow}
+              **Run ID:** ${context.runId}
+              **Commit:** ${context.sha}
+              **Triggered by:** ${context.actor}
+            
+              [View logs](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+            
+              Please check the logs and retry if necessary.
+              `
+            })
