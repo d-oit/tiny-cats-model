@@ -87,7 +87,7 @@ class InferenceEngine {
   configs: ModelConfig | null = null;
   executionProvider: "wasm" | "webgpu" = "wasm";
 
-  async loadModel(path: string, modelType: ModelType) {
+  async loadModel(_path: string, modelType: ModelType) {
     console.log("Loading model...");
     try {
       this.modelType = modelType;
