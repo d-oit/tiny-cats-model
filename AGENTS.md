@@ -60,3 +60,9 @@ bash scripts/quality-gate.sh
 - [Skills](agents-docs/skills.md)
 - [Learnings](agents-docs/learnings.md)
 - [Auth Troubleshooting](agents-docs/auth-troubleshooting.md)
+
+# Token Optimization Rules
+Never run raw testing, linting, or building commands directly in the terminal. Always use the provided scripts to truncate verbose output and save tokens.
+
+- For build/test commands: `bash .agents/skills/token_safe_exec.sh "<command>"`
+- For lint/format analysis: `python .agents/skills/smart_lint.py "<command>"`
