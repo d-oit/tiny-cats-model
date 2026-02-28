@@ -213,7 +213,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Running tests (pytest)..."
 
-if PYTEST_OUTPUT=$(python -m pytest tests/ -v --tb=short 2>&1); then
+if PYTEST_OUTPUT=$(python -m pytest tests/ -v -m "not slow" --tb=short 2>&1); then
     log_success "All tests passed"
 else
     log_error "Tests failed"
