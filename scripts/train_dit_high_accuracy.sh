@@ -8,6 +8,9 @@
 # - Gradient accumulation (effective batch 512)
 # - Lower learning rate for finer convergence
 # - Full augmentation level
+#
+# Note: For very long training (24h+), use GitHub Actions instead:
+#   gh workflow run train.yml -f steps=400000
 
 set -e
 
@@ -21,9 +24,9 @@ echo ""
 echo "Verifying Modal authentication..."
 modal token info
 
-# Run 400k step training
+# Run 400k step training with nohup to survive CLI timeout
 echo ""
-echo "Starting Modal GPU training..."
+echo "Starting Modal GPU training (background)..."
 echo "Configuration:"
 echo "  - Steps: 400,000"
 echo "  - Batch Size: 256"
@@ -32,19 +35,20 @@ echo "  - Learning Rate: 5e-5"
 echo "  - Warmup Steps: 15,000"
 echo "  - Augmentation: full"
 echo ""
+echo "View progress at: https://modal.com/dashboard"
+echo ""
 
-modal run src/train_dit.py \
+# Run with nohup to prevent CLI timeout from killing the process
+nohup modal run src/train_dit.py \
     --data-dir data/cats \
     --steps 400000 \
     --batch-size 256 \
     --gradient-accumulation-steps 2 \
     --lr 5e-5 \
     --warmup-steps 15000 \
-    --augmentation-level full
+    --augmentation-level full \
+    > modal_training.log 2>&1 &
 
-echo ""
-echo "============================================"
-echo "Training Complete!"
-echo "Date: $(date)"
-echo "Checkpoints saved to: /outputs/checkpoints/dit/"
-echo "============================================"
+echo "Training started in background (PID: $!)"
+echo "Logs will be saved to: modal_training.log"
+echo "View app at: https://modal.com/dashboard"
