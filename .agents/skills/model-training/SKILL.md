@@ -49,27 +49,32 @@ python src/train.py data/cats --device cpu
 
 ```bash
 # Local CPU testing (debug)
-python src/train_dit.py data/cats --steps 100 --batch-size 8
+python src/train_dit.py --data-dir data/cats --steps 100 --batch-size 8
 
 # Full training (requires GPU)
-python src/train_dit.py data/cats --steps 200000 --batch-size 256
+python src/train_dit.py --data-dir data/cats --steps 200000 --batch-size 256
 ```
 
 ## Modal GPU Training
 
 ```bash
 # Classifier training on GPU
-modal run src/train.py data/cats --epochs 20 --batch-size 64
+modal run src/train.py --data-dir data/cats --epochs 20 --batch-size 64
 
 # DiT training on GPU (300k steps)
-modal run src/train_dit.py data/cats --steps 300000 --batch-size 256
+modal run src/train_dit.py --data-dir data/cats --steps 300000 --batch-size 256
 
 # High-accuracy DiT training (400k steps, gradient accumulation)
-modal run src/train_dit.py data/cats \
+modal run src/train_dit.py --data-dir data/cats \
   --steps 400000 \
   --batch-size 256 \
   --gradient-accumulation-steps 2 \
+  --lr 5e-5 \
+  --warmup-steps 15000 \
   --augmentation-level full
+
+# Or use the training script (recommended)
+bash scripts/train_dit_high_accuracy.sh
 
 # Verify training setup (no import errors)
 modal run src/train_dit.py --help
