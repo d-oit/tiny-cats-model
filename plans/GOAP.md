@@ -443,16 +443,17 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] **A06:** Update all documentation
 
 #### GOAP Action Status for Phase 17
-| Action | Status | Phase | Skill | Completed At |
-|--------|--------|-------|-------|--------------|
-| A01: Run Modal GPU training | ⏳ Pending | 17.1 | model-training | - |
-| A02: Run full test suite | ✅ Complete | 17.2 | testing-workflow | 2026-02-26 |
-| A03: Run evaluation | ✅ Complete | 17.3 | model-training | 2026-02-27 |
-| A04: Run benchmarks | ✅ Complete | 17.3 | model-training | 2026-02-27 |
-| A05: Upload to HuggingFace | ✅ Complete | 17.4 | model-training | 2026-02-27 |
-| A06: Update documentation | ✅ Complete | 17.5 | agents-md | 2026-02-27 |
+| Action | Status | Phase | Skill | Completed At | Notes |
+|--------|--------|-------|-------|--------------|-------|
+| A01: Run Modal GPU training (300k) | ⏳ PENDING (P0) | 17.1 | model-training | - | **Next action** - 24-36h |
+| A02: Run full test suite | ✅ Complete | 17.2 | testing-workflow | 2026-02-26 | 215 tests passing |
+| A03: Run evaluation | ✅ Complete | 17.3 | model-training | 2026-02-27 | 104 samples, 13 breeds |
+| A04: Run benchmarks | ✅ Complete | 17.3 | model-training | 2026-02-27 | p50=19.4ms, p95=35.9ms |
+| A05: Upload to HuggingFace | ✅ Complete | 17.4 | model-training | 2026-02-27 | d4oit/tiny-cats-model |
+| A06: Update documentation | ✅ Complete | 17.5 | agents-md | 2026-02-27 | ADRs 035-039 |
 
 **Progress:** 5/6 actions complete (83%)
+**Blocker:** None - Ready to execute A01
 
 ### Phase 18: High-Accuracy Training (ADR-036)
 
@@ -476,14 +477,16 @@ Build a cats classifier and generator with web frontend, following the architect
 - [ ] **A04:** Deploy high-accuracy model
 
 #### GOAP Action Status for Phase 18
-| Action | Status | Phase | Skill | Completed At |
-|--------|--------|-------|-------|--------------|
-| A01: Run 400k step training | ⏳ Pending | 18.1 | model-training | - |
-| A02: Monitor training | ⏳ Pending | 18.1 | model-training | - |
-| A03: Evaluate & compare | ⏳ Pending | 18.2 | model-training | - |
-| A04: Deploy model | ⏳ Pending | 18.3 | model-training | - |
+| Action | Status | Phase | Skill | Completed At | Notes |
+|--------|--------|-------|-------|--------------|-------|
+| A01: Run 400k step training | ⏳ PENDING (P3) | 18.1 | model-training | - | After Phase 17 complete |
+| A02: Monitor training | ⏳ PENDING (P3) | 18.1 | model-training | - | 36-48h training |
+| A03: Evaluate & compare | ⏳ PENDING (P3) | 18.2 | model-training | - | Compare vs 200k baseline |
+| A04: Deploy model | ⏳ PENDING (P3) | 18.3 | model-training | - | ONNX export + HF upload |
 
 **Progress:** 0/4 actions complete (0%)
+**Blocker:** Phase 17 must complete first
+**Decision Point:** Start after Phase 17 validation or defer
 
 ### Phase 19: Tutorial & Documentation Enhancement (ADR-038)
 
@@ -509,16 +512,17 @@ Build a cats classifier and generator with web frontend, following the architect
 - [ ] **A06:** Share tutorials with community
 
 #### GOAP Action Status for Phase 19
-| Action | Status | Phase | Skill | Completed At |
-|--------|--------|-------|-------|--------------|
-| A01: Create classification notebook | ✅ Complete | 19.1 | agents-md | 2026-02-27 |
-| A02: Create generation notebook | ✅ Complete | 19.1 | agents-md | 2026-02-27 |
-| A03: Create training notebook | ✅ Complete | 19.1 | agents-md | 2026-02-27 |
-| A04: Add test assets | ⏳ Pending | 19.1 | testing-workflow | - |
-| A05: Test notebooks | ⏳ Pending | 19.2 | testing-workflow | - |
-| A06: Distribute tutorials | ⏳ Pending | 19.3 | git-workflow | - |
+| Action | Status | Phase | Skill | Completed At | Notes |
+|--------|--------|-------|-------|--------------|-------|
+| A01: Create classification notebook | ✅ Complete | 19.1 | agents-md | 2026-02-27 | notebooks/01_*.ipynb |
+| A02: Create generation notebook | ✅ Complete | 19.1 | agents-md | 2026-02-27 | notebooks/02_*.ipynb |
+| A03: Create training notebook | ✅ Complete | 19.1 | agents-md | 2026-02-27 | notebooks/03_*.ipynb |
+| A04: Add test assets | ⏳ PENDING (P2) | 19.1 | testing-workflow | - | notebooks/assets/ |
+| A05: Test notebooks E2E | ⏳ PENDING (P2) | 19.2 | testing-workflow | - | jupyter nbconvert --execute |
+| A06: Distribute tutorials | ⏳ PENDING (P3) | 19.3 | git-workflow | - | Colab, HF datasets |
 
 **Progress:** 3/6 actions complete (50%)
+**Blocker:** None - Can execute A04-A05 in parallel with Phase 17
 
 ### Phase 20: CI/CD Automation (ADR-039)
 
@@ -549,39 +553,81 @@ Build a cats classifier and generator with web frontend, following the architect
 - [ ] **A07:** Add CI integration for E2E tests
 
 #### GOAP Action Status for Phase 20
-| Action | Status | Phase | Skill | Completed At |
-|--------|--------|-------|-------|--------------|
-| A01: Configure HF_TOKEN | ⏳ Pending | 20.1 | security | - |
-| A02: Create upload workflow | ✅ Complete | 20.2 | gh-actions | 2026-02-27 |
-| A03: Test workflow | ⏳ Pending | 20.3 | testing-workflow | - |
-| A04: Classification tests | ✅ Complete | 20.4 | testing-workflow | 2026-02-26 |
-| A05: Generation tests | ✅ Complete | 20.4 | testing-workflow | 2026-02-26 |
-| A06: Benchmark tests | ✅ Complete | 20.4 | testing-workflow | 2026-02-26 |
-| A07: E2E CI integration | ✅ Complete | 20.4 | gh-actions | 2026-02-26 |
+| Action | Status | Phase | Skill | Completed At | Notes |
+|--------|--------|-------|-------|--------------|-------|
+| A01: Configure HF_TOKEN | ⏳ PENDING (P0) | 20.1 | security | - | **BLOCKING** - GitHub Secrets |
+| A02: Create upload workflow | ✅ Complete | 20.2 | gh-actions | 2026-02-27 | upload-hub.yml |
+| A03: Test workflow | ⏳ PENDING (P1) | 20.3 | testing-workflow | - | After HF_TOKEN setup |
+| A04: Classification tests | ✅ Complete | 20.4 | testing-workflow | 2026-02-26 | 60+ tests |
+| A05: Generation tests | ✅ Complete | 20.4 | testing-workflow | 2026-02-26 | 80+ tests |
+| A06: Benchmark tests | ✅ Complete | 20.4 | testing-workflow | 2026-02-26 | 75+ tests |
+| A07: E2E CI integration | ✅ Complete | 20.4 | gh-actions | 2026-02-26 | ci.yml includes E2E |
 
 **Progress:** 4/7 actions complete (57%)
+**Blocker:** A01 (HF_TOKEN) blocking A03 and automated uploads
+
+### Phase 21: Modal Training Enhancement (ADR-042)
+
+**Goal:** Enhance Modal training with error handling, logging, cleanup, and production pipeline.
+
+#### Phase 21.1: Container Fixes
+- [x] Add auth_utils.py to Modal container image
+- [x] Add retry_utils.py to Modal container image
+- [x] Add experiment_tracker.py to Modal container image
+- [x] Update train.py container config (already done)
+- [x] Update train_dit.py container config
+
+#### Phase 21.2: Cleanup Enhancement
+- [x] Add checkpoint cleanup to train_dit.py
+- [x] Add volume commit on error for partial state
+- [x] Add memory cleanup in finally block
+- [x] Ensure consistency with train.py patterns
+
+#### Phase 21.3: Documentation
+- [x] Update model-training skill with Modal 1.0+ commands
+- [x] Update AGENTS.md (150 LOC max)
+- [x] Update agents-docs/training.md
+- [x] Update agents-docs/learnings.md
+- [x] Create ADR-042: Modal Training Enhancement
+
+#### Phase 21.4: Verification
+- [ ] Test `modal run src/train_dit.py --help`
+- [ ] Test short training run
+- [ ] Verify checkpoint cleanup works
+
+#### GOAP Action Status for Phase 21
+| Action | Status | Phase | Skill | Completed At | Notes |
+|--------|--------|-------|-------|--------------|-------|
+| A01: Container fixes | ✅ Complete | 21.1 | model-training | 2026-02-28 | auth_utils, retry_utils |
+| A02: Cleanup enhancement | ✅ Complete | 21.2 | model-training | 2026-02-28 | checkpoint cleanup |
+| A03: Documentation | ✅ Complete | 21.3 | agents-md | 2026-02-28 | AGENTS.md, training.md |
+| A04: Verify training | ⏳ PENDING (P1) | 21.4 | model-training | - | Test Modal run |
+
+**Progress:** 3/4 actions complete (75%)
 
 ### Success Metrics Status
-| Metric | Target | Status |
-|--------|--------|--------|
-| Dataset | 12 cat breeds + other | ✅ Complete |
-| Model size | <100MB | ✅ 11MB (quantized) |
-| Inference | <2s generation | ✅ Benchmark page ready |
-| Frontend | Responsive UI | ✅ Complete |
-| CI | All checks pass | ✅ All jobs passing (Ruff + TS 5.8) |
-| Quality Gate | Local = CI | ✅ ADR-014 implemented |
-| Code Quality | 2026 stack | ✅ ADR-016 (Ruff) - All workflows migrated |
-| Training | 200k steps with EMA | ✅ Complete (checkpoint: tinydit_final.pt) |
-| Evaluation | Generated samples | ✅ Complete (104 samples, ADR-019) |
-| HuggingFace Publishing | Safetensors + model card | ✅ Complete (Phase 17 A05) |
-| Model Validation | Automated gates | ✅ Ready (ADR-028) |
-| Experiment Tracking | MLflow integration | 📝 Documented (ADR-027) |
-| HF Hub Loading | CDN delivery | ✅ Complete (Phase 17 A05) |
-| Generator Quantization | <50MB | ✅ Complete (33.8MB ONNX) |
-| E2E Tests | Full coverage | ✅ Complete (215 tests, Phase 20) |
-| **High-Accuracy Training** | **400k steps, batch 512** | **📝 Planned (Phase 18, ADR-036)** |
-| **Tutorial Notebooks** | **3 interactive notebooks** | **✅ Complete (Phase 19, ADR-038)** |
-| **CI/CD Automation** | **Automated HF upload** | **🔄 In Progress (Phase 20, ADR-039)** |
+| Metric | Target | Status | Notes |
+|--------|--------|--------|-------|
+| Dataset | 12 cat breeds + other | ✅ Complete | Oxford IIIT Pet |
+| Model size | <100MB | ✅ 11MB (quantized) | Classifier ONNX |
+| Inference | <2s generation | ✅ Benchmark page ready | p50=19.4ms |
+| Frontend | Responsive UI | ✅ Complete | GitHub Pages deployed |
+| CI | All checks pass | ✅ All jobs passing | Ruff + TS 5.8 |
+| Quality Gate | Local = CI | ✅ ADR-014 implemented | quality-gate.sh |
+| Code Quality | 2026 stack | ✅ ADR-016 (Ruff) | All workflows migrated |
+| Training | 200k steps with EMA | ✅ Complete | tinydit_final.pt |
+| Evaluation | Generated samples | ✅ Complete | 104 samples, ADR-019 |
+| HuggingFace Publishing | Safetensors + model card | ✅ Complete | d4oit/tiny-cats-model |
+| Model Validation | Automated gates | ✅ Ready | ADR-028 |
+| Experiment Tracking | MLflow integration | 📝 Documented | ADR-027 |
+| HF Hub Loading | CDN delivery | ✅ Complete | Phase 17 A05 |
+| Generator Quantization | <50MB | ✅ Complete | 33.8MB ONNX |
+| E2E Tests | Full coverage | ✅ Complete | 215 tests, Phase 20 |
+| **300k Training** | **Phase 17 A01** | **⏳ PENDING (P0)** | **Next action** |
+| **High-Accuracy Training** | **400k steps, batch 512** | **📝 Planned (Phase 18)** | **After Phase 17** |
+| **Tutorial Notebooks** | **3 interactive notebooks** | **✅ Complete (Phase 19)** | **E2E test pending** |
+| **CI/CD Automation** | **Automated HF upload** | **🔄 In Progress (Phase 20)** | **HF_TOKEN needed** |
+| **GitHub Actions Health** | **All workflows passing** | **✅ PASSING** | **Historical failures resolved** |
 
 ## Success Metrics
 - Dataset: 12 cat breeds + other class ready
@@ -590,6 +636,83 @@ Build a cats classifier and generator with web frontend, following the architect
 - Inference: <2s for full generation in browser
 - Frontend: Responsive, intuitive UI
 - CI: All checks pass
+
+## GitHub Actions Analysis (2026-02-28)
+
+### Recent CI Run Status
+
+| Run ID | Workflow | Status | Conclusion | Analysis |
+|--------|----------|--------|------------|----------|
+| 22504153618 | pages build and deployment | ✅ Complete | Success | Historical 502 was transient GitHub API issue |
+| 22434979071 | Automatic Dependency Submission | ✅ Complete | Success | Historical timeout resolved (retry logic) |
+| 22400417450 | CI | ✅ Complete | Success | TypeScript WebGPU fix merged (commit 7e0103e) |
+| Recent | Train, Upload, Deploy | ✅ Complete | All Passing | Current CI health: **EXCELLENT** |
+
+### Historical Failures - Root Cause Analysis
+
+#### Run 22504153618: "pages build and deployment"
+- **Error:** GitHub API 502 Bad Gateway
+- **Root Cause:** Transient GitHub infrastructure issue
+- **Type:** 🟢 TRANSIENT (self-healing)
+- **Resolution:** Automatic retry succeeded
+- **Action Required:** None - GitHub resolved automatically
+
+#### Run 22434979071: "Automatic Dependency Submission (Python)"
+- **Error:** Dependency resolution timeout
+- **Root Cause:** Temporary GitHub API rate limiting
+- **Type:** 🟢 TRANSIENT (self-healing)
+- **Resolution:** Workflow retry logic handled it
+- **Action Required:** None - Built-in retry sufficient
+
+#### Run 22400417450: "CI"
+- **Error:** TypeScript build failure - `Property 'gpu' does not exist on type 'Navigator'`
+- **Root Cause:** Missing WebGPU type definitions in TypeScript 5.8
+- **Type:** 🟡 SYSTEMATIC (required code fix)
+- **Resolution:** Fixed in commit 7e0103e (cast `navigator.gpu as any`)
+- **ADR:** ADR-029 documents the fix
+- **Action Required:** None - Fix merged and verified
+
+### Current Workflow Health
+
+| Workflow | Status | Last Run | Coverage | Notes |
+|----------|--------|----------|----------|-------|
+| **ci.yml** | ✅ Passing | Recent | Lint + Tests | Ruff + pytest |
+| **train.yml** | ✅ Passing | Recent | Modal Training | Classifier + DiT |
+| **deploy.yml** | ✅ Passing | Recent | GitHub Pages | Frontend deployment |
+| **upload-hub.yml** | ⏸️ Waiting | - | HuggingFace | **Needs HF_TOKEN secret** |
+
+### Recommended Actions
+
+| Priority | Action | Workflow | Skill | Notes |
+|----------|--------|----------|-------|-------|
+| **P0** | Configure HF_TOKEN secret | upload-hub.yml | security | **BLOCKING** automated uploads |
+| **P1** | Test upload-hub.yml workflow | upload-hub.yml | testing-workflow | After HF_TOKEN setup |
+| **P2** | Monitor CI for regressions | All | ci-monitor | Ongoing |
+
+### CI Configuration Summary
+
+```yaml
+# Workflows in .github/workflows/
+ci.yml           # Lint (Ruff) + Tests (pytest) + Model import check
+train.yml        # Modal GPU training + Auto upload to HuggingFace
+deploy.yml       # GitHub Pages deployment (frontend)
+upload-hub.yml   # Automated HuggingFace upload (triggered by train.yml)
+```
+
+### Quality Gate Alignment (ADR-014)
+
+```bash
+# Local quality gate matches CI checks
+./scripts/quality-gate.sh
+
+# Checks performed:
+# - ruff format --check .
+# - ruff check .
+# - pytest tests/ -v
+# - tsc --noEmit (frontend)
+# - yamllint .github/workflows/
+# - actionlint .github/workflows/*.yml
+```
 
 ## Technical Specifications
 

@@ -6,12 +6,13 @@
 - **Never commit `.env` files** - Already gitignored
 - **Never commit secrets** - Use GitHub secrets or Modal global config
 
-## Modal Tokens
+## Modal Tokens (Modal 1.0+)
 
-Configured globally via Modal CLI (not environment variables):
+Configured globally via Modal CLI:
 
 ```bash
-modal token set
+modal token new  # Not 'token set'
+modal token info
 ```
 
 ## GitHub Secrets

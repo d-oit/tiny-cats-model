@@ -129,9 +129,9 @@ login()  # Enter your HF token
 
 ### Issue: Modal authentication fails
 
-**Solution:** Authenticate Modal CLI:
+**Solution:** Authenticate Modal CLI (Modal 1.0+):
 ```bash
-modal token set
+modal token new
 ```
 
 ## Resources
