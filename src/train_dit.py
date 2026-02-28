@@ -71,9 +71,30 @@ except ImportError:
 try:
     from experiment_tracker import ExperimentTracker
 except ImportError:
-    # Fallback simple tracker
+    # Fallback simple tracker (ADR-042)
     class ExperimentTracker:  # type: ignore[no-redef]
         def __init__(self, *args, **kwargs):
+            pass
+
+        def start_run(self, *args, **kwargs):
+            return None
+
+        def log_params(self, *args, **kwargs):
+            pass
+
+        def log_metrics(self, *args, **kwargs):
+            pass
+
+        def log_model(self, *args, **kwargs):
+            pass
+
+        def log_artifact(self, *args, **kwargs):
+            pass
+
+        def log_image(self, *args, **kwargs):
+            pass
+
+        def end_run(self, *args, **kwargs):
             pass
 
         def log(self, *args, **kwargs):
@@ -83,11 +104,17 @@ except ImportError:
             pass
 
 
-# Add project root to path
+# Add project root to path (for local development)
 sys.path.insert(0, str(Path(__file__).parent))
 
-from dit import count_parameters, tinydit_128
-from flow_matching import EMA, FlowMatchingLoss, flow_matching_step, sample, sample_t
+# Note: Modal imports are done inside train_dit_on_gpu function after container init
+# This avoids ModuleNotFoundError when running on Modal (ADR-030, ADR-042)
+
+# Type hints only (not imported at runtime) - ADR-042
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from flow_matching import EMA
 
 
 # Configure logging
@@ -496,6 +523,9 @@ def train_dit_on_gpu(
 
     from datetime import datetime
 
+    # Import DiT modules after container initialization (ADR-042)
+    # This ensures sys.path is set correctly in Modal container
+
     # Create dated checkpoint directory (ADR-024: organized storage)
     run_date = datetime.now().strftime("%Y-%m-%d")
     checkpoint_dir = f"/outputs/checkpoints/dit/{run_date}"
@@ -657,16 +687,26 @@ def train_dit_local(
         log_interval: Logging frequency.
         save_interval: Checkpoint frequency.
         sample_interval: Sampling frequency.
-        log_file: Log file path.
-        ema_beta: EMA decay rate.
+        log_file: Optional log file.
+        ema_beta: EMA decay factor.
         seed: Random seed.
-        logger: Logger instance.
-        resume: Checkpoint to resume from.
-        augmentation_level: Level of data augmentation ("basic", "medium", "full").
+        logger: Optional logger instance.
+        resume: Optional checkpoint to resume from.
+        augmentation_level: Level of data augmentation.
 
     Returns:
         Final training loss.
     """
+    # Import DiT modules (works for both local and Modal after path setup)
+    from dit import count_parameters, tinydit_128
+    from flow_matching import (
+        EMA,
+        FlowMatchingLoss,
+        flow_matching_step,
+        sample,
+        sample_t,
+    )
+
     # Setup logging
     if logger is None:
         logger = setup_logging(log_file)
