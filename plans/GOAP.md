@@ -459,9 +459,14 @@ Build a cats classifier and generator with web frontend, following the architect
 
 **Goal:** Train improved TinyDiT model (400k steps, effective batch 512) for better sample quality and lower FID.
 
+**Status:** 🚀 IN PROGRESS (Started 2026-02-28)
+
 #### Phase 18.1: Training Configuration
 - [x] Document high-accuracy configuration (ADR-036)
-- [ ] **A01:** Run 400k step training with gradient accumulation
+- [x] Create training script (scripts/train_dit_high_accuracy.sh)
+- [x] Fix Modal container import issues (ADR-042)
+- [x] Fix ExperimentTracker fallback class methods
+- [x] **A01:** Run 400k step training with gradient accumulation
 - [ ] **A02:** Monitor training progress and checkpoints
 
 #### Phase 18.2: Evaluation & Metrics
@@ -476,17 +481,29 @@ Build a cats classifier and generator with web frontend, following the architect
 - [ ] Update frontend with new model
 - [ ] **A04:** Deploy high-accuracy model
 
+#### Training Configuration Used
+```bash
+# Command: bash scripts/train_dit_high_accuracy.sh
+# Steps: 400,000
+# Batch Size: 256
+# Gradient Accumulation: 2 (effective batch 512)
+# Learning Rate: 5e-5
+# Warmup Steps: 15,000
+# Augmentation: full
+# GPU: NVIDIA A10G
+# Expected Time: 24-36 hours
+```
+
 #### GOAP Action Status for Phase 18
 | Action | Status | Phase | Skill | Completed At | Notes |
 |--------|--------|-------|-------|--------------|-------|
-| A01: Run 400k step training | ⏳ PENDING (P3) | 18.1 | model-training | - | After Phase 17 complete |
-| A02: Monitor training | ⏳ PENDING (P3) | 18.1 | model-training | - | 36-48h training |
-| A03: Evaluate & compare | ⏳ PENDING (P3) | 18.2 | model-training | - | Compare vs 200k baseline |
-| A04: Deploy model | ⏳ PENDING (P3) | 18.3 | model-training | - | ONNX export + HF upload |
+| A01: Run 400k step training | ✅ IN PROGRESS | 18.1 | model-training | 2026-02-28 | Training started |
+| A02: Monitor training | ⏳ PENDING | 18.1 | model-training | - | 36-48h training |
+| A03: Evaluate & compare | ⏳ PENDING | 18.2 | model-training | - | Compare vs 200k baseline |
+| A04: Deploy model | ⏳ PENDING | 18.3 | model-training | - | ONNX export + HF upload |
 
-**Progress:** 0/4 actions complete (0%)
-**Blocker:** Phase 17 must complete first
-**Decision Point:** Start after Phase 17 validation or defer
+**Progress:** 1/4 actions in progress (25%)
+**Blocker:** None - Training started
 
 ### Phase 19: Tutorial & Documentation Enhancement (ADR-038)
 
