@@ -83,11 +83,11 @@ black .
 black --check .
 ```
 
-## Modal GPU Training
+## Modal GPU Training (Modal 1.0+)
 
 ```bash
-# Set credentials globally (never hardcode)
-modal token set
+# Set credentials globally (Modal 1.0+ uses 'token new')
+modal token new
 
 # Run training on GPU
 modal run src/train.py
