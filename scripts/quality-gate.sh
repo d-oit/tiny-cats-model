@@ -166,29 +166,64 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. Agent Skills Validation
+# 5. Agent Skills Verification
 # ─────────────────────────────────────────────────────────────────────────────
-log_info "Validating agent skills (agentskills.io specification)..."
+log_info "Verifying agent skills in .agents/skills/..."
 
-SKILLS_VALIDATION_SCRIPT="$SCRIPT_DIR/validate-skills.py"
-if [[ -f "$SKILLS_VALIDATION_SCRIPT" ]]; then
-    # Run skills validation and capture output
-    if SKILLS_OUTPUT=$(python "$SKILLS_VALIDATION_SCRIPT" 2>&1); then
-        # Show summary (strip ANSI codes for grep)
-        echo "$SKILLS_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -E "^✓|^▶" | head -15
-        log_success "Skills validation passed"
+SKILLS_DIR="$ROOT_DIR/.agents/skills"
+SKILL_FAILURES=0
+
+if [[ -d "$SKILLS_DIR" ]]; then
+    # Get all skill directories (exclude non-directories like .py and .sh files)
+    SKILL_DIRS=$(find "$SKILLS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null || true)
+    
+    if [[ -z "$SKILL_DIRS" ]]; then
+        log_warning "No skill directories found in $SKILLS_DIR"
     else
-        log_error "Skills validation failed"
-        echo "$SKILLS_OUTPUT" | head -30
-        echo "   See: https://agentskills.io/specification#validation"
-        echo "   Fix SKILL.md frontmatter in .agents/skills/"
-        FAILURES=$((FAILURES + 1))
-        if [[ "$STRICT" == true ]]; then
-            exit 1
+        for skill_dir in $SKILL_DIRS; do
+            skill_name=$(basename "$skill_dir")
+            skill_md="$skill_dir/SKILL.md"
+            
+            if [[ ! -f "$skill_md" ]]; then
+                log_error "Missing SKILL.md in $skill_name/"
+                SKILL_FAILURES=$((SKILL_FAILURES + 1))
+                continue
+            fi
+            
+            # Check frontmatter has required fields
+            if ! grep -q "^---$" "$skill_md" 2>/dev/null; then
+                log_error "Missing frontmatter in $skill_name/SKILL.md"
+                SKILL_FAILURES=$((SKILL_FAILURES + 1))
+                continue
+            fi
+            
+            # Extract frontmatter between first two --- markers
+            frontmatter=$(sed -n '/^---$/,/^---$/p' "$skill_md" 2>/dev/null || true)
+            
+            if ! echo "$frontmatter" | grep -q "^name:"; then
+                log_error "Missing 'name' in $skill_name/SKILL.md frontmatter"
+                SKILL_FAILURES=$((SKILL_FAILURES + 1))
+            fi
+            
+            if ! echo "$frontmatter" | grep -q "^description:"; then
+                log_error "Missing 'description' in $skill_name/SKILL.md frontmatter"
+                SKILL_FAILURES=$((SKILL_FAILURES + 1))
+            fi
+        done
+        
+        if [[ $SKILL_FAILURES -eq 0 ]]; then
+            skill_count=$(echo "$SKILL_DIRS" | wc -l)
+            log_success "All $skill_count skills verified"
+        else
+            log_error "$SKILL_FAILURES skill(s) failed verification"
+            FAILURES=$((FAILURES + SKILL_FAILURES))
+            if [[ "$STRICT" == true ]]; then
+                exit 1
+            fi
         fi
     fi
 else
-    log_warning "Skills validation script not found, skipping skills validation"
+    log_warning ".agents/skills directory not found"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
