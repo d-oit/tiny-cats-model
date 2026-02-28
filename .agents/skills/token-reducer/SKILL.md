@@ -1,6 +1,6 @@
 ---
 name: token-reducer
-description: Token-aware wrappers around build, test, lint, and format commands to prevent context window overflow in Claude Code and similar agents. Centralizes command execution through scripts that truncate noisy logs while preserving actionable error information.
+description: Token-aware wrappers around build, test, lint, and format commands to prevent context window overflow. Centralizes command execution through scripts that truncate noisy logs while preserving actionable error information.
 ---
 
 # Token Reducer Skill

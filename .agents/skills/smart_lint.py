@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # .agents/skills/smart_lint.py
 
-import sys
-import subprocess
 import re
+import subprocess
+import sys
 
 ERROR_KEYWORDS = [
     r"error",
@@ -13,6 +13,7 @@ ERROR_KEYWORDS = [
     r"line\s+\d+",
 ]
 
+
 def run_and_filter(command: str) -> None:
     print(f"Executing: {command}")
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
@@ -21,21 +22,25 @@ def run_and_filter(command: str) -> None:
 
     if result.returncode == 0:
         line_count = len(output.splitlines())
-        print(f"✅ Success. No linting/build errors found. Tokens saved. ({line_count} lines suppressed)")
+        print(
+            f"✅ Success. No linting/build errors found. Tokens saved. ({line_count} lines suppressed)"
+        )
         return
 
-    print(f"❌ Command failed (exit code {result.returncode}). Filtering output for errors...")
+    print(
+        f"❌ Command failed (exit code {result.returncode}). Filtering output for errors..."
+    )
 
     pattern = re.compile("|".join(ERROR_KEYWORDS), re.IGNORECASE)
-    filtered_lines = []
-
-    for line in output.splitlines():
-        if pattern.search(line):
-            filtered_lines.append(line.rstrip())
+    filtered_lines = [
+        line.rstrip() for line in output.splitlines() if pattern.search(line)
+    ]
 
     MAX_LINES = 40
     if not filtered_lines:
-        print("No specific error lines matched filter; showing first 40 lines of raw output:")
+        print(
+            "No specific error lines matched filter; showing first 40 lines of raw output:"
+        )
         raw_lines = output.splitlines()
         snippet = raw_lines[:MAX_LINES]
         print("\n".join(snippet))
@@ -48,6 +53,7 @@ def run_and_filter(command: str) -> None:
         print(f"\n...[Truncated {len(filtered_lines) - MAX_LINES} more error lines]...")
     else:
         print("\n".join(filtered_lines))
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
