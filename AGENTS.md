@@ -8,11 +8,11 @@ AI agent guidance for tiny-cats-model (cat image classification with DiT).
 # Install & setup
 pip install -r requirements.txt && bash data/download.sh
 
-# Training (Modal GPU)
-modal run src/train_dit.py data/cats --steps 300000
+# Training (Modal GPU) - High Accuracy (400k steps)
+bash scripts/train_dit_high_accuracy.sh
 
 # Local testing
-python src/train_dit.py data/cats --steps 100 --batch-size 8
+python src/train_dit.py --data-dir data/cats --steps 100 --batch-size 8
 
 # Quality gate
 bash scripts/quality-gate.sh
@@ -24,7 +24,7 @@ bash scripts/quality-gate.sh
 ```bash
 modal token new          # Configure (not token set)
 modal token info         # Verify
-modal run src/train_dit.py data/cats --steps 300000
+modal run src/train_dit.py --data-dir data/cats --steps 400000
 ```
 
 ### HuggingFace

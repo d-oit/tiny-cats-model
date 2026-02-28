@@ -16,6 +16,74 @@ After each task, capture learnings here. Use this for continuous improvement.
 
 ## Key Learnings
 
+### fix: Modal Container Import Path & ExperimentTracker (February 2026)
+
+**Date**: 2026-02-28
+**Type**: bug fix
+**Areas**: modal training, imports
+**Related**: ADR-030, ADR-042, GOAP.md Phase 21
+
+**What worked**:
+- Using deferred imports inside functions instead of module-level imports
+- Creating proper training scripts (.sh files) for reusability
+- TYPE_CHECKING for type hints without runtime imports
+
+**Issues encountered**:
+- `ModuleNotFoundError: No module named 'dit'` when running on Modal
+- `AttributeError: 'ExperimentTracker' object has no attribute 'start_run'`
+- Training script needed proper CLI syntax
+
+**Root Cause Analysis**:
+| Issue | Root Cause | Impact |
+|-------|------------|--------|
+| ModuleNotFoundError: dit | Imports at top of file before sys.path set | Training fails immediately |
+| ExperimentTracker missing methods | Fallback class didn't implement all methods | Training fails after init |
+| CLI syntax wrong | Used positional arg instead of --data-dir | Command failed |
+
+**Fix applied**:
+1. Deferred imports inside functions (ADR-042):
+   ```python
+   # Instead of module-level imports:
+   # from dit import tinydit_128  # ❌ Fails in Modal
+   
+   # Use deferred imports inside function:
+   def train_dit_local(...):
+       from dit import tinydit_128  # ✅ Works after sys.path setup
+   ```
+
+2. Added all ExperimentTracker methods to fallback class:
+   ```python
+   class ExperimentTracker:
+       def start_run(self, *args, **kwargs):
+           return None
+       def log_params(self, *args, **kwargs):
+           pass
+       def log_metrics(self, *args, **kwargs):
+           pass
+       # ... etc
+   ```
+
+3. Created training script (scripts/train_dit_high_accuracy.sh):
+   ```bash
+   modal run src/train_dit.py \
+       --data-dir data/cats \
+       --steps 400000 \
+       --batch-size 256
+   ```
+
+**Pattern extracted**:
+- Always use deferred imports for Modal containers
+- Always implement ALL methods in fallback classes
+- Always use .sh scripts for training commands
+- Always test with `modal run --help` before full training
+
+**Documentation updated**:
+- AGENTS.md: Updated training commands
+- scripts/train_dit_high_accuracy.sh: New script created
+- ADR-042: Modal Training Enhancement
+
+---
+
 ### feat: Modal Training with Error Handling, Logging, and Production Pipeline (February 2026)
 
 **Date**: 2026-02-28
