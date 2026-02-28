@@ -42,6 +42,7 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
+from auth_utils import AuthenticationError, require_modal_auth, setup_auth_logging
 from experiment_tracker import ExperimentTracker
 
 
@@ -443,7 +444,39 @@ def train_on_gpu(
 
     Returns:
         Dictionary with training status and output path.
+
+    Raises:
+        AuthenticationError: If Modal authentication fails
     """
+    # Setup logging first for auth validation
+    preflight_logger = setup_auth_logging(level=logging.INFO)
+
+    # Validate Modal authentication before starting training
+    preflight_logger.info("=" * 60)
+    preflight_logger.info("MODAL TRAINING - PRE-FLIGHT CHECKS")
+    preflight_logger.info("=" * 60)
+
+    try:
+        require_modal_auth()
+        preflight_logger.info("✅ Modal authentication validated")
+    except AuthenticationError as e:
+        preflight_logger.error(f"❌ {e.message}")
+        preflight_logger.error("")
+        preflight_logger.error("To fix this:")
+        preflight_logger.error(
+            "  1. Run 'modal token new' to authenticate (Modal 1.0+)"
+        )
+        preflight_logger.error("  2. Verify with: modal token info")
+        preflight_logger.error(
+            "  3. For GitHub Actions, ensure MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are set"
+        )
+        preflight_logger.error("")
+        preflight_logger.error("See: https://modal.com/docs/reference/cli/token")
+        preflight_logger.error(
+            "See AGENTS.md or agents-docs/auth-troubleshooting.md for help"
+        )
+        raise
+
     # Initialize container (ADR-025: cold start optimization)
     _initialize_container()
 
