@@ -84,6 +84,43 @@ After each task, capture learnings here. Use this for continuous improvement.
 
 ---
 
+### fix: UnboundLocalError for avg_loss on early exit (February 2026)
+
+**Date**: 2026-02-28
+**Type**: bug fix
+**Areas**: modal training, signal handling
+**Related**: ADR-042, GOAP.md Phase 18
+
+**What worked**:
+- Training script (.sh) runs successfully on Modal
+- Container initialization works correctly
+- All imports resolve properly after deferred import fix
+
+**Issues encountered**:
+- `UnboundLocalError: cannot access local variable 'avg_loss' where it is not associated with a value`
+- Training received SIGINT/SIGTERM before first step completed
+- avg_loss was never assigned in the training loop
+
+**Fix applied**:
+1. Initialize avg_loss with default value before training loop:
+   ```python
+   model.train()
+   step = start_step
+   accum_step = 0
+   epoch = 0
+   avg_loss = 0.0  # Default value if training exits early (ADR-042)
+   ```
+
+**Pattern extracted**:
+- Always initialize variables used in finally/except blocks before the main logic
+- Handle graceful shutdown with default values
+- Use try/finally for cleanup even with early exit
+
+**Documentation updated**:
+- train_dit.py: Added default avg_loss initialization
+
+---
+
 ### feat: Modal Training with Error Handling, Logging, and Production Pipeline (February 2026)
 
 **Date**: 2026-02-28
