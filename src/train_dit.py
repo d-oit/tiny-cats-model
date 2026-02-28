@@ -826,6 +826,7 @@ def train_dit_local(
         step = start_step
         accum_step = 0  # Accumulation step counter
         epoch = 0
+        avg_loss = 0.0  # Default value if training exits early (ADR-042)
 
         while step < steps:
             epoch += 1
