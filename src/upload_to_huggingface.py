@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
+import logging
 import shutil
 import tempfile
 from datetime import datetime
@@ -44,6 +44,13 @@ from pathlib import Path
 from typing import Any
 
 from huggingface_hub import HfApi, ModelCard, create_repo
+
+from auth_utils import (
+    AuthenticationError,
+    require_hf_token,
+    setup_auth_logging,
+)
+from retry_utils import upload_with_retry
 
 
 def create_model_card(
@@ -418,6 +425,7 @@ def upload_to_huggingface(
     token: str | None = None,
     commit_message: str = "Upload models and evaluation results",
     private: bool = False,
+    logger: logging.Logger | None = None,
 ) -> dict[str, Any]:
     """Upload complete model package to HuggingFace Hub.
 
@@ -433,20 +441,46 @@ def upload_to_huggingface(
         token: HuggingFace API token (or HF_TOKEN env var)
         commit_message: Git commit message
         private: Whether to make repo private
+        logger: Logger for structured logging
 
     Returns:
         Dict with upload results
-    """
-    if token is None:
-        token = os.environ.get("HF_TOKEN")
 
-    if not token:
-        raise ValueError(
-            "HuggingFace token required. Set HF_TOKEN env var or pass token argument."
+    Raises:
+        AuthenticationError: If HuggingFace authentication fails
+    """
+    if logger is None:
+        logger = setup_auth_logging(level=logging.INFO)
+
+    logger.info("=" * 60)
+    logger.info("HUGGINGFACE UPLOAD - PRE-FLIGHT CHECKS")
+    logger.info("=" * 60)
+
+    # Validate token before attempting upload
+    try:
+        validated_token = require_hf_token(token)
+        logger.info("✅ HuggingFace authentication validated")
+    except AuthenticationError as e:
+        logger.error(f"❌ {e.message}")
+        logger.error(
+            "Troubleshooting: See AGENTS.md or agents-docs/auth-troubleshooting.md"
+        )
+        raise
+
+    # Create repo if not exists (with retry)
+    api = HfApi()
+
+    def create_repo_with_retry():
+        return create_repo(
+            repo_id, exist_ok=True, token=validated_token, private=private
         )
 
-    # Create repo if not exists
-    create_repo(repo_id, exist_ok=True, token=token, private=private)
+    try:
+        upload_with_retry(create_repo_with_retry, max_retries=3, logger=logger)
+        logger.info(f"✅ Repository verified/created: {repo_id}")
+    except Exception as e:
+        logger.error(f"❌ Failed to create/verify repository: {e}")
+        raise
 
     # Create temporary directory for upload
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -525,17 +559,26 @@ def upload_to_huggingface(
                 if img_path.suffix.lower() in [".png", ".jpg", ".jpeg", ".webp"]:
                     shutil.copy(img_path, samples_upload_dir / img_path.name)
 
-        # Upload all files
-        api = HfApi()
-        api.upload_folder(
-            folder_path=str(tmpdir),
-            repo_id=repo_id,
-            repo_type="model",
-            commit_message=commit_message,
-            token=token,
-        )
+        # Upload all files with retry logic
+        logger.info("📤 Uploading files to HuggingFace Hub...")
 
-        print(f"\n✅ Successfully uploaded to https://huggingface.co/{repo_id}")
+        def upload_folder_func():
+            return api.upload_folder(
+                folder_path=str(tmpdir),
+                repo_id=repo_id,
+                repo_type="model",
+                commit_message=commit_message,
+                token=validated_token,
+            )
+
+        try:
+            upload_with_retry(
+                upload_folder_func, max_retries=3, initial_delay=2.0, logger=logger
+            )
+            logger.info(f"✅ Successfully uploaded to https://huggingface.co/{repo_id}")
+        except Exception as e:
+            logger.error(f"❌ Upload failed after retries: {e}")
+            raise
 
         return {
             "repo_id": repo_id,
@@ -624,6 +667,13 @@ def main() -> None:
     """Main upload function."""
     args = parse_args()
 
+    # Setup logging
+    logger = setup_auth_logging(level=logging.INFO)
+
+    logger.info("=" * 60)
+    logger.info("HUGGINGFACE UPLOAD STARTING")
+    logger.info("=" * 60)
+
     try:
         result = upload_to_huggingface(
             classifier_path=args.classifier,
@@ -637,21 +687,42 @@ def main() -> None:
             token=args.token,
             commit_message=args.commit_message,
             private=args.private,
+            logger=logger,
         )
 
-        print("\nUpload complete!")
-        print(f"Repository: {result['repo_id']}")
-        print(f"URL: {result['url']}")
-        print(f"Timestamp: {result['timestamp']}")
+        logger.info("=" * 60)
+        logger.info("UPLOAD COMPLETE")
+        logger.info("=" * 60)
+        logger.info(f"Repository: {result['repo_id']}")
+        logger.info(f"URL: {result['url']}")
+        logger.info(f"Timestamp: {result['timestamp']}")
 
-    except ValueError as e:
-        print(f"\n❌ Error: {e}")
-        print("\nSet HF_TOKEN environment variable:")
-        print("  export HF_TOKEN=hf_...")
-        print("\nOr get a token from: https://huggingface.co/settings/tokens")
+    except AuthenticationError as e:
+        logger.error("=" * 60)
+        logger.error("AUTHENTICATION FAILED")
+        logger.error("=" * 60)
+        logger.error(f"Error: {e.message}")
+        logger.error("")
+        logger.error("To fix this:")
+        logger.error("  1. Set HF_TOKEN environment variable:")
+        logger.error("     export HF_TOKEN=hf_...")
+        logger.error("")
+        logger.error("  2. Or get a token from: https://huggingface.co/settings/tokens")
+        logger.error("")
+        logger.error(
+            "  3. For GitHub Actions, configure HF_TOKEN in repository secrets"
+        )
+        logger.error("")
+        logger.error("See AGENTS.md or agents-docs/auth-troubleshooting.md for help")
         exit(1)
     except Exception as e:
-        print(f"\n❌ Upload failed: {e}")
+        logger.error("=" * 60)
+        logger.error("UPLOAD FAILED")
+        logger.error("=" * 60)
+        logger.error(f"Error: {e}")
+        logger.error("")
+        logger.error("Check the logs above for details.")
+        logger.error("If this was a network error, try again.")
         exit(1)
 
 
