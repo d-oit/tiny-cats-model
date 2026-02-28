@@ -46,13 +46,75 @@ import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
-from experiment_tracker import ExperimentTracker
+# Optional auth utilities import (for enhanced error handling)
+try:
+    from auth_utils import AuthenticationError, require_modal_auth, setup_auth_logging
 
-# Add project root to path
+    AUTH_UTILS_AVAILABLE = True
+except ImportError:
+    AUTH_UTILS_AVAILABLE = False
+
+    # Fallback for Modal container
+    class AuthenticationError(Exception):  # type: ignore
+        pass
+
+    def require_modal_auth():  # type: ignore
+        pass
+
+    def setup_auth_logging(level=None):  # type: ignore
+        import logging
+
+        return logging.getLogger("tiny_dit")
+
+
+# Optional experiment tracker import
+try:
+    from experiment_tracker import ExperimentTracker
+except ImportError:
+    # Fallback simple tracker (ADR-042)
+    class ExperimentTracker:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start_run(self, *args, **kwargs):
+            return None
+
+        def log_params(self, *args, **kwargs):
+            pass
+
+        def log_metrics(self, *args, **kwargs):
+            pass
+
+        def log_model(self, *args, **kwargs):
+            pass
+
+        def log_artifact(self, *args, **kwargs):
+            pass
+
+        def log_image(self, *args, **kwargs):
+            pass
+
+        def end_run(self, *args, **kwargs):
+            pass
+
+        def log(self, *args, **kwargs):
+            pass
+
+        def close(self):
+            pass
+
+
+# Add project root to path (for local development)
 sys.path.insert(0, str(Path(__file__).parent))
 
-from dit import count_parameters, tinydit_128
-from flow_matching import EMA, FlowMatchingLoss, flow_matching_step, sample, sample_t
+# Note: Modal imports are done inside train_dit_on_gpu function after container init
+# This avoids ModuleNotFoundError when running on Modal (ADR-030, ADR-042)
+
+# Type hints only (not imported at runtime) - ADR-042
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from flow_matching import EMA
 
 
 # Configure logging
@@ -332,6 +394,9 @@ image = (
     .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
     .add_local_file("src/dataset.py", "/app/dataset.py")
     .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
+    .add_local_file("src/auth_utils.py", "/app/auth_utils.py")
+    .add_local_file("src/retry_utils.py", "/app/retry_utils.py")
+    .add_local_file("src/experiment_tracker.py", "/app/experiment_tracker.py")
     .add_local_file("data/download.py", "/app/data/download.py")
     .add_local_file("data/download.sh", "/app/data/download.sh")
 )
@@ -424,11 +489,42 @@ def train_dit_on_gpu(
 
     Returns:
         Training status dict.
+
+    Raises:
+        AuthenticationError: If Modal authentication fails
     """
+    # Setup logging first
+    logger = setup_auth_logging(level=logging.INFO)
+
+    # Validate Modal authentication before starting training
+    logger.info("=" * 60)
+    logger.info("MODAL TRAINING - PRE-FLIGHT CHECKS")
+    logger.info("=" * 60)
+
+    try:
+        require_modal_auth()
+        logger.info("✅ Modal authentication validated")
+    except AuthenticationError as e:
+        logger.error(f"❌ {e.message}")
+        logger.error("")
+        logger.error("To fix this:")
+        logger.error("  1. Run 'modal token new' to authenticate (Modal 1.0+)")
+        logger.error("  2. Verify with: modal token info")
+        logger.error(
+            "  3. For GitHub Actions, ensure MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are set"
+        )
+        logger.error("")
+        logger.error("See: https://modal.com/docs/reference/cli/token")
+        logger.error("See AGENTS.md or agents-docs/auth-troubleshooting.md for help")
+        raise
+
     # Initialize container (ADR-025)
     _initialize_dit_container()
 
     from datetime import datetime
+
+    # Import DiT modules after container initialization (ADR-042)
+    # This ensures sys.path is set correctly in Modal container
 
     # Create dated checkpoint directory (ADR-024: organized storage)
     run_date = datetime.now().strftime("%Y-%m-%d")
@@ -442,6 +538,7 @@ def train_dit_on_gpu(
     ema_output = ema_output or f"{checkpoint_dir}/dit_model_ema.pt"
     log_file = log_file or f"{checkpoint_dir}/dit_training.log"
 
+    # Setup training-specific logging (after auth validation)
     logger = setup_logging(log_file)
     logger.info("Starting TinyDiT Modal GPU training")
     logger.info(
@@ -590,16 +687,26 @@ def train_dit_local(
         log_interval: Logging frequency.
         save_interval: Checkpoint frequency.
         sample_interval: Sampling frequency.
-        log_file: Log file path.
-        ema_beta: EMA decay rate.
+        log_file: Optional log file.
+        ema_beta: EMA decay factor.
         seed: Random seed.
-        logger: Logger instance.
-        resume: Checkpoint to resume from.
-        augmentation_level: Level of data augmentation ("basic", "medium", "full").
+        logger: Optional logger instance.
+        resume: Optional checkpoint to resume from.
+        augmentation_level: Level of data augmentation.
 
     Returns:
         Final training loss.
     """
+    # Import DiT modules (works for both local and Modal after path setup)
+    from dit import count_parameters, tinydit_128
+    from flow_matching import (
+        EMA,
+        FlowMatchingLoss,
+        flow_matching_step,
+        sample,
+        sample_t,
+    )
+
     # Setup logging
     if logger is None:
         logger = setup_logging(log_file)
@@ -719,6 +826,7 @@ def train_dit_local(
         step = start_step
         accum_step = 0  # Accumulation step counter
         epoch = 0
+        avg_loss = 0.0  # Default value if training exits early (ADR-042)
 
         while step < steps:
             epoch += 1

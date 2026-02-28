@@ -264,6 +264,7 @@ class TestBatchSizeEdgeCases:
     """Tests for various batch size edge cases."""
 
     @pytest.mark.parametrize("batch_size", [1, 2, 127])
+    @pytest.mark.slow
     def test_batch_size_variations(self, batch_size: int) -> None:
         """Test model forward pass with various batch sizes."""
         model = cats_model(num_classes=2, backbone="resnet18", pretrained=False)
@@ -320,6 +321,7 @@ class TestBatchSizeEdgeCases:
         assert out.shape == (1, 2)
         assert out.ndim == 2
 
+    @pytest.mark.slow
     def test_batch_size_large_memory_efficiency(self) -> None:
         """Test large batch size doesn't cause memory issues."""
         model = cats_model(num_classes=2, backbone="resnet18", pretrained=False)
@@ -333,6 +335,7 @@ class TestBatchSizeEdgeCases:
 
         assert out.shape == (batch_size, 2)
 
+    @pytest.mark.slow
     def test_batch_size_uneven_division(self) -> None:
         """Test batch sizes that don't divide evenly."""
         model = cats_model(num_classes=2, backbone="resnet18", pretrained=False)

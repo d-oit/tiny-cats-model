@@ -191,7 +191,7 @@ jobs:
           python -c "
           from huggingface_hub import HfApi
           api = HfApi()
-          
+
           # Fallback: upload individual files
           import os
           if os.path.exists('cats_classifier.onnx'):
@@ -281,7 +281,7 @@ jobs:
           python -c "
           from huggingface_hub import HfApi
           api = HfApi()
-          
+
           # Fallback: upload individual files
           import os
           if os.path.exists('generator.onnx'):

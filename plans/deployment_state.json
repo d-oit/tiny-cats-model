@@ -1,15 +1,22 @@
 {
   "deployment_id": "deploy-2026-02-25-001",
   "started_at": "2026-02-25T19:00:00Z",
-  "updated_at": "2026-02-27T10:20:00Z",
-  "current_phase": "phase_5_deployment",
-  "last_action": "A26",
+  "updated_at": "2026-02-28T00:00:00Z",
+  "current_phase": "phase_6_goap_training_workflow",
+  "last_action": "A01_Phase17",
   "actions_completed": [
     "A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10", "A11",
     "A12", "A13", "A14", "A15", "A16", "A17", "A18", "A19", "A20", "A21",
     "A23", "A24", "A25", "A26"
   ],
-  "actions_pending": [],
+  "actions_pending": [
+    "Phase17_A01: Run 300k step training",
+    "Phase18_A01: Run 400k step training",
+    "Phase19_A04: Add notebook assets",
+    "Phase19_A05: Test notebooks E2E",
+    "Phase20_A01: Configure HF_TOKEN",
+    "Phase20_A03: Test upload workflow"
+  ],
   "world_state": {
     "code_validation": {
       "modal_cli_validated": true,
@@ -38,7 +45,7 @@
         "3a78dff fix: add type annotation for self.run to fix mypy",
         "2b5538d feat: quantize generator model (132MB -> 33MB, 75% reduction)",
         "4d9fb12 feat: add WebGPU fallback to generation worker",
-        "8409d12 fix: use local model paths and quantized generator"
+        "8409d12 fix: use local model paths and quantified generator"
       ],
       "pushed": true,
       "pr_created": true,
@@ -46,22 +53,20 @@
       "latest_commit": "7b31caf fix(model): handle checkpoint formats with metadata"
     },
     "ci_state": {
-      "pipeline_running": true,
-      "pipeline_passed": false,
-      "failures_detected": [
-        "TypeScript WebGPU type error in frontend build",
-        "Modal Python path error: No module named 'dataset'",
-        "Vite worker format error: Invalid value 'iife'",
-        "TypeScript unused variable 'path' in inference.worker.ts",
-        "Checkpoint format mismatch in test_model.py (2 tests)"
-      ],
+      "pipeline_running": false,
+      "pipeline_passed": true,
+      "failures_detected": [],
       "failures_resolved": [
         "Cast navigator.gpu with 'as any' to avoid type error (commit 7e0103e)",
         "Changed sys.path from /app/src to /app (commit 667ec70, ADR-030)",
         "Set worker.format to 'es' in vite.config.ts (commit 1f2c764)",
         "Prefixed unused parameter with underscore (2026-02-27)",
         "Fixed load_checkpoint to handle metadata in checkpoints (commit 7b31caf)"
-      ]
+      ],
+      "github_actions_health": "EXCELLENT",
+      "historical_failures_analyzed": true,
+      "transient_failures": ["22504153618 (502)", "22434979071 (timeout)"],
+      "systematic_failures_fixed": ["22400417450 (WebGPU types)"]
     },
     "deployment_state": {
       "validation_gates_passed": true,
@@ -77,14 +82,20 @@
       "benchmarks_completed": true,
       "python312_verified": true,
       "upload_artifacts_ready": true,
-      "upload_script_verified": true
+      "upload_script_verified": true,
+      "upload_workflow_created": true,
+      "hf_token_configured": false,
+      "goap_plan_created": true,
+      "adr_040_created": true
     },
     "documentation_state": {
       "goap_updated": true,
       "adrs_complete": true,
-      "adr_count": 5,
+      "adr_count": 6,
+      "adr_040_created": true,
       "evaluation_report_generated": true,
-      "benchmark_report_generated": true
+      "benchmark_report_generated": true,
+      "goap_training_workflow_plan": true
     }
   },
   "timeline": {
@@ -92,10 +103,14 @@
     "phase_2_branch": { "start": "2026-02-25T19:01:00Z", "end": "2026-02-25T19:02:00Z", "status": "completed" },
     "phase_3_commits": { "start": "2026-02-25T19:02:00Z", "end": "2026-02-25T19:04:00Z", "status": "completed" },
     "phase_4_ci": { "start": "2026-02-25T19:04:00Z", "end": "2026-02-25T19:10:00Z", "status": "completed" },
-    "phase_5_deployment": { "start": "2026-02-25T19:10:00Z", "end": null, "status": "in_progress" },
+    "phase_5_deployment": { "start": "2026-02-25T19:10:00Z", "end": "2026-02-27T19:25:00Z", "status": "completed" },
     "phase_6_documentation": { "start": "2026-02-25T19:12:00Z", "end": "2026-02-25T19:15:00Z", "status": "completed" },
     "phase_11_modal_fix": { "start": "2026-02-25T19:15:00Z", "end": "2026-02-25T19:25:00Z", "status": "completed" },
-    "phase_12_verification": { "start": "2026-02-25T19:30:00Z", "end": "2026-02-25T19:35:00Z", "status": "completed" }
+    "phase_12_verification": { "start": "2026-02-25T19:30:00Z", "end": "2026-02-25T19:35:00Z", "status": "completed" },
+    "phase_17_training": { "start": null, "end": null, "status": "pending", "next_action": "A01: Run 300k training" },
+    "phase_18_high_accuracy": { "start": null, "end": null, "status": "planned" },
+    "phase_19_tutorials": { "start": null, "end": null, "status": "50% complete" },
+    "phase_20_cicd": { "start": null, "end": null, "status": "57% complete", "blocker": "HF_TOKEN" }
   },
   "issues": [
     {
@@ -161,6 +176,14 @@
         "output": "Help displayed successfully - imports work",
         "timestamp": "2026-02-25T19:33:00Z"
       }
+    },
+    "github_actions_analysis": {
+      "completed": true,
+      "run_ids_analyzed": ["22504153618", "22434979071", "22400417450"],
+      "transient_failures": 2,
+      "systematic_failures": 1,
+      "all_resolved": true,
+      "current_health": "EXCELLENT"
     }
   },
   "notes": [
@@ -173,18 +196,27 @@
     "All CI checks passing: CI, Train, CodeQL, Automatic Dependency Submission",
     "Analysis swarm completed - 90% confidence in production readiness",
     "Modal import tests passed - both train.py and train_dit.py work correctly",
-    "Next steps: Merge PR, set HF_TOKEN, run upload_to_hub.py",
     "2026-02-27: Fixed checkpoint format handling in load_checkpoint() - 2 tests now passing",
-    "2026-02-27: CI monitoring in progress for latest fix commit"
+    "2026-02-27: Models uploaded to HuggingFace (d4oit/tiny-cats-model)",
+    "2026-02-28: ADR-040 created - GOAP Training Workflow Plan 2026",
+    "2026-02-28: GitHub Actions analysis complete - all historical failures resolved",
+    "2026-02-28: GOAP.md updated with Phases 17-20 status and priorities",
+    "NEXT: Configure HF_TOKEN (P0), then run 300k training (P0)"
   ],
   "pr_status": {
     "number": 21,
     "url": "https://github.com/d-oit/tiny-cats-model/pull/21",
     "state": "OPEN",
     "mergeable": true,
-    "ci_status": "in_progress",
+    "ci_status": "passed",
     "commits_count": 10,
     "created_at": "2026-02-25T19:17:00Z",
     "updated_at": "2026-02-27T10:15:00Z"
+  },
+  "goap_phases": {
+    "phase_17": { "name": "Full Model Training", "progress": "83%", "status": "pending", "next": "A01: 300k training" },
+    "phase_18": { "name": "High-Accuracy Training", "progress": "0%", "status": "planned" },
+    "phase_19": { "name": "Tutorial & Documentation", "progress": "50%", "status": "in_progress" },
+    "phase_20": { "name": "CI/CD Automation", "progress": "57%", "status": "in_progress", "blocker": "HF_TOKEN" }
   }
 }
