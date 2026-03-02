@@ -239,9 +239,7 @@ def retry_with_backoff(
             # All retries exhausted
             if last_exception:
                 raise last_exception
-            raise RuntimeError(
-                f"Retry loop exited unexpectedly for {func.__name__}"
-            )
+            raise RuntimeError(f"Retry loop exited unexpectedly for {func.__name__}")
 
         return wrapper
 
@@ -326,9 +324,7 @@ class RetryManager:
             manager = RetryManager(max_retries=3)
             result = manager.execute(upload_file, "/path/to/file")
         """
-        return self._execute_with_config_internal(
-            func, self.config, *args, **kwargs
-        )
+        return self._execute_with_config_internal(func, self.config, *args, **kwargs)
 
     def execute_with_config(
         self,
@@ -450,9 +446,7 @@ class RetryManager:
         # All retries exhausted
         if last_exception:
             raise last_exception
-        raise RuntimeError(
-            f"Retry loop exited unexpectedly for {func.__name__}"
-        )
+        raise RuntimeError(f"Retry loop exited unexpectedly for {func.__name__}")
 
     def get_retry_report(self) -> dict[str, Any]:
         """Generate detailed retry report.
@@ -498,7 +492,9 @@ class RetryManager:
                 "total_attempts": total_attempts,
                 "successful": successful,
                 "failed": failed,
-                "success_rate": successful / total_attempts if total_attempts > 0 else 0,
+                "success_rate": successful / total_attempts
+                if total_attempts > 0
+                else 0,
             },
             "functions": function_stats,
             "config": {
@@ -632,11 +628,6 @@ def is_retryable_error(
     if config is None:
         config = RetryConfig()
 
-    if config.should_retry_exception(exception):
-        return True
-
-    if status_code is not None and config.should_retry_status_code(status_code):
-        return True
-
-    return False
-
+    return config.should_retry_exception(exception) or (
+        status_code is not None and config.should_retry_status_code(status_code)
+    )
