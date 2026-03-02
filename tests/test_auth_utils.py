@@ -44,6 +44,7 @@ from auth_utils import (
 # Check if huggingface_hub is available
 try:
     import huggingface_hub
+
     HF_HUB_AVAILABLE = True
 except ImportError:
     HF_HUB_AVAILABLE = False
