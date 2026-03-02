@@ -225,7 +225,11 @@ class TestCheckModalAuth:
         # Note: In environments where modal is installed, it returns VALID
         # In environments without modal, it returns MISSING or UNKNOWN
         assert result.token_type == "modal"
-        assert result.status in [TokenStatus.VALID, TokenStatus.UNKNOWN, TokenStatus.MISSING]
+        assert result.status in [
+            TokenStatus.VALID,
+            TokenStatus.UNKNOWN,
+            TokenStatus.MISSING,
+        ]
 
     def test_check_modal_auth_valid(self):
         """Test check_modal_auth when Modal authentication is valid."""
@@ -438,7 +442,7 @@ class TestRequireFunctions:
         mock_modal.exception = MagicMock()
         mock_modal.exception.AuthError = Exception
 
-        with patch.dict('sys.modules', {'modal': mock_modal}):
+        with patch.dict("sys.modules", {"modal": mock_modal}):
             # May or may not raise depending on implementation
             try:
                 require_modal_auth()
@@ -458,7 +462,9 @@ class TestSetupAuthLogging:
     def test_setup_logging_console_handler(self):
         """Test setup_auth_logging adds console handler."""
         logger = setup_auth_logging()
-        console_handlers = [h for h in logger.handlers if isinstance(h, logging.StreamHandler)]
+        console_handlers = [
+            h for h in logger.handlers if isinstance(h, logging.StreamHandler)
+        ]
         assert len(console_handlers) >= 1
 
     def test_setup_logging_with_file_handler(self, tmp_path):
@@ -466,7 +472,9 @@ class TestSetupAuthLogging:
         log_file = tmp_path / "auth_test.log"
         logger = setup_auth_logging(log_file=str(log_file))
 
-        file_handlers = [h for h in logger.handlers if isinstance(h, logging.FileHandler)]
+        file_handlers = [
+            h for h in logger.handlers if isinstance(h, logging.FileHandler)
+        ]
         assert len(file_handlers) == 1
         assert log_file.exists()
 
