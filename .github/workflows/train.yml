@@ -157,6 +157,9 @@ jobs:
       - name: Install Modal
         run: pip install modal
 
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
       - name: Run training
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
@@ -247,6 +250,9 @@ jobs:
 
       - name: Install Modal
         run: pip install modal
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
       - name: Run DiT training
         env:
