@@ -17,17 +17,15 @@ from __future__ import annotations
 import sys
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
-from requests.exceptions import HTTPError, RequestException  # type: ignore[import-untyped]
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from retry_utils import (
+    RetryableHTTPError,
     RetryConfig,
     RetryManager,
-    RetryableHTTPError,
     is_retryable_error,
     retry_with_backoff,
     upload_with_retry,
@@ -80,7 +78,7 @@ class TestRetryConfig:
         with pytest.raises(ValueError, match="max_retries must be non-negative"):
             RetryConfig(max_retries=-1)
 
-        with pytest.raises(ValueError, match="backoff_coefficient must be >= 1.0"):
+        with pytest.raises(ValueError, match=r"backoff_coefficient must be >= 1.0"):
             RetryConfig(backoff_coefficient=0.5)
 
         with pytest.raises(ValueError, match="initial_delay must be non-negative"):

@@ -520,18 +520,16 @@ class TestPreflightCheck:
         mock_api.whoami.return_value = {"name": "testuser"}
         mock_hf_api_class.return_value = mock_api
 
-        with patch.dict(os.environ, {"HF_TOKEN": "hf_validtoken123456"}):
-            with caplog.at_level(logging.INFO):
-                result = preflight_check()
+        with patch.dict(os.environ, {"HF_TOKEN": "hf_validtoken123456"}), caplog.at_level(logging.INFO):
+            result = preflight_check()
 
         assert result is True
         assert "All pre-flight checks passed" in caplog.text
 
     def test_preflight_hf_invalid(self, caplog):
         """Test preflight_check when HuggingFace auth invalid."""
-        with patch.dict(os.environ, {}, clear=True):
-            with caplog.at_level(logging.INFO):
-                result = preflight_check()
+        with patch.dict(os.environ, {}, clear=True), caplog.at_level(logging.INFO):
+            result = preflight_check()
 
         assert result is False
         assert "HuggingFace" in caplog.text
@@ -547,9 +545,8 @@ class TestPreflightCheck:
         custom_logger = logging.getLogger("custom_preflight")
         custom_logger.setLevel(logging.INFO)
 
-        with patch.dict(os.environ, {"HF_TOKEN": "hf_validtoken123456"}):
-            with caplog.at_level(logging.INFO):
-                result = preflight_check(logger=custom_logger)
+        with patch.dict(os.environ, {"HF_TOKEN": "hf_validtoken123456"}), caplog.at_level(logging.INFO):
+            result = preflight_check(logger=custom_logger)
 
         # Should work with custom logger
         assert isinstance(result, bool)
