@@ -104,6 +104,9 @@ exclude = ["notebooks", "node_modules", ".git"]
 select = ["E", "F", "W", "I"]
 ignore = ["E203", "E501"]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["SIM117"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
