@@ -28,9 +28,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+# Check if huggingface_hub is available
+import importlib.util
+
 from auth_utils import (
-    AuthValidator,
     AuthenticationError,
+    AuthValidator,
     TokenStatus,
     TokenValidationResult,
     preflight_check,
@@ -41,13 +44,7 @@ from auth_utils import (
     validate_modal_auth,
 )
 
-# Check if huggingface_hub is available
-try:
-    import huggingface_hub
-
-    HF_HUB_AVAILABLE = True
-except ImportError:
-    HF_HUB_AVAILABLE = False
+HF_HUB_AVAILABLE = importlib.util.find_spec("huggingface_hub") is not None
 
 
 class TestTokenStatus:
@@ -218,7 +215,7 @@ class TestValidateHfToken:
         mock_hf_api_class.return_value = mock_api
 
         with patch.dict(os.environ, {"HF_TOKEN": "hf_envtoken"}):
-            is_valid, message = validate_hf_token(token="hf_paramtoken123456")
+            is_valid, _message = validate_hf_token(token="hf_paramtoken123456")
             assert is_valid is True
             # Should use the explicit token, not env var
             mock_api.whoami.assert_called_once_with(token="hf_paramtoken123456")
@@ -315,7 +312,7 @@ class TestAuthValidator:
     def test_check_modal_auth_stores_result(self):
         """Test check_modal_auth stores result in validator."""
         validator = AuthValidator()
-        result = validator.check_modal_auth()
+        validator.check_modal_auth()
 
         assert "modal" in validator.results
         assert validator.results["modal"].token_type == "modal"
@@ -576,7 +573,7 @@ class TestEdgeCases:
     def test_token_with_whitespace(self):
         """Test token validation with whitespace."""
         # Token with leading/trailing whitespace should be invalid
-        is_valid, message = validate_hf_token(token="  hf_token123  ")
+        is_valid, _message = validate_hf_token(token="  hf_token123  ")
         # Whitespace makes it not start with "hf_"
         assert is_valid is False
 
@@ -584,20 +581,20 @@ class TestEdgeCases:
         """Test validation with very long token."""
         long_token = "hf_" + "a" * 1000
         # Should handle without crashing
-        is_valid, message = validate_hf_token(token=long_token)
+        is_valid, _message = validate_hf_token(token=long_token)
         # Will fail API check but should not crash
         assert isinstance(is_valid, bool)
 
     def test_special_characters_in_token(self):
         """Test token with special characters."""
         special_token = "hf_token!@#$%^&*()"
-        is_valid, message = validate_hf_token(token=special_token)
+        is_valid, _message = validate_hf_token(token=special_token)
         assert isinstance(is_valid, bool)
 
     def test_unicode_in_token(self):
         """Test token with unicode characters."""
         unicode_token = "hf_tökén_ñame_日本語"
-        is_valid, message = validate_hf_token(token=unicode_token)
+        is_valid, _message = validate_hf_token(token=unicode_token)
         assert isinstance(is_valid, bool)
 
     @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
@@ -636,7 +633,7 @@ class TestIntegrationScenarios:
         with patch.dict(os.environ, {}, clear=True):
             validator = AuthValidator()
             hf_result = validator.check_hf_token()
-            modal_result = validator.check_modal_auth()
+            validator.check_modal_auth()
 
             assert hf_result.status == TokenStatus.MISSING
             assert validator.report() is False
