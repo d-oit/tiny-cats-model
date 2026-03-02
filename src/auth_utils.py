@@ -32,6 +32,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ class TokenValidationResult:
     user_name: str | None = None
     expires_at: datetime | None = None
     permissions: list[str] | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class AuthValidator:
@@ -168,24 +170,103 @@ class AuthValidator:
             self.logger.info(f"Modal auth validated: {result.message}")
             return result
 
-        except modal.exception.AuthError as e:
-            result = TokenValidationResult(
-                status=TokenStatus.MISSING,
-                message=f"Modal authentication required. Run 'modal token set': {e}",
-                token_type="modal",
-            )
+        except Exception as e:
+            # Check if it's an auth error from modal
+            error_msg = str(e).lower()
+            if "auth" in error_msg or "authentication" in error_msg or "token" in error_msg:
+                result = TokenValidationResult(
+                    status=TokenStatus.MISSING,
+                    message=f"Modal authentication required. Run 'modal token new': {e}",
+                    token_type="modal",
+                )
+            else:
+                result = TokenValidationResult(
+                    status=TokenStatus.UNKNOWN,
+                    message=f"Modal auth check failed: {e}",
+                    token_type="modal",
+                )
             self.results["modal"] = result
-            self.logger.error(f"Modal auth failed: {result.message}")
+            self.logger.warning(f"Modal auth check: {result.message}")
+            return result
+
+    def validate_before_upload(self) -> TokenValidationResult:
+        """Validate authentication before uploading to HuggingFace Hub.
+
+        This method performs comprehensive validation for upload operations,
+        checking both HF token validity and required permissions.
+
+        Returns:
+            TokenValidationResult with status and upload-specific details
+        """
+        self.logger.info("=" * 60)
+        self.logger.info("PRE-UPLOAD AUTHENTICATION VALIDATION")
+        self.logger.info("=" * 60)
+
+        # First check HF token
+        hf_result = self.check_hf_token()
+
+        if hf_result.status != TokenStatus.VALID:
+            self.logger.error(f"❌ Upload validation failed: {hf_result.message}")
+            return TokenValidationResult(
+                status=hf_result.status,
+                message=f"Cannot upload: {hf_result.message}",
+                token_type="upload",
+                metadata={"hf_status": hf_result.status.value, "errors": [hf_result.message]},
+            )
+
+        # Check for write permissions (write token required for uploads)
+        try:
+            from huggingface_hub import HfApi
+
+            api = HfApi()
+            # Try to get user info to verify token has required permissions
+            info = api.whoami(token=os.environ.get("HF_TOKEN"))
+
+            # Check if user can create repos (indicates write permission)
+            can_write = info.get("can_create_repo", True)  # Default to True if field missing
+
+            if not can_write:
+                result = TokenValidationResult(
+                    status=TokenStatus.INSUFFICIENT_PERMISSIONS,
+                    message="Token lacks write permissions for uploading models",
+                    token_type="upload",
+                    user_name=info.get("name"),
+                    metadata={
+                        "hf_status": "valid",
+                        "permissions": info.get("scopes", []),
+                        "can_create_repo": can_write,
+                    },
+                )
+                self.results["upload"] = result
+                self.logger.error(f"❌ Upload validation failed: {result.message}")
+                return result
+
+            # All checks passed
+            result = TokenValidationResult(
+                status=TokenStatus.VALID,
+                message=f"Ready to upload as user: {info.get('name')}",
+                token_type="upload",
+                user_name=info.get("name"),
+                permissions=info.get("scopes", []),
+                metadata={
+                    "hf_status": "valid",
+                    "can_create_repo": can_write,
+                    "permissions": info.get("scopes", []),
+                },
+            )
+            self.results["upload"] = result
+            self.logger.info(f"✅ Upload validation passed: {result.message}")
             return result
 
         except Exception as e:
             result = TokenValidationResult(
                 status=TokenStatus.UNKNOWN,
-                message=f"Modal auth check failed: {e}",
-                token_type="modal",
+                message=f"Upload validation failed: {e}",
+                token_type="upload",
+                metadata={"error": str(e)},
             )
-            self.results["modal"] = result
-            self.logger.warning(f"Modal auth check: {result.message}")
+            self.results["upload"] = result
+            self.logger.error(f"❌ Upload validation failed: {result.message}")
             return result
 
     def report(self) -> bool:
