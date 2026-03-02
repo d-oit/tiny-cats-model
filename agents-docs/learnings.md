@@ -1072,6 +1072,46 @@ workflow_dispatch:
 
 ---
 
+### feat: Notebook validation, MLflow integration, and Modal training status (February 2026)
+
+**Date**: 2026-02-28
+**Type**: feature / investigation
+**Areas**: notebooks, mlflow, modal training
+**Related**: ADR-033, GOAP.md Phase 19, Phase 20
+
+**What worked**:
+- Notebook assets created: `notebooks/assets/` with test images
+- Notebook JSON validation: All 3 notebooks syntactically valid
+- MLflow already integrated in `train_dit.py` via ExperimentTracker
+- pytest tests pass
+- ruff linting passes
+
+**Issues encountered**:
+- Modal training 400k stopped at step 200 (need to investigate)
+- Notebook full execution requires HuggingFace network access
+
+**Root Cause Analysis**:
+| Issue | Root Cause | Impact |
+|-------|------------|--------|
+| Modal training stopped | Need to check Modal dashboard/logs | Training incomplete |
+| Notebook execution | External HuggingFace dependency | Can't run offline |
+
+**Fix applied**:
+1. Created notebooks/assets/ with test images
+2. Validated notebook JSON structure and Python syntax
+3. Updated deployment_state.json: mlflow_integrated = true
+
+**Pattern extracted**:
+- Always validate notebooks with JSON parsing, not execution
+- Use token-safe scripts for testing: `bash .agents/skills/token_safe_exec.sh`
+- Use smart linting: `python .agents/skills/smart_lint.py`
+
+**Documentation updated**:
+- deployment_state.json: mlflow_integrated: true
+- notebooks/assets/ created
+
+---
+
 ## Open Questions
 
 - [ ] How to handle large dataset uploads to Modal volumes?
@@ -1090,3 +1130,4 @@ workflow_dispatch:
 - [ADR-013](../plans/ADR-013-github-actions-workflow-optimization-2026.md) - GitHub Actions 2026
 - [ADR-014](../plans/ADR-014-quality-gate-ci-alignment.md) - Quality gate CI alignment
 - [ADR-016](../plans/ADR-016-modern-python-code-quality-2026.md) - Modern code quality 2026
+- [ADR-043](../plans/ADR-043-modal-training-early-termination.md) - Modal training issue
