@@ -820,6 +820,7 @@ def train_dit_local(
 
     old_handler = signal.signal(signal.SIGINT, signal_handler)
     old_handler_term = signal.signal(signal.SIGTERM, signal_handler)
+    old_handler_hup = signal.signal(signal.SIGHUP, signal_handler)
 
     try:
         model.train()
@@ -1023,8 +1024,13 @@ def train_dit_local(
         return best_loss
 
     finally:
+        if shutdown_requested:
+            logger.info(f"Training ended at step {step}/{steps} due to signal shutdown")
+        else:
+            logger.info(f"Training ended at step {step}/{steps}")
         signal.signal(signal.SIGINT, old_handler)
         signal.signal(signal.SIGTERM, old_handler_term)
+        signal.signal(signal.SIGHUP, old_handler_hup)
 
 
 @app.local_entrypoint()
