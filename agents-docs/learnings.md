@@ -1112,6 +1112,65 @@ workflow_dispatch:
 
 ---
 
+### fix: Modal CLI Syntax for GitHub Actions (March 2026)
+
+**Date**: 2026-03-02
+**Type**: bug fix
+**Areas**: modal cli, github actions, train.yml
+**Related**: ADR-048, train.yml, src/train_dit.py
+
+**What worked**:
+- Modal 1.0+ with `@app.local_entrypoint()` decorator
+- Proper `--option` syntax for CLI arguments
+- Script-based training with correct syntax
+
+**Issues encountered**:
+- Train workflow failed: `Got unexpected extra argument (data/cats)`
+- Wrong Modal CLI syntax in GitHub Actions
+- Positional argument `data/cats` not supported by Modal 1.0+
+
+**Root Cause Analysis**:
+| Issue | Root Cause | Impact |
+|-------|------------|--------|
+| Unexpected extra argument | Using positional arg instead of `--data-dir` | Workflow fails immediately |
+| Syntax confusion | Modal 1.0+ requires `--option` format | CI/CD breakage |
+
+**Fix applied**:
+1. Changed train.yml to use `--data-dir data/cats` instead of `data/cats`:
+   ```yaml
+   # WRONG (before):
+   run: modal run src/train_dit.py data/cats --steps 400000
+   
+   # CORRECT (after):
+   run: modal run src/train_dit.py --data-dir data/cats --steps 400000
+   ```
+
+**Pattern extracted**:
+- **Modal 1.0+ CLI Syntax**: Always use `--option` format
+- **Never use positional arguments** with `@app.local_entrypoint()`
+- **Test locally first**: `modal run src/train_dit.py --help`
+- **Check decorator type**: `@app.local_entrypoint()` vs `@app.function()`
+
+**Modal CLI Usage Patterns**:
+```bash
+# With @app.local_entrypoint():
+modal run src/train_dit.py \
+  --data-dir data/cats \
+  --steps 400000
+
+# With @app.function() (direct remote call):
+modal run src/train_dit.py::train_dit_on_gpu \
+  --data-dir data/cats \
+  --steps 400000
+```
+
+**Documentation updated**:
+- ADR-048: Modal CLI Syntax Fix
+- train.yml: Fixed both train-classifier and train-dit jobs
+- agents-docs/learnings.md: This entry
+
+---
+
 ### fix: GitHub Actions Missing Dependencies & Training Defaults (March 2026)
 
 **Date**: 2026-03-02
