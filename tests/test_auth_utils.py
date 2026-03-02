@@ -520,7 +520,10 @@ class TestPreflightCheck:
         mock_api.whoami.return_value = {"name": "testuser"}
         mock_hf_api_class.return_value = mock_api
 
-        with patch.dict(os.environ, {"HF_TOKEN": "hf_validtoken123456"}), caplog.at_level(logging.INFO):
+        with (
+            patch.dict(os.environ, {"HF_TOKEN": "hf_validtoken123456"}),
+            caplog.at_level(logging.INFO),
+        ):
             result = preflight_check()
 
         assert result is True
@@ -545,7 +548,10 @@ class TestPreflightCheck:
         custom_logger = logging.getLogger("custom_preflight")
         custom_logger.setLevel(logging.INFO)
 
-        with patch.dict(os.environ, {"HF_TOKEN": "hf_validtoken123456"}), caplog.at_level(logging.INFO):
+        with (
+            patch.dict(os.environ, {"HF_TOKEN": "hf_validtoken123456"}),
+            caplog.at_level(logging.INFO),
+        ):
             result = preflight_check(logger=custom_logger)
 
         # Should work with custom logger
