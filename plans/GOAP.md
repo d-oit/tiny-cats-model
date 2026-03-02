@@ -455,11 +455,11 @@ Build a cats classifier and generator with web frontend, following the architect
 **Progress:** 5/6 actions complete (83%)
 **Blocker:** None - Ready to execute A01
 
-### Phase 18: High-Accuracy Training (ADR-036, ADR-044, ADR-046, ADR-047)
+### Phase 18: High-Accuracy Training (ADR-036, ADR-044, ADR-046, ADR-047, ADR-048)
 
 **Goal:** Train improved TinyDiT model (400k steps, effective batch 512) for better sample quality and lower FID.
 
-**Status:** ✅ READY FOR PRODUCTION TRAINING (All fixes applied, workflow defaults updated)
+**Status:** ✅ FIXED - Modal CLI syntax corrected (ADR-048), ready for 400k training
 
 #### Phase 18.1: Training Configuration
 - [x] Document high-accuracy configuration (ADR-036)
@@ -472,9 +472,10 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] **A04:** Fix GitHub Actions workflow - missing requirements.txt (ADR-046)
 - [x] **A05:** Update workflow defaults to 400k high-accuracy (steps=400000, lr=5e-5, grad_accum=2)
 - [x] **A06:** Enhance training script with prerequisites check and usage guidance (ADR-047)
-- [ ] **A07:** Run local test verification (--local mode)
-- [ ] **A08:** Execute 400k step training via GitHub Actions
-- [ ] **A09:** Monitor training progress and checkpoints
+- [x] **A07:** Fix Modal CLI syntax - use `--data-dir` not positional arg (ADR-048)
+- [ ] **A08:** Run local test verification (--local mode)
+- [ ] **A09:** Execute 400k step training via GitHub Actions
+- [ ] **A10:** Monitor training progress and checkpoints
 
 #### Phase 18.2: Evaluation & Metrics
 - [ ] Generate evaluation samples (500+ images)
