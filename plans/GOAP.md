@@ -455,11 +455,11 @@ Build a cats classifier and generator with web frontend, following the architect
 **Progress:** 5/6 actions complete (83%)
 **Blocker:** None - Ready to execute A01
 
-### Phase 18: High-Accuracy Training (ADR-036, ADR-044)
+### Phase 18: High-Accuracy Training (ADR-036, ADR-044, ADR-046)
 
 **Goal:** Train improved TinyDiT model (400k steps, effective batch 512) for better sample quality and lower FID.
 
-**Status:** ✅ READY FOR TRAINING (ADR-044 fixes implemented, codebase verified)
+**Status:** ⚠️ TRAINING ATTEMPTED - WORKFLOW FIX APPLIED (See ADR-046)
 
 #### Phase 18.1: Training Configuration
 - [x] Document high-accuracy configuration (ADR-036)
@@ -469,8 +469,9 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] **A01:** Implement ADR-044 signal handling fixes (SIGHUP handler, exit logging)
 - [x] **A02:** Verify auth_utils.py and retry_utils.py integration
 - [x] **A03:** Analysis swarm verification completed - codebase cleared for 400k training
-- [ ] **A04:** Run 400k step training with gradient accumulation
-- [ ] **A05:** Monitor training progress and checkpoints
+- [x] **A04:** Fix GitHub Actions workflow - missing requirements.txt (ADR-046)
+- [ ] **A05:** Run 400k step training with gradient accumulation (retry after fix)
+- [ ] **A06:** Monitor training progress and checkpoints
 
 #### Phase 18.2: Evaluation & Metrics
 - [ ] Generate evaluation samples (500+ images)
