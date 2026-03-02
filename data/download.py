@@ -51,9 +51,16 @@ def extract_tar_gz(archive: Path, dest: Path) -> None:
 
 def main() -> None:
     """Main download function."""
-    # Setup paths
-    script_dir = Path(__file__).parent
-    cats_dir = script_dir / "cats"
+    import os
+
+    # Setup paths - respect environment variables for Modal container
+    if "CATS_DIR" in os.environ:
+        cats_dir = Path(os.environ["CATS_DIR"])
+    elif "DATA_DIR" in os.environ:
+        cats_dir = Path(os.environ["DATA_DIR"]) / "cats"
+    else:
+        script_dir = Path(__file__).parent
+        cats_dir = script_dir / "cats"
 
     print(f"==> Preparing cats dataset in: {cats_dir}", file=sys.stderr)
     cats_dir.mkdir(parents=True, exist_ok=True)
