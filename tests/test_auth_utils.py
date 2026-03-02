@@ -41,6 +41,13 @@ from auth_utils import (
     validate_modal_auth,
 )
 
+# Check if huggingface_hub is available
+try:
+    import huggingface_hub
+    HF_HUB_AVAILABLE = True
+except ImportError:
+    HF_HUB_AVAILABLE = False
+
 
 class TestTokenStatus:
     """Test TokenStatus enum values and behavior."""
@@ -165,6 +172,7 @@ class TestValidateHfToken:
         assert is_valid is False
         assert "Invalid token format" in message
 
+    @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
     @patch("huggingface_hub.HfApi")
     def test_invalid_token_api_response_401(self, mock_hf_api_class):
         """Test validate_hf_token when API returns 401 Unauthorized."""
@@ -176,6 +184,7 @@ class TestValidateHfToken:
         assert is_valid is False
         assert "invalid" in message.lower() or "expired" in message.lower()
 
+    @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
     @patch("huggingface_hub.HfApi")
     def test_invalid_token_api_response_403(self, mock_hf_api_class):
         """Test validate_hf_token when API returns 403 Forbidden."""
@@ -187,6 +196,7 @@ class TestValidateHfToken:
         assert is_valid is False
         assert "permission" in message.lower() or "403" in message
 
+    @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
     @patch("huggingface_hub.HfApi")
     def test_valid_token_mocked(self, mock_hf_api_class):
         """Test validate_hf_token with valid token (mocked API response)."""
@@ -198,6 +208,7 @@ class TestValidateHfToken:
         assert is_valid is True
         assert "testuser" in message
 
+    @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
     @patch("huggingface_hub.HfApi")
     def test_valid_token_with_explicit_param(self, mock_hf_api_class):
         """Test validate_hf_token with explicit token parameter."""
@@ -285,6 +296,7 @@ class TestAuthValidator:
         assert "huggingface" in validator.results
         assert validator.results["huggingface"].status == TokenStatus.INVALID
 
+    @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
     @patch("huggingface_hub.HfApi")
     def test_check_hf_token_valid_stores_result(self, mock_hf_api_class):
         """Test check_hf_token stores valid result."""
@@ -412,6 +424,7 @@ class TestRequireFunctions:
             require_hf_token(token="invalid_token")
         assert "HuggingFace" in str(exc_info.value)
 
+    @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
     @patch("huggingface_hub.HfApi")
     def test_require_hf_token_valid_returns_token(self, mock_hf_api_class):
         """Test require_hf_token returns token when valid."""
@@ -423,6 +436,7 @@ class TestRequireFunctions:
         result = require_hf_token(token=token)
         assert result == token
 
+    @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
     @patch("huggingface_hub.HfApi")
     def test_require_hf_token_from_env(self, mock_hf_api_class):
         """Test require_hf_token uses env var when token is None."""
@@ -500,6 +514,7 @@ class TestSetupAuthLogging:
 class TestPreflightCheck:
     """Test preflight_check function."""
 
+    @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
     @patch("huggingface_hub.HfApi")
     def test_preflight_all_valid(self, mock_hf_api_class, caplog):
         """Test preflight_check when all auth is valid."""
@@ -523,6 +538,7 @@ class TestPreflightCheck:
         assert result is False
         assert "HuggingFace" in caplog.text
 
+    @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
     @patch("huggingface_hub.HfApi")
     def test_preflight_with_custom_logger(self, mock_hf_api_class, caplog):
         """Test preflight_check with custom logger."""
@@ -544,6 +560,7 @@ class TestPreflightCheck:
 class TestEdgeCases:
     """Test edge cases and error scenarios."""
 
+    @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
     @patch("huggingface_hub.HfApi")
     def test_hf_api_import_error(self, mock_hf_api_class):
         """Test handling when HfApi import fails."""
@@ -582,6 +599,7 @@ class TestEdgeCases:
         is_valid, message = validate_hf_token(token=unicode_token)
         assert isinstance(is_valid, bool)
 
+    @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
     @patch("huggingface_hub.HfApi")
     def test_api_generic_exception(self, mock_hf_api_class):
         """Test handling of generic API exception."""
@@ -595,6 +613,7 @@ class TestEdgeCases:
         assert result.status == TokenStatus.UNKNOWN
         assert "failed" in result.message.lower() or "network" in result.message.lower()
 
+    @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
     @patch("huggingface_hub.HfApi")
     def test_api_unauthorized_exception(self, mock_hf_api_class):
         """Test handling of Unauthorized exception message."""
@@ -621,6 +640,7 @@ class TestIntegrationScenarios:
             assert hf_result.status == TokenStatus.MISSING
             assert validator.report() is False
 
+    @pytest.mark.skipif(not HF_HUB_AVAILABLE, reason="huggingface_hub not installed")
     @patch("huggingface_hub.HfApi")
     def test_full_validation_workflow_valid_hf(self, mock_hf_api_class):
         """Test full workflow with valid HF token."""
