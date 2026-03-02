@@ -173,7 +173,11 @@ class AuthValidator:
         except Exception as e:
             # Check if it's an auth error from modal
             error_msg = str(e).lower()
-            if "auth" in error_msg or "authentication" in error_msg or "token" in error_msg:
+            if (
+                "auth" in error_msg
+                or "authentication" in error_msg
+                or "token" in error_msg
+            ):
                 result = TokenValidationResult(
                     status=TokenStatus.MISSING,
                     message=f"Modal authentication required. Run 'modal token new': {e}",
@@ -211,7 +215,10 @@ class AuthValidator:
                 status=hf_result.status,
                 message=f"Cannot upload: {hf_result.message}",
                 token_type="upload",
-                metadata={"hf_status": hf_result.status.value, "errors": [hf_result.message]},
+                metadata={
+                    "hf_status": hf_result.status.value,
+                    "errors": [hf_result.message],
+                },
             )
 
         # Check for write permissions (write token required for uploads)
@@ -223,7 +230,9 @@ class AuthValidator:
             info = api.whoami(token=os.environ.get("HF_TOKEN"))
 
             # Check if user can create repos (indicates write permission)
-            can_write = info.get("can_create_repo", True)  # Default to True if field missing
+            can_write = info.get(
+                "can_create_repo", True
+            )  # Default to True if field missing
 
             if not can_write:
                 result = TokenValidationResult(
