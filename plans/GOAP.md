@@ -455,11 +455,11 @@ Build a cats classifier and generator with web frontend, following the architect
 **Progress:** 5/6 actions complete (83%)
 **Blocker:** None - Ready to execute A01
 
-### Phase 18: High-Accuracy Training (ADR-036, ADR-044, ADR-046)
+### Phase 18: High-Accuracy Training (ADR-036, ADR-044, ADR-046, ADR-047)
 
 **Goal:** Train improved TinyDiT model (400k steps, effective batch 512) for better sample quality and lower FID.
 
-**Status:** ⚠️ TRAINING ATTEMPTED - WORKFLOW FIX APPLIED (See ADR-046)
+**Status:** ✅ READY FOR PRODUCTION TRAINING (All fixes applied, workflow defaults updated)
 
 #### Phase 18.1: Training Configuration
 - [x] Document high-accuracy configuration (ADR-036)
@@ -470,8 +470,11 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] **A02:** Verify auth_utils.py and retry_utils.py integration
 - [x] **A03:** Analysis swarm verification completed - codebase cleared for 400k training
 - [x] **A04:** Fix GitHub Actions workflow - missing requirements.txt (ADR-046)
-- [ ] **A05:** Run 400k step training with gradient accumulation (retry after fix)
-- [ ] **A06:** Monitor training progress and checkpoints
+- [x] **A05:** Update workflow defaults to 400k high-accuracy (steps=400000, lr=5e-5, grad_accum=2)
+- [x] **A06:** Enhance training script with prerequisites check and usage guidance (ADR-047)
+- [ ] **A07:** Run local test verification (--local mode)
+- [ ] **A08:** Execute 400k step training via GitHub Actions
+- [ ] **A09:** Monitor training progress and checkpoints
 
 #### Phase 18.2: Evaluation & Metrics
 - [ ] Generate evaluation samples (500+ images)
@@ -485,29 +488,25 @@ Build a cats classifier and generator with web frontend, following the architect
 - [ ] Update frontend with new model
 - [ ] **A04:** Deploy high-accuracy model
 
-#### Training Configuration Used
+#### Training Configuration
 ```bash
-# Command: bash scripts/train_dit_high_accuracy.sh
-# Steps: 400,000
-# Batch Size: 256
-# Gradient Accumulation: 2 (effective batch 512)
-# Learning Rate: 5e-5
-# Warmup Steps: 15,000
-# Augmentation: full
-# GPU: NVIDIA A10G
-# Expected Time: 24-36 hours
+# GitHub Actions (RECOMMENDED for 400k):
+gh workflow run train.yml
+# Defaults: steps=400000, batch=256, lr=5e-5, grad_accum=2
+
+# Local Testing:
+bash scripts/train_dit_high_accuracy.sh --local  # 4000 steps, ~5-10 min
 ```
 
 #### GOAP Action Status for Phase 18
 | Action | Status | Phase | Skill | Completed At | Notes |
 |--------|--------|-------|-------|--------------|-------|
-| A01: Run 400k step training | ⏳ PENDING (P1 - user decision) | 18.1 | model-training | 2026-02-28 | ADR-044 fixes applied, needs retry |
-| A02: Monitor training | ⏳ PENDING (P1 - depends on A01) | 18.1 | model-training | - | Ready after A01 |
-| A03: Evaluate & compare | ⏳ PENDING (P1 - depends on A02) | 18.2 | model-training | - | Compare vs 200k baseline |
-| A04: Deploy model | ⏳ PENDING (P1 - depends on A03) | 18.3 | model-training | - | ONNX export + HF upload |
-
-**Progress:** 0/4 actions complete (Waiting for user decision)
-**Blocker:** ADR-044 encourages GitHub Actions usage instead of nohup
+| A01-A06: Setup & Fixes | ✅ Complete | 18.1 | model-training/ci-monitor | 2026-03-02 | All blockers resolved |
+| A07: Local test | ⏳ PENDING | 18.1 | model-training | - | Verify before GA |
+| A08: 400k training | ⏳ PENDING | 18.1 | model-training | - | Via GitHub Actions |
+| A09: Monitor | ⏳ PENDING | 18.1 | model-training | - | After A08 |
+| A03: Evaluate | ⏳ PENDING | 18.2 | model-training | - | After training |
+| A04: Deploy | ⏳ PENDING | 18.3 | model-training | - | Final step |
 
 ### Phase 19: Tutorial & Documentation Enhancement (ADR-038)
 

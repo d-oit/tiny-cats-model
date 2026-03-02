@@ -1112,6 +1112,70 @@ workflow_dispatch:
 
 ---
 
+### fix: GitHub Actions Missing Dependencies & Training Defaults (March 2026)
+
+**Date**: 2026-03-02
+**Type**: bug fix / process improvement
+**Areas**: github actions, training workflow, defaults
+**Related**: ADR-046, ADR-047, train.yml, scripts/train_dit_high_accuracy.sh
+
+**What worked**:
+- Adding explicit `pip install -r requirements.txt` step before training
+- Updating defaults to 400k high-accuracy configuration
+- Creating clear separation between local testing and production
+- Prerequisites check in training script
+
+**Issues encountered**:
+- `ModuleNotFoundError: No module named 'torch'` in GitHub Actions
+- Default values were 200k instead of 400k
+- No clear guidance on local vs GitHub Actions usage
+
+**Root Cause Analysis**:
+| Issue | Root Cause | Impact |
+|-------|------------|--------|
+| Missing torch | Workflow only installed `modal`, not requirements.txt | Training fails immediately |
+| Wrong defaults | Defaults set to 200k baseline instead of 400k target | User must remember to override |
+| Unclear usage | No documentation on when to use local vs GA | Risk of using wrong method |
+
+**Fix applied**:
+1. Added requirements installation to train.yml (ADR-046):
+   ```yaml
+   - name: Install dependencies
+     run: pip install -r requirements.txt
+   ```
+
+2. Updated defaults to 400k high-accuracy:
+   ```yaml
+   steps: "400000"  # was "200000"
+   lr: "5e-5"       # was "1e-4"
+   gradient_accumulation_steps: "2"  # was "1"
+   ```
+
+3. Enhanced training script with modes (ADR-047):
+   ```bash
+   bash scripts/train_dit_high_accuracy.sh --local   # 4000 steps test
+   bash scripts/train_dit_high_accuracy.sh --medium  # 50000 steps
+   gh workflow run train.yml                          # 400000 steps
+   ```
+
+**Pattern extracted**:
+- **Always install requirements.txt in CI** before running Python scripts
+- **Use explicit defaults** that match your primary use case
+- **Create three-tier training approach**:
+  1. Local test (fast, cheap) - verify setup
+  2. Medium run (hours) - experiments
+  3. GitHub Actions (days) - production
+- **Never use nohup** with modal run (SIGHUP termination risk)
+- **Add prerequisites checks** to scripts for better UX
+
+**Documentation updated**:
+- ADR-046: GitHub Actions Missing Dependencies Fix
+- ADR-047: Local Testing vs GitHub Actions Strategy
+- GOAP.md Phase 18: Updated with verification checklist
+- scripts/train_dit_high_accuracy.sh: Added modes and checks
+
+---
+
 ## Open Questions
 
 - [ ] How to handle large dataset uploads to Modal volumes?
