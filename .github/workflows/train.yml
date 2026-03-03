@@ -262,7 +262,7 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           modal run src/train_dit.py \
-            --data-dir data/cats \
+            --data-dir /data/cats \
             --steps ${{ github.event.inputs.steps || '400000' }} \
             --batch-size ${{ github.event.inputs.batch_size || '256' }} \
             --lr ${{ github.event.inputs.lr || '5e-5' }} \
