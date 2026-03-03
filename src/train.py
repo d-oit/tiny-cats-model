@@ -42,8 +42,56 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
-from auth_utils import AuthenticationError, require_modal_auth, setup_auth_logging
-from experiment_tracker import ExperimentTracker
+# Optional auth utilities import (for enhanced error handling)
+try:
+    from auth_utils import AuthenticationError, require_modal_auth, setup_auth_logging
+
+    AUTH_UTILS_AVAILABLE = True
+except ImportError:
+    AUTH_UTILS_AVAILABLE = False
+
+    # Fallback for Modal container
+    class AuthenticationError(Exception):  # type: ignore
+        pass
+
+    def require_modal_auth():  # type: ignore
+        pass
+
+    def setup_auth_logging(level=None):  # type: ignore
+        import logging
+
+        return logging.getLogger("cats_classifier")
+
+
+# Optional experiment tracker import
+try:
+    from experiment_tracker import ExperimentTracker
+except ImportError:
+    # Fallback simple tracker (ADR-042)
+    class ExperimentTracker:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start_run(self, *args, **kwargs):
+            return None
+
+        def log_params(self, *args, **kwargs):
+            pass
+
+        def log_metrics(self, *args, **kwargs):
+            pass
+
+        def log_model(self, *args, **kwargs):
+            pass
+
+        def log_artifact(self, *args, **kwargs):
+            pass
+
+        def end_run(self, *args, **kwargs):
+            pass
+
+        def close(self):
+            pass
 
 
 # Configure logging
@@ -368,6 +416,9 @@ image = (
     .add_local_file("src/dataset.py", "/app/dataset.py")
     .add_local_file("src/model.py", "/app/model.py")
     .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
+    .add_local_file("src/auth_utils.py", "/app/auth_utils.py")
+    .add_local_file("src/retry_utils.py", "/app/retry_utils.py")
+    .add_local_file("src/experiment_tracker.py", "/app/experiment_tracker.py")
     .add_local_file("data/download.py", "/app/data/download.py")
     .add_local_file("data/download.sh", "/app/data/download.sh")
 )
