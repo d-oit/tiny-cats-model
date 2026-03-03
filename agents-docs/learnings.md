@@ -16,6 +16,76 @@ After each task, capture learnings here. Use this for continuous improvement.
 
 ## Key Learnings
 
+### fix: GitHub Actions Modal CLI Syntax and Missing Dependencies (March 2026)
+
+**Date**: 2026-03-03
+**Type**: bug fix
+**Areas**: github actions, modal cli, dependencies
+**Related**: ADR-048, ADR-046, ADR-050, train.yml, src/train_dit.py
+
+**What worked**:
+- Using `--data-dir` flag instead of positional arguments with Modal 1.0+ `@app.local_entrypoint()`
+- Explicit `pip install -r requirements.txt` before running modal commands in CI
+- Clear separation between local testing and GitHub Actions workflows
+
+**Issues encountered**:
+1. ADR-048: Modal CLI syntax error - "Got unexpected extra argument (data/cats)"
+2. ADR-046: Missing torch module - "ModuleNotFoundError: No module named 'torch'"
+3. ADR-050: Incomplete ADR-048 fix - train_dit.py still used positional argument while workflow used --data-dir
+
+**Root Cause Analysis**:
+| Issue | Root Cause | Impact |
+|-------|------------|--------|
+| Unexpected extra argument | Used positional arg instead of `--data-dir` with Modal 1.0+ | Workflow fails immediately |
+| Missing torch module | Workflow only installed `modal`, not requirements.txt | Training fails on import |
+| Incomplete fix (ADR-050) | Only fixed workflow, not train_dit.py argument parser | DiT training still fails |
+
+**Fix applied**:
+1. Changed `modal run src/train.py data/cats` to `modal run src/train.py --data-dir data/cats`:
+   ```yaml
+   # WRONG:
+   run: modal run src/train_dit.py data/cats --steps 400000
+   
+   # CORRECT:
+   run: modal run src/train_dit.py --data-dir data/cats --steps 400000
+   ```
+
+2. Added explicit dependency installation step in train.yml:
+   ```yaml
+   - name: Install dependencies
+     run: pip install -r requirements.txt
+   ```
+
+3. **ADR-050**: Changed train_dit.py argument from positional to flag:
+   ```python
+   # WRONG (positional):
+   parser.add_argument("data_dir", type=str, help="Path to dataset root")
+   
+   # CORRECT (flag):
+   parser.add_argument("--data-dir", type=str, required=True, help="Path to dataset root")
+   ```
+
+**Verification**:
+- Runs 22614987450, 22614870923: SUCCESS
+- Local CLI test: `python src/train_dit.py --help` shows --data-dir flag correctly
+
+**Pattern extracted**:
+- **Modal 1.0+ CLI Syntax**: Always use `--option` format, never positional arguments with `@app.local_entrypoint()`
+- **CI Dependency Pattern**: Always install requirements.txt before running Python scripts in GitHub Actions
+- **Complete Fix Requirement**: When fixing CLI syntax, update BOTH workflow AND script
+- **Test locally first**: Run `modal run src/train_dit.py --help` to verify CLI syntax
+- **Three-tier verification**: Local test (fast) → Medium run (hours) → GitHub Actions (production)
+
+**Documentation updated**:
+- ADR-048: Modal CLI Syntax Fix
+- ADR-046: GitHub Actions Missing Dependencies Fix  
+- ADR-050: train_dit.py Argument Parser Fix
+- train.yml: Fixed CLI syntax and added dependency installation
+- src/train_dit.py: Changed data_dir from positional to --data-dir flag
+- agents-docs/learnings.md: This entry
+
+---
+
 ### fix: Modal Container Import Path & ExperimentTracker (February 2026)
 
 **Date**: 2026-02-28
