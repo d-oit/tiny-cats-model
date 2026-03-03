@@ -80,13 +80,54 @@ After each task, capture learnings here. Use this for continuous improvement.
 - ADR-048: Modal CLI Syntax Fix
 - ADR-046: GitHub Actions Missing Dependencies Fix  
 - ADR-050: train_dit.py Argument Parser Fix
+- ADR-051: Modal Volume Path Mismatch Fix
 - train.yml: Fixed CLI syntax and added dependency installation
 - src/train_dit.py: Changed data_dir from positional to --data-dir flag
 - agents-docs/learnings.md: This entry
 
 ---
 
-### fix: Modal Container Import Path & ExperimentTracker (February 2026)
+### fix: Modal Volume Path Mismatch (March 2026)
+
+**Date**: 2026-03-03
+**Type**: bug fix
+**Areas**: modal, volumes, github actions
+**Related**: ADR-051, train.yml, ADR-024
+
+**What worked**:
+- Using absolute paths `/data/cats` to match Modal volume mount points
+- Clear understanding of Modal container filesystem layout
+
+**Issues encountered**:
+- Dataset download succeeded but training couldn't find `data/cats`
+- Path mismatch: relative `data/cats` vs absolute `/data/cats`
+
+**Root Cause Analysis**:
+| Issue | Root Cause | Impact |
+|-------|------------|--------|
+| No such file or directory | Used relative path `data/cats` instead of absolute `/data/cats` | Training fails after download |
+| Volume mount mismatch | Modal mounts volume at `/data` but script looked in `/app/data` | Dataset not accessible |
+
+**Fix applied**:
+Changed train.yml to use absolute path:
+```yaml
+# WRONG:
+--data-dir data/cats
+
+# CORRECT:
+--data-dir /data/cats
+```
+
+**Pattern extracted**:
+- **Modal Volume Paths**: Always use absolute paths matching volume mounts
+- **Container vs Local**: Local uses `data/cats`, Modal container uses `/data/cats`
+- **Volume Configuration**: Review `@app.function(volumes={...})` to understand mount points
+
+**Documentation updated**:
+- ADR-051: Modal Volume Path Mismatch Fix
+- train.yml: Updated to use `/data/cats`
+
+---
 
 **Date**: 2026-02-28
 **Type**: bug fix
