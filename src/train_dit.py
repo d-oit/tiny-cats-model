@@ -156,7 +156,9 @@ def parse_args() -> argparse.Namespace:
         description="Train TinyDiT for cat image generation",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("data_dir", type=str, help="Path to dataset root")
+    parser.add_argument(
+        "--data-dir", type=str, required=True, help="Path to dataset root"
+    )
     parser.add_argument(
         "--steps", type=int, default=200_000, help="Total training steps"
     )

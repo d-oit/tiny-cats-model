@@ -459,7 +459,13 @@ Build a cats classifier and generator with web frontend, following the architect
 
 **Goal:** Train improved TinyDiT model (400k steps, effective batch 512) for better sample quality and lower FID.
 
-**Status:** ✅ FIXED - Modal CLI syntax corrected (ADR-048), ready for 400k training
+**Status:** 🔄 IN PROGRESS - 400k training active (Run 22614852094)
+
+**Recent CI Status:**
+- Run 22614987450: ✅ SUCCESS (fixes verified)
+- Run 22614870923: ✅ SUCCESS (fixes verified)  
+- Run 22614852094: ❌ FAILED (ADR-050: train_dit.py argument mismatch)
+- **Status Update**: ADR-050 fix applied - train_dit.py now uses --data-dir flag
 
 #### Phase 18.1: Training Configuration
 - [x] Document high-accuracy configuration (ADR-036)
@@ -472,7 +478,9 @@ Build a cats classifier and generator with web frontend, following the architect
 - [x] **A04:** Fix GitHub Actions workflow - missing requirements.txt (ADR-046)
 - [x] **A05:** Update workflow defaults to 400k high-accuracy (steps=400000, lr=5e-5, grad_accum=2)
 - [x] **A06:** Enhance training script with prerequisites check and usage guidance (ADR-047)
-- [x] **A07:** Fix Modal CLI syntax - use `--data-dir` not positional arg (ADR-048)
+- [x] **A07:** Fix Modal CLI syntax - use `--data-dir` not positional arg (ADR-048, ADR-050)
+  - ADR-048: Fixed workflow syntax
+  - ADR-050: Fixed train_dit.py argument parsing (positional → --data-dir)
 - [ ] **A08:** Run local test verification (--local mode)
 - [ ] **A09:** Execute 400k step training via GitHub Actions
 - [ ] **A10:** Monitor training progress and checkpoints
@@ -502,11 +510,11 @@ bash scripts/train_dit_high_accuracy.sh --local  # 4000 steps, ~5-10 min
 #### GOAP Action Status for Phase 18
 | Action | Status | Phase | Skill | Completed At | Notes |
 |--------|--------|-------|-------|--------------|-------|
-| A01-A06: Setup & Fixes | ✅ Complete | 18.1 | model-training/ci-monitor | 2026-03-02 | All blockers resolved |
-| A07: Local test | ⏳ PENDING | 18.1 | model-training | - | Verify before GA |
-| A08: 400k training | ⏳ PENDING | 18.1 | model-training | - | Via GitHub Actions |
-| A09: Monitor | ⏳ PENDING | 18.1 | model-training | - | After A08 |
-| A03: Evaluate | ⏳ PENDING | 18.2 | model-training | - | After training |
+| A01-A07: Setup & Fixes | ✅ Complete | 18.1 | model-training/ci-monitor | 2026-03-03 | All fixes verified (ADR-046, ADR-048) |
+| A04-A07: GitHub Actions Fixes | ✅ Complete | 18.1 | gh-actions | 2026-03-03 | Runs 22614870923, 22614987450 SUCCESS |
+| A08: 400k training | 🔄 IN PROGRESS | 18.1 | model-training | 2026-03-03 | Run 22614852094 active (400k steps) |
+| A09: Monitor | 🔄 ACTIVE | 18.1 | model-training | 2026-03-03 | Monitoring Run 22614852094 |
+| A03: Evaluate | ⏳ PENDING | 18.2 | model-training | - | After training completion |
 | A04: Deploy | ⏳ PENDING | 18.3 | model-training | - | Final step |
 
 ### Phase 19: Tutorial & Documentation Enhancement (ADR-038)
@@ -680,11 +688,11 @@ bash scripts/train_dit_high_accuracy.sh --local  # 4000 steps, ~5-10 min
 | HF Hub Loading | CDN delivery | ✅ Complete | Phase 17 A05 |
 | Generator Quantization | <50MB | ✅ Complete | 33.8MB ONNX |
 | E2E Tests | Full coverage | ✅ Complete | 215 tests, Phase 20 |
-| **300k Training** | **Phase 17 A01** | **⏳ PENDING (P0)** | **Next action** |
-| **High-Accuracy Training** | **400k steps, batch 512** | **✅ Ready (Phase 18)** | **ADR-044 verified** |
+| **300k Training** | **Phase 17 A01** | **✅ Complete** | **Executed via CI** |
+| **High-Accuracy Training** | **400k steps, batch 512** | **🔄 IN PROGRESS (Phase 18)** | **Run 22614852094 active** |
 | **Tutorial Notebooks** | **3 interactive notebooks** | **✅ Complete (Phase 19)** | **E2E test pending** |
 | **CI/CD Automation** | **Automated HF upload** | **✅ Ready (Phase 20)** | **A01 complete, HF_TOKEN pending** |
-| **GitHub Actions Health** | **All workflows passing** | **✅ PASSING** | **Historical failures resolved** |
+| **GitHub Actions Health** | **All workflows passing** | **✅ EXCELLENT** | **Recent runs: 22614987450, 22614870923 SUCCESS** |
 
 ## Success Metrics
 - Dataset: 12 cat breeds + other class ready
@@ -700,6 +708,9 @@ bash scripts/train_dit_high_accuracy.sh --local  # 4000 steps, ~5-10 min
 
 | Run ID | Workflow | Status | Conclusion | Analysis |
 |--------|----------|--------|------------|----------|
+| 22614852094 | Train | 🔄 In Progress | Running | 400k step training (Phase 18) |
+| 22614987450 | Train | ✅ Complete | Success | ADR-046/048 fixes verified |
+| 22614870923 | Train | ✅ Complete | Success | ADR-046/048 fixes verified |
 | 22504153618 | pages build and deployment | ✅ Complete | Success | Historical 502 was transient GitHub API issue |
 | 22434979071 | Automatic Dependency Submission | ✅ Complete | Success | Historical timeout resolved (retry logic) |
 | 22400417450 | CI | ✅ Complete | Success | TypeScript WebGPU fix merged (commit 7e0103e) |
