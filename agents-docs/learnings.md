@@ -16,6 +16,63 @@ After each task, capture learnings here. Use this for continuous improvement.
 
 ## Key Learnings
 
+### fix: Classifier Training Data Directory Path (March 2026)
+
+**Date**: 2026-03-04
+**Type**: bug fix
+**Areas**: github actions, modal, data paths
+**Related**: ADR-054, train.yml, ADR-024
+
+**What worked**:
+- Using absolute paths `/data/cats` to match Modal volume mount points
+- Aligning classifier workflow with DiT workflow (both use `/data/cats`)
+
+**Issues encountered**:
+1. Classifier training failed with `DataLoadError: Dataset directory not found: data/cats`
+2. The workflow passed `--data-dir data/cats` (relative path) but Modal container has dataset at `/data/cats`
+
+**Root Cause Analysis**:
+| Issue | Root Cause | Impact |
+|-------|------------|--------|
+| Dataset not found | Relative path `data/cats` doesn't exist in Modal container | Training fails after download |
+
+**Fix applied**:
+Changed workflow from relative to absolute path:
+```yaml
+# WRONG:
+modal run src/train.py --data-dir data/cats
+
+# CORRECT:
+modal run src/train.py --data-dir /data/cats
+```
+
+Also fixed YAML boolean type:
+```yaml
+# WRONG:
+default: "false"
+type: boolean
+
+# CORRECT:
+default: false
+type: boolean
+```
+
+**Verification**:
+- PR #40 merged successfully
+- All CI checks passing
+
+**Pattern extracted**:
+- **Modal Volume Paths**: Always use absolute paths matching volume mount points
+- **Volume Mount Points**: Modal volumes are mounted at `/data` and `/outputs`, so paths must start with these
+- **YAML Boolean Types**: Boolean defaults should be `true`/`false`, not quoted strings
+
+**Documentation updated**:
+- ADR-054: Classifier Training Data Path Fix
+- train.yml: Fixed data path and boolean type
+- agents-docs/learnings.md: This entry
+
+---
+
 ### fix: GitHub Actions Modal CLI Syntax and Missing Dependencies (March 2026)
 
 **Date**: 2026-03-03
