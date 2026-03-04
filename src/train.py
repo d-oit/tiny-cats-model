@@ -52,7 +52,10 @@ except ImportError:
 
     # Fallback for Modal container
     class AuthenticationError(Exception):  # type: ignore
-        pass
+        def __init__(self, message: str, token_type: str | None = None):
+            self.message = message
+            self.token_type = token_type
+            super().__init__(self.message)
 
     def require_modal_auth():  # type: ignore
         pass

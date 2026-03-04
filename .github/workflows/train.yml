@@ -145,6 +145,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: modal-training
+    timeout-minutes: 180
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -164,9 +165,11 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_TIMEOUT_MINUTES: 120
         run: |
           modal run src/train.py \
-            --data-dir data/cats
+            --data-dir data/cats \
+            --timeout-minutes ${MODAL_TIMEOUT_MINUTES:-120}
 
       - name: Download ONNX from Modal
         env:
@@ -241,6 +244,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: modal-training
+    timeout-minutes: 1440
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
