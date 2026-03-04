@@ -80,6 +80,8 @@ train-classifier:
 
 **Rationale:** Classifier training is fast (~30-60 minutes), 3 hours provides buffer.
 
+**Note:** The `train.py` script uses Modal's `@app.function(timeout=...)` decorator for timeout control (see `src/train.py` line ~420), not CLI arguments. Do NOT pass `--timeout-minutes` to `modal run src/train.py`.
+
 #### 2. Train DiT (Modal)
 ```yaml
 train-dit:
