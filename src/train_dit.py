@@ -163,9 +163,9 @@ def parse_args() -> argparse.Namespace:
         "--data-dir", type=str, required=True, help="Path to dataset root"
     )
     parser.add_argument(
-        "--steps", type=int, default=200_000, help="Total training steps"
+        "--steps", type=int, default=100_000, help="Total training steps"
     )
-    parser.add_argument("--batch-size", type=int, default=256, help="Batch size")
+    parser.add_argument("--batch-size", type=int, default=512, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument(
         "--image-size", type=int, default=128, help="Image size (128 or 256)"
@@ -211,7 +211,10 @@ def parse_args() -> argparse.Namespace:
         help="Number of steps for gradient accumulation (effective batch = batch_size * accumulation_steps)",
     )
     parser.add_argument(
-        "--warmup-steps", type=int, default=10_000, help="LR warmup steps"
+        "--warmup-steps", type=int, default=2_000, help="LR warmup steps"
+    )
+    parser.add_argument(
+        "--min-lr", type=float, default=1e-6, help="Minimum LR for cosine decay"
     )
     parser.add_argument(
         "--log-interval", type=int, default=100, help="Logging interval in steps"
@@ -221,6 +224,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--sample-interval", type=int, default=5_000, help="Sample generation interval"
+    )
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=3,
+        help="Stop if loss doesn't improve for N evaluations (0=disabled)",
+    )
+    parser.add_argument(
+        "--early-stopping-min-delta",
+        type=float,
+        default=0.001,
+        help="Minimum loss improvement to count as progress",
     )
     parser.add_argument("--log-file", type=str, default=None, help="Path to log file")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
@@ -450,9 +465,9 @@ def _initialize_dit_container():
 )
 def train_dit_on_gpu(
     data_dir: str = "/data/cats",
-    steps: int = 200_000,
-    batch_size: int = 256,
-    lr: float = 1e-4,
+    steps: int = 100_000,
+    batch_size: int = 512,
+    lr: float = 5e-5,
     image_size: int = 128,
     output: str | None = None,
     ema_output: str | None = None,
@@ -460,7 +475,7 @@ def train_dit_on_gpu(
     mixed_precision: bool = True,
     gradient_clip: float = 1.0,
     gradient_accumulation_steps: int = 1,
-    warmup_steps: int = 10_000,
+    warmup_steps: int = 2_000,
     log_interval: int = 100,
     save_interval: int = 10_000,
     sample_interval: int = 5_000,
@@ -653,9 +668,9 @@ def create_dataloader(
 
 def train_dit_local(
     data_dir: str,
-    steps: int = 200_000,
-    batch_size: int = 256,
-    lr: float = 1e-4,
+    steps: int = 100_000,
+    batch_size: int = 512,
+    lr: float = 5e-5,
     image_size: int = 128,
     output: str = "checkpoints/dit_model.pt",
     ema_output: str = "checkpoints/dit_model_ema.pt",
@@ -663,7 +678,7 @@ def train_dit_local(
     mixed_precision: bool = True,
     gradient_clip: float = 1.0,
     gradient_accumulation_steps: int = 1,
-    warmup_steps: int = 10_000,
+    warmup_steps: int = 2_000,
     log_interval: int = 100,
     save_interval: int = 10_000,
     sample_interval: int = 5_000,
@@ -817,6 +832,8 @@ def train_dit_local(
     # Training state
     best_loss = float("inf")
     shutdown_requested = False
+    patience_counter = 0
+    last_eval_step = 0
 
     def signal_handler(signum: int, frame: Any) -> None:
         nonlocal shutdown_requested
@@ -932,6 +949,47 @@ def train_dit_local(
                         )
                         if avg_loss < best_loss:
                             best_loss = avg_loss
+                            patience_counter = 0
+                            logger.info(f"New best loss: {best_loss:.4f}")
+                        else:
+                            improvement = best_loss - avg_loss
+                            if improvement > 0.001:
+                                patience_counter = 0
+                            else:
+                                patience_counter += 1
+                                logger.info(
+                                    f"Loss plateau detected ({patience_counter}/3 evaluations)"
+                                )
+
+                        # Early stopping check
+                        if patience_counter >= 3:
+                            logger.info(
+                                f"Early stopping triggered at step {step:,}. "
+                                f"Loss hasn't improved for 3 evaluations."
+                            )
+                            logger.info(
+                                f"Final best loss: {best_loss:.4f} at step {step:,}"
+                            )
+                            save_checkpoint(
+                                model=model,
+                                optimizer=optimizer,
+                                ema=ema,
+                                step=step,
+                                loss=best_loss,
+                                path=output,
+                                logger=logger,
+                            )
+                            save_checkpoint(
+                                model=model,
+                                optimizer=optimizer,
+                                ema=ema,
+                                step=step,
+                                loss=best_loss,
+                                path=ema_output,
+                                logger=logger,
+                            )
+                            step = steps  # Break outer loop
+                            break
 
                     # Generate samples
                     if step % sample_interval == 0:
@@ -1041,9 +1099,9 @@ def train_dit_local(
 @app.local_entrypoint()
 def main(
     data_dir: str = "/data/cats",
-    steps: int = 200_000,
-    batch_size: int = 256,
-    lr: float = 1e-4,
+    steps: int = 100_000,
+    batch_size: int = 512,
+    lr: float = 5e-5,
     image_size: int = 128,
     output: str = "/outputs/dit_model.pt",
     ema_output: str = "/outputs/dit_model_ema.pt",
@@ -1051,14 +1109,14 @@ def main(
     mixed_precision: bool = True,
     gradient_clip: float = 1.0,
     gradient_accumulation_steps: int = 1,
-    warmup_steps: int = 10_000,
+    warmup_steps: int = 2_000,
     augmentation_level: str = "full",
 ):
     """Local entrypoint for Modal CLI.
 
     Usage:
-        modal run src/train_dit.py data/cats --steps 200000
-        modal run src/train_dit.py -- --steps 200000 --batch-size 256 --lr 0.0001
+        modal run src/train_dit.py data/cats --steps 100000
+        modal run src/train_dit.py -- --steps 100000 --batch-size 512 --lr 5e-5
     """
     result = train_dit_on_gpu.remote(
         data_dir=data_dir,

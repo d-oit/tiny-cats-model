@@ -8,7 +8,7 @@ AI agent guidance for tiny-cats-model (cat image classification with DiT).
 # Install & setup
 pip install -r requirements.txt && bash data/download.sh
 
-# Training (Modal GPU) - High Accuracy (400k steps)
+# Training (Modal GPU) - Optimized (100k steps with early stopping)
 bash scripts/train_dit_high_accuracy.sh
 
 # Local testing
@@ -26,31 +26,82 @@ bash scripts/quality-gate.sh
 # Classifier (resnet18)
 modal run src/train.py data/cats --epochs 20 --batch-size 64
 
-# DiT Generator (200k steps)
-modal run src/train_dit.py data/cats --steps 200000 --batch-size 256
+# DiT Generator (optimized - 100k with early stopping)
+modal run src/train_dit.py data/cats --steps 100000 --batch-size 512
 
-# High-accuracy DiT (400k steps) - Use GitHub Actions for reliability
-bash scripts/train_dit_high_accuracy.sh
-
-# Or trigger via GitHub Actions directly:
-gh workflow run train.yml -f steps=400000 -f batch_size=256
+# Custom configuration
+modal run src/train_dit.py data/cats --steps 50000 --batch-size 512 --lr 5e-5 --warmup-steps 2000
 ```
 
 ### Training Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--steps` | 200,000 | Training steps |
-| `--batch-size` | 256 | Batch size |
-| `--lr` | 1e-4 | Learning rate |
-| `--gradient-accumulation-steps` | 1 | Effective batch = batch × steps |
+| `--steps` | 100,000 | Max training steps (early stopping may stop earlier) |
+| `--batch-size` | 512 | Batch size (increased for better gradients) |
+| `--lr` | 5e-5 | Learning rate |
+| `--warmup-steps` | 2,000 | LR warmup (shorter = faster convergence) |
 | `--augmentation-level` | full | basic/medium/full |
+
+### Early Stopping
+
+Training automatically stops when loss plateaus for 3 consecutive evaluations (every 10k steps). This typically occurs at 50k-80k steps, saving 60-80% cost.
 
 ## GitHub Actions
 
 ```bash
-# Trigger training
-gh workflow run train.yml -f steps=400000 -f batch_size=256
+# Trigger training (optimized defaults)
+gh workflow run train.yml
+
+# Custom configuration
+gh workflow run train.yml -f steps=50000 -f batch_size=512
+
+# Monitor runs
+gh run list
+gh run view <run-id>
+gh run watch
+
+# Check secrets
+gh secret list
+```
+
+## Training
+
+### Modal GPU Training
+
+```bash
+# Classifier (resnet18)
+modal run src/train.py data/cats --epochs 20 --batch-size 64
+
+# DiT Generator (optimized - 100k with early stopping)
+modal run src/train_dit.py data/cats --steps 100000 --batch-size 512
+
+# Custom configuration
+modal run src/train_dit.py data/cats --steps 50000 --batch-size 512 --lr 5e-5 --warmup-steps 2000
+```
+
+### Training Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--steps` | 100,000 | Max training steps (early stopping may stop earlier) |
+| `--batch-size` | 512 | Batch size (increased for better gradients) |
+| `--lr` | 5e-5 | Learning rate |
+| `--warmup-steps` | 2,000 | LR warmup (shorter = faster convergence) |
+| `--augmentation-level` | full | basic/medium/full |
+
+### Early Stopping
+
+Training automatically stops when loss plateaus for 3 consecutive evaluations (every 10k steps). This typically occurs at 50k-80k steps, saving 60-80% cost.
+
+## GitHub Actions
+
+```bash
+# Trigger training (optimized defaults)
+gh workflow run train.yml
+
+# Custom configuration
+gh workflow run train.yml -f steps=50000 -f batch_size=512
 
 # Monitor runs
 gh run list
