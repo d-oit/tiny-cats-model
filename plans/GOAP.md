@@ -595,6 +595,28 @@ bash scripts/train_dit_high_accuracy.sh --local  # 4000 steps, ~5-10 min
 **Progress:** 6/7 actions complete (86%)
 **Blocker:** None - Workflow ready for testing (requires HF_TOKEN)
 
+### Phase 22.5: Classifier Training Data Path Fix (ADR-054)
+
+**Issue:** Classifier training failed with `DataLoadError: Dataset directory not found: data/cats`
+**Root Cause:** GitHub Actions workflow passed relative path `data/cats` but Modal container expects absolute `/data/cats`
+**Fix:** Changed workflow to use absolute path `/data/cats` matching Modal volume mount
+
+#### Completed Actions
+- [x] Create ADR-054: Classifier Training Data Path Fix
+- [x] Update .github/workflows/train.yml - Changed `--data-dir data/cats` to `--data-dir /data/cats`
+- [x] Fix YAML boolean default type (string `"false"` → boolean `false`)
+- [x] Create PR #40 for the fix
+- [x] Push to branch fix/modal-timeout-adr-053
+
+#### GOAP Action Status for Phase 22.5
+| Action | Status | Phase | Skill | Completed At | Notes |
+|--------|--------|-------|-------|--------------|-------|
+| A01: Create ADR-054 | ✅ Complete | 22.5 | goap | 2026-03-04 | Data path fix documented |
+| A02: Fix workflow | ✅ Complete | 22.5 | gh-actions | 2026-03-04 | data/cats → /data/cats |
+| A03: Fix YAML type | ✅ Complete | 22.5 | gh-actions | 2026-03-04 | "false" → false |
+| A04: Create PR #40 | ✅ Complete | 22.5 | git-workflow | 2026-03-04 | PR created and CI running |
+| A05: Merge PR | 🔄 PENDING | 22.5 | git-workflow | - | Waiting for CI checks |
+
 ### Phase 22: Authentication Utilities (ADR-045)
 
 **Goal:** Implement robust authentication validation and retry utilities (GOAP-AUTH-PLAN A01-A04).
