@@ -15,7 +15,7 @@ on:
       skip_training:
         description: "Skip Modal training (for testing CI only)"
         required: false
-        default: "false"
+        default: false
         type: boolean
       steps:
         description: "Training steps (default: 100k with early stopping)"
@@ -172,7 +172,7 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           modal run src/train.py \
-            --data-dir data/cats
+            --data-dir /data/cats
 
       - name: Download ONNX from Modal
         env:
