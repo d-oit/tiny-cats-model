@@ -18,24 +18,29 @@ on:
         default: "false"
         type: boolean
       steps:
-        description: "Training steps (default: 400000 for high-accuracy)"
+        description: "Training steps (default: 100k with early stopping)"
         required: false
-        default: "400000"
+        default: "100000"
         type: string
       batch_size:
-        description: "Batch size"
+        description: "Batch size (default: 512 for better gradients)"
         required: false
-        default: "256"
+        default: "512"
         type: string
       lr:
-        description: "Learning rate (default: 5e-5 for high-accuracy)"
+        description: "Learning rate (default: 5e-5)"
         required: false
         default: "5e-5"
         type: string
       gradient_accumulation_steps:
-        description: "Gradient accumulation steps (default: 2 for high-accuracy)"
+        description: "Gradient accumulation steps (default: 1)"
         required: false
-        default: "2"
+        default: "1"
+        type: string
+      warmup_steps:
+        description: "Warmup steps (default: 2000)"
+        required: false
+        default: "2000"
         type: string
 
 permissions:
@@ -265,10 +270,11 @@ jobs:
         run: |
           modal run src/train_dit.py \
             --data-dir /data/cats \
-            --steps ${{ github.event.inputs.steps || '400000' }} \
-            --batch-size ${{ github.event.inputs.batch_size || '256' }} \
+            --steps ${{ github.event.inputs.steps || '100000' }} \
+            --batch-size ${{ github.event.inputs.batch_size || '512' }} \
             --lr ${{ github.event.inputs.lr || '5e-5' }} \
-            --gradient-accumulation-steps ${{ github.event.inputs.gradient_accumulation_steps || '2' }}
+            --warmup-steps ${{ github.event.inputs.warmup_steps || '2000' }} \
+            --gradient-accumulation-steps ${{ github.event.inputs.gradient_accumulation_steps || '1' }}
 
       - name: Download ONNX from Modal
         env:
