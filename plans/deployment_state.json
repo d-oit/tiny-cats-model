@@ -1,248 +1,79 @@
 {
   "deployment_id": "deploy-2026-02-25-001",
   "started_at": "2026-02-25T19:00:00Z",
-  "updated_at": "2026-03-01T19:00:00Z",
-  "current_phase": "phase_18_high_accuracy_training",
-  "last_action": "PHASE18_investigation_complete",
+  "updated_at": "2026-03-05T09:30:00Z",
+  "current_phase": "phase_23_codebase_analysis_complete",
+  "last_action": "ADR-055_analysis_complete",
   "actions_completed": [
     "A01", "A02", "A03", "A04", "A05", "A06", "A07", "A08", "A09", "A10", "A11",
     "A12", "A13", "A14", "A15", "A16", "A17", "A18", "A19", "A20", "A21",
-    "A23", "A24", "A25", "A26", "Phase20_A01", "Phase18_Investigation"
+    "A23", "A24", "A25", "A26", "Phase20_A01", "Phase18_Investigation",
+    "ADR-055_Analysis", "upload-hub.yml_created"
   ],
   "actions_pending": [
-    "Phase18_A01: Retry 400k step training via GitHub Actions (user decision pending)",
-    "Phase18_A02: Monitor training progress (after A01)"
+    "Phase18_A01: Run 400k step training via GitHub Actions",
+    "Phase20_A04: Test upload-hub.yml workflow"
   ],
   "world_state": {
     "code_validation": {
       "modal_cli_validated": true,
       "ruff_validated": true,
-      "typescript_validated": true
+      "typescript_validated": true,
+      "implementation_completeness": "98%"
     },
     "git_state": {
-      "branch_created": true,
-      "branch_name": "feature/implementation-gaps-adr-033",
-      "commits": [
-        "da58923 feat(production): add HuggingFace upload and model validation utilities",
-        "b4a7dd0 docs(adr): add production deployment ADRs (026-029)",
-        "de6b554 docs(plans): add deployment GOAP plan and tracking files",
-        "02cac95 feat(goap): update Phase 10 and add production dependencies",
-        "ff443e0 feat(monitoring): add Modal monitoring and validation artifacts",
-        "7e0103e fix(types): resolve WebGPU type error in inference worker",
-        "8e16982 docs(deployment): add deployment summary and update state tracking",
-        "667ec70 fix(modal): correct Python path in container initialization (ADR-030)",
-        "1f2c764 fix(vite): set worker format to 'es' for code-splitting compatibility",
-        "40ed0c8 fix: format train_dit.py with ruff",
-        "f1e1059 fix: mypy type errors in new scripts",
-        "0f2d76d fix: resolve merge conflicts with main",
-        "1968cb8 feat: comprehensive E2E tests, evaluation/benchmark scripts, and HF upload utility",
-        "1405632 docs: populate learnings.md with extracted patterns",
-        "afa99df docs: update learnings with ADR-033 implementation",
-        "3a78dff fix: add type annotation for self.run to fix mypy",
-        "2b5538d feat: quantize generator model (132MB -> 33MB, 75% reduction)",
-        "4d9fb12 feat: add WebGPU fallback to generation worker",
-        "8409d12 fix: use local model paths and quantified generator"
+      "branch_name": "main",
+      "latest_commits": [
+        "c6ec597 docs(plans): update MISSING_TASKS_SUMMARY with ADR-055 findings",
+        "e9516d8 docs(adr): add ADR-055 codebase implementation analysis",
+        "1fe2b8d feat(ci): add standalone HuggingFace upload workflow (ADR-055)"
       ],
-      "pushed": true,
-      "pr_created": true,
-      "pr_number": 21,
-      "latest_commit": "7b31caf fix(model): handle checkpoint formats with metadata"
-    },
-    "ci_state": {
-      "pipeline_running": false,
-      "pipeline_passed": true,
-      "failures_detected": [],
-      "failures_resolved": [
-        "Cast navigator.gpu with 'as any' to avoid type error (commit 7e0103e)",
-        "Changed sys.path from /app/src to /app (commit 667ec70, ADR-030)",
-        "Set worker.format to 'es' in vite.config.ts (commit 1f2c764)",
-        "Prefixed unused parameter with underscore (2026-02-27)",
-        "Fixed load_checkpoint to handle metadata in checkpoints (commit 7b31caf)"
-      ],
-      "github_actions_health": "EXCELLENT",
-      "historical_failures_analyzed": true,
-      "transient_failures": ["22504153618 (502)", "22434979071 (timeout)"],
-      "systematic_failures_fixed": ["22400417450 (WebGPU types)"]
+      "ahead_of_origin": 3
     },
     "deployment_state": {
       "validation_gates_passed": true,
       "model_uploaded_hub": true,
       "model_uploaded_hub_url": "https://huggingface.co/d4oit/tiny-cats-model",
-      "model_uploaded_hub_at": "2026-02-27T19:25:16Z",
       "mlflow_integrated": true,
       "modal_training_fixed": true,
-      "modal_imports_verified": true,
-      "pr_mergeable": true,
-      "file_size_validation_added": true,
-      "evaluation_completed": true,
-      "benchmarks_completed": true,
-      "python312_verified": true,
-      "upload_artifacts_ready": true,
-      "upload_script_verified": true,
       "upload_workflow_created": true,
-      "hf_token_configured": true,
-      "goap_plan_created": true,
-      "adr_040_created": true,
-      "adr_043_created": true,
-      "notebook_assets_created": true
+      "upload_hub_workflow_created": true,
+      "implementation_analysis_complete": true
     },
     "documentation_state": {
       "goap_updated": true,
       "adrs_complete": true,
-      "adr_count": 7,
-      "adr_040_created": true,
-      "adr_043_created": true,
-      "evaluation_report_generated": true,
-      "benchmark_report_generated": true,
-      "goap_training_workflow_plan": true,
-      "notebook_assets_created": true
+      "adr_count": 55,
+      "latest_adr": "ADR-055"
     }
   },
-  "timeline": {
-    "phase_1_validation": { "start": "2026-02-25T19:00:00Z", "end": "2026-02-25T19:01:00Z", "status": "completed" },
-    "phase_2_branch": { "start": "2026-02-25T19:01:00Z", "end": "2026-02-25T19:02:00Z", "status": "completed" },
-    "phase_3_commits": { "start": "2026-02-25T19:02:00Z", "end": "2026-02-25T19:04:00Z", "status": "completed" },
-    "phase_4_ci": { "start": "2026-02-25T19:04:00Z", "end": "2026-02-25T19:10:00Z", "status": "completed" },
-    "phase_5_deployment": { "start": "2026-02-25T19:10:00Z", "end": "2026-02-27T19:25:00Z", "status": "completed" },
-    "phase_6_documentation": { "start": "2026-02-25T19:12:00Z", "end": "2026-02-25T19:15:00Z", "status": "completed" },
-    "phase_11_modal_fix": { "start": "2026-02-25T19:15:00Z", "end": "2026-02-25T19:25:00Z", "status": "completed" },
-    "phase_12_verification": { "start": "2026-02-25T19:30:00Z", "end": "2026-02-25T19:35:00Z", "status": "completed" },
-    "phase_17_training": { "start": "2026-02-26T00:00:00Z", "end": "2026-02-27T00:00:00Z", "status": "completed" },
-    "phase_18_high_accuracy": { "start": "2026-02-28T17:00:00Z", "end": "2026-03-01T19:00:00Z", "status": "investigation_complete", "issue": "ADR-044", "run_results": "PHASE18-INVESTIGATION-REPORT.md" },
-    "phase_19_tutorials": { "start": "2026-02-27T00:00:00Z", "end": "2026-02-28T18:30:00Z", "status": "completed" },
-    "phase_20_cicd": { "start": "2026-02-27T00:00:00Z", "end": null, "status": "71% complete" }
-  },
-  "issues": [
-    {
-      "id": "issue-001",
-      "type": "ci_failure",
-      "description": "TypeScript WebGPU type error in frontend/src/engine/inference.worker.ts",
-      "error": "Property 'gpu' does not exist on type 'Navigator'",
-      "resolution": "Cast navigator.gpu with 'as any' to avoid type error",
-      "resolved_at": "2026-02-25T19:05:00Z",
-      "commit": "7e0103e",
-      "status": "resolved"
-    },
-    {
-      "id": "issue-002",
-      "type": "modal_training_failure",
-      "description": "ModuleNotFoundError in Modal container",
-      "error": "No module named 'dataset'",
-      "resolution": "Changed sys.path.insert(0, '/app/src') to sys.path.insert(0, '/app') to match add_local_file locations",
-      "resolved_at": "2026-02-25T19:17:00Z",
-      "commit": "667ec70",
-      "adr": "ADR-030",
-      "status": "resolved"
-    },
-    {
-      "id": "issue-003",
-      "type": "vite_build_failure",
-      "description": "Vite worker format incompatible with code-splitting",
-      "error": "Invalid value 'iife' for option 'worker.format' - UMD and IIFE output formats are not supported for code-splitting builds",
-      "resolution": "Added worker: { format: 'es' } to vite.config.ts",
-      "resolved_at": "2026-02-25T19:21:00Z",
-      "commit": "1f2c764",
-      "status": "resolved"
-    },
-    {
-      "id": "issue-004",
-      "type": "test_failure",
-      "description": "Checkpoint format mismatch in test_model.py",
-      "error": "test_load_full_checkpoint_with_metadata and test_load_checkpoint_with_extra_keys failing",
-      "resolution": "Fixed load_checkpoint() to extract model_state_dict from full checkpoint format and ignore extra keys",
-      "resolved_at": "2026-02-27T10:15:00Z",
-      "commit": "7b31caf",
-      "status": "resolved"
-    },
-    {
-      "id": "issue-005",
-      "type": "modal_training_early_termination",
-      "description": "400k training stopped at step 200/400,000",
-      "error": "Training terminated without explicit error message",
-      "status": "investigating",
-      "adr": "ADR-043",
-      "started_at": "2026-02-28T17:02:00Z",
-      "last_step": 200,
-      "possible_causes": ["CLI timeout", "GPU quota exceeded", "OOM", "Signal handling"]
-    },
-    {
-      "id": "issue-006",
-      "type": "modal_training_termination",
-      "description": "400k training terminated at step 200",
-      "root_cause": "Missing SIGHUP handler + nohup pattern (ADR-044)",
-      "resolution": "Use GitHub Actions instead of nohup (ADR-044 recommendation)",
-      "adr_references": ["ADR-043", "ADR-044"],
-      "status": "investigation_complete"
-    }
-  ],
   "verification_results": {
-    "analysis_swarm": {
+    "adr_055_analysis": {
       "completed": true,
-      "report": ".qwen/skills/analysis-swarm/reports/modal-training-verification-report.md",
-      "confidence_level": "90%",
-      "verdict": "PRODUCTION_READY",
-      "consensus": "All three personas (RYAN, FLASH, SOCRATES) agree implementation is correct"
-    },
-    "modal_import_tests": {
-      "train_py": {
-        "command": "modal run src/train.py --help",
-        "status": "passed",
-        "output": "Help displayed successfully - imports work",
-        "timestamp": "2026-02-25T19:32:00Z"
-      },
-      "train_dit_py": {
-        "command": "modal run src/train_dit.py --help",
-        "status": "passed",
-        "output": "Help displayed successfully - imports work",
-        "timestamp": "2026-02-25T19:33:00Z"
-      }
-    },
-    "github_actions_analysis": {
-      "completed": true,
-      "run_ids_analyzed": ["22504153618", "22434979071", "22400417450"],
-      "transient_failures": 2,
-      "systematic_failures": 1,
-      "all_resolved": true,
-      "current_health": "EXCELLENT"
+      "implementation_completeness": "98%",
+      "python_files": 24,
+      "test_files": 6,
+      "test_cases": 91,
+      "frontend_files": 9,
+      "ci_workflows": 4,
+      "critical_gaps": 0,
+      "verdict": "PRODUCTION_READY"
     }
-  },
-  "notes": [
-    "All 9 atomic commits created following conventional commit format",
-    "CI pipeline passed after fixing WebGPU type error, Modal path error, and Vite worker format",
-    "HuggingFace upload ready - HF_TOKEN documentation complete, awaiting user-provided token value",
-    "Model validation gates implemented and tested on checkpoints/tinydit_final.pt",
-    "Modal training fixed - Python path now correctly points to /app",
-    "PR #21 created and mergeable: https://github.com/d4oit/tiny-cats-model/pull/21",
-    "All CI checks passing: CI, Train, CodeQL, Automatic Dependency Submission",
-    "Analysis swarm completed - 90% confidence in production readiness",
-    "Modal import tests passed - both train.py and train_dit.py work correctly",
-    "2026-02-27: Fixed checkpoint format handling in load_checkpoint() - 2 tests now passing",
-    "2026-02-27: Models uploaded to HuggingFace (d4oit/tiny-cats-model)",
-    "2026-02-28: ADR-040 created - GOAP Training Workflow Plan 2026",
-    "2026-02-28: GitHub Actions analysis complete - all historical failures resolved",
-    "2026-02-28: GOAP.md updated with Phases 17-20 status and priorities",
-    "2026-02-28: Notebook assets created, validation passed",
-    "2026-02-28: MLflow integration confirmed in train_dit.py",
-    "2026-02-28: ADR-043 created for Modal training early termination issue",
-    "2026-02-28: HF_TOKEN setup documented in AGENTS.md, workflow verified, testing ready post-token",
-    "2026-02-28: Investigation report PHASE18-INVESTIGATION-REPORT.md created - ADR-044 fixes verified",
-    "2026-03-01: deployment_state.json updated with issue-006, GOAP Phase 18 marked investigation_complete",
-    "NEXT: User decision required - apply ADR-044 and retry 400k training via GitHub Actions"
-  ],
-  "pr_status": {
-    "number": 21,
-    "url": "https://github.com/d-oit/tiny-cats-model/pull/21",
-    "state": "OPEN",
-    "mergeable": true,
-    "ci_status": "passed",
-    "commits_count": 10,
-    "created_at": "2026-02-25T19:17:00Z",
-    "updated_at": "2026-02-28T18:45:00Z"
   },
   "goap_phases": {
     "phase_17": { "name": "Full Model Training", "progress": "100%", "status": "completed" },
-    "phase_18": { "name": "High-Accuracy Training", "progress": "investigation_complete", "status": "investigation_complete", "issue": "ADR-044", "run_results": "PHASE18-INVESTIGATION-REPORT.md" },
-    "phase_19": { "name": "Tutorial & Documentation", "progress": "100%", "status": "completed" },
-    "phase_20": { "name": "CI/CD Automation", "progress": "71%", "status": "in_progress" }
-  }
+    "phase_18": { "name": "High-Accuracy Training", "progress": "0%", "status": "pending", "blocker": "400k training needs GitHub Actions execution" },
+    "phase_19": { "name": "Tutorial & Documentation", "progress": "67%", "status": "in_progress" },
+    "phase_20": { "name": "CI/CD Automation", "progress": "71%", "status": "in_progress" },
+    "phase_21": { "name": "Modal Training Enhancement", "progress": "25%", "status": "in_progress" },
+    "phase_22": { "name": "Authentication Utilities", "progress": "100%", "status": "completed" },
+    "phase_23": { "name": "Codebase Analysis", "progress": "100%", "status": "completed" }
+  },
+  "notes": [
+    "2026-03-05: ADR-055 analysis complete - 98% implementation verified",
+    "2026-03-05: Created upload-hub.yml standalone workflow",
+    "2026-03-05: Updated MISSING_TASKS_SUMMARY.json - 34 completed, 23 pending",
+    "All core infrastructure implemented and tested",
+    "Phase 18 training is the only remaining major task"
+  ]
 }
