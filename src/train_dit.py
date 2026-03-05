@@ -46,13 +46,78 @@ import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
-from experiment_tracker import ExperimentTracker
+# Optional auth utilities import (for enhanced error handling)
+try:
+    from auth_utils import AuthenticationError, require_modal_auth, setup_auth_logging
 
-# Add project root to path
+    AUTH_UTILS_AVAILABLE = True
+except ImportError:
+    AUTH_UTILS_AVAILABLE = False
+
+    # Fallback for Modal container
+    class AuthenticationError(Exception):  # type: ignore
+        def __init__(self, message: str, token_type: str | None = None):
+            self.message = message
+            self.token_type = token_type
+            super().__init__(self.message)
+
+    def require_modal_auth():  # type: ignore
+        pass
+
+    def setup_auth_logging(level=None):  # type: ignore
+        import logging
+
+        return logging.getLogger("tiny_dit")
+
+
+# Optional experiment tracker import
+try:
+    from experiment_tracker import ExperimentTracker
+except ImportError:
+    # Fallback simple tracker (ADR-042)
+    class ExperimentTracker:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start_run(self, *args, **kwargs):
+            return None
+
+        def log_params(self, *args, **kwargs):
+            pass
+
+        def log_metrics(self, *args, **kwargs):
+            pass
+
+        def log_model(self, *args, **kwargs):
+            pass
+
+        def log_artifact(self, *args, **kwargs):
+            pass
+
+        def log_image(self, *args, **kwargs):
+            pass
+
+        def end_run(self, *args, **kwargs):
+            pass
+
+        def log(self, *args, **kwargs):
+            pass
+
+        def close(self):
+            pass
+
+
+# Add project root to path (for local development)
 sys.path.insert(0, str(Path(__file__).parent))
 
-from dit import count_parameters, tinydit_128
-from flow_matching import EMA, FlowMatchingLoss, flow_matching_step, sample, sample_t
+# Note: Modal imports are done inside train_dit_on_gpu function after container init
+# This avoids ModuleNotFoundError when running on Modal (ADR-030, ADR-042)
+
+# Type hints only (not imported at runtime) - ADR-042
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from flow_matching import EMA
 
 
 # Configure logging
@@ -94,11 +159,13 @@ def parse_args() -> argparse.Namespace:
         description="Train TinyDiT for cat image generation",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("data_dir", type=str, help="Path to dataset root")
     parser.add_argument(
-        "--steps", type=int, default=200_000, help="Total training steps"
+        "--data-dir", type=str, required=True, help="Path to dataset root"
     )
-    parser.add_argument("--batch-size", type=int, default=256, help="Batch size")
+    parser.add_argument(
+        "--steps", type=int, default=100_000, help="Total training steps"
+    )
+    parser.add_argument("--batch-size", type=int, default=512, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument(
         "--image-size", type=int, default=128, help="Image size (128 or 256)"
@@ -138,7 +205,16 @@ def parse_args() -> argparse.Namespace:
         help="Max gradient norm for clipping (0 to disable)",
     )
     parser.add_argument(
-        "--warmup-steps", type=int, default=10_000, help="LR warmup steps"
+        "--gradient-accumulation-steps",
+        type=int,
+        default=1,
+        help="Number of steps for gradient accumulation (effective batch = batch_size * accumulation_steps)",
+    )
+    parser.add_argument(
+        "--warmup-steps", type=int, default=2_000, help="LR warmup steps"
+    )
+    parser.add_argument(
+        "--min-lr", type=float, default=1e-6, help="Minimum LR for cosine decay"
     )
     parser.add_argument(
         "--log-interval", type=int, default=100, help="Logging interval in steps"
@@ -148,6 +224,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--sample-interval", type=int, default=5_000, help="Sample generation interval"
+    )
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=3,
+        help="Stop if loss doesn't improve for N evaluations (0=disabled)",
+    )
+    parser.add_argument(
+        "--early-stopping-min-delta",
+        type=float,
+        default=0.001,
+        help="Minimum loss improvement to count as progress",
     )
     parser.add_argument("--log-file", type=str, default=None, help="Path to log file")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
@@ -163,6 +251,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--cfg-scale", type=float, default=1.5, help="Classifier-free guidance scale"
+    )
+    parser.add_argument(
+        "--augmentation-level",
+        type=str,
+        default="full",
+        choices=["basic", "medium", "full"],
+        help="Level of data augmentation (basic, medium, full)",
     )
     return parser.parse_args()
 
@@ -319,6 +414,9 @@ image = (
     .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
     .add_local_file("src/dataset.py", "/app/dataset.py")
     .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
+    .add_local_file("src/auth_utils.py", "/app/auth_utils.py")
+    .add_local_file("src/retry_utils.py", "/app/retry_utils.py")
+    .add_local_file("src/experiment_tracker.py", "/app/experiment_tracker.py")
     .add_local_file("data/download.py", "/app/data/download.py")
     .add_local_file("data/download.sh", "/app/data/download.sh")
 )
@@ -367,22 +465,24 @@ def _initialize_dit_container():
 )
 def train_dit_on_gpu(
     data_dir: str = "/data/cats",
-    steps: int = 200_000,
-    batch_size: int = 256,
-    lr: float = 1e-4,
+    steps: int = 100_000,
+    batch_size: int = 512,
+    lr: float = 5e-5,
     image_size: int = 128,
     output: str | None = None,
     ema_output: str | None = None,
     num_workers: int = 0,
     mixed_precision: bool = True,
     gradient_clip: float = 1.0,
-    warmup_steps: int = 10_000,
+    gradient_accumulation_steps: int = 1,
+    warmup_steps: int = 2_000,
     log_interval: int = 100,
     save_interval: int = 10_000,
     sample_interval: int = 5_000,
     log_file: str | None = None,
     ema_beta: float = 0.9999,
     seed: int = 42,
+    augmentation_level: str = "full",
 ) -> dict[str, Any]:
     """Modal function for DiT GPU training.
 
@@ -397,6 +497,7 @@ def train_dit_on_gpu(
         num_workers: DataLoader workers.
         mixed_precision: Enable AMP.
         gradient_clip: Gradient clipping.
+        gradient_accumulation_steps: Number of steps for gradient accumulation.
         warmup_steps: LR warmup.
         log_interval: Logging frequency.
         save_interval: Checkpoint frequency.
@@ -404,14 +505,46 @@ def train_dit_on_gpu(
         log_file: Log file path (auto-generated if None).
         ema_beta: EMA decay.
         seed: Random seed.
+        augmentation_level: Level of data augmentation ("basic", "medium", "full").
 
     Returns:
         Training status dict.
+
+    Raises:
+        AuthenticationError: If Modal authentication fails
     """
+    # Setup logging first
+    logger = setup_auth_logging(level=logging.INFO)
+
+    # Validate Modal authentication before starting training
+    logger.info("=" * 60)
+    logger.info("MODAL TRAINING - PRE-FLIGHT CHECKS")
+    logger.info("=" * 60)
+
+    try:
+        require_modal_auth()
+        logger.info("✅ Modal authentication validated")
+    except AuthenticationError as e:
+        logger.error(f"❌ {e.message}")
+        logger.error("")
+        logger.error("To fix this:")
+        logger.error("  1. Run 'modal token new' to authenticate (Modal 1.0+)")
+        logger.error("  2. Verify with: modal token info")
+        logger.error(
+            "  3. For GitHub Actions, ensure MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are set"
+        )
+        logger.error("")
+        logger.error("See: https://modal.com/docs/reference/cli/token")
+        logger.error("See AGENTS.md or agents-docs/auth-troubleshooting.md for help")
+        raise
+
     # Initialize container (ADR-025)
     _initialize_dit_container()
 
     from datetime import datetime
+
+    # Import DiT modules after container initialization (ADR-042)
+    # This ensures sys.path is set correctly in Modal container
 
     # Create dated checkpoint directory (ADR-024: organized storage)
     run_date = datetime.now().strftime("%Y-%m-%d")
@@ -425,6 +558,7 @@ def train_dit_on_gpu(
     ema_output = ema_output or f"{checkpoint_dir}/dit_model_ema.pt"
     log_file = log_file or f"{checkpoint_dir}/dit_training.log"
 
+    # Setup training-specific logging (after auth validation)
     logger = setup_logging(log_file)
     logger.info("Starting TinyDiT Modal GPU training")
     logger.info(
@@ -462,6 +596,7 @@ def train_dit_on_gpu(
             num_workers=num_workers,
             mixed_precision=mixed_precision,
             gradient_clip=gradient_clip,
+            gradient_accumulation_steps=gradient_accumulation_steps,
             warmup_steps=warmup_steps,
             log_interval=log_interval,
             save_interval=save_interval,
@@ -470,6 +605,7 @@ def train_dit_on_gpu(
             ema_beta=ema_beta,
             seed=seed,
             logger=logger,
+            augmentation_level=augmentation_level,
         )
 
         # Commit volume after successful training (ADR-024: explicit commits)
@@ -494,6 +630,7 @@ def create_dataloader(
     batch_size: int,
     image_size: int,
     num_workers: int = 4,
+    augmentation_level: str = "full",
 ) -> torch.utils.data.DataLoader:
     """Create dataloader for training.
 
@@ -502,6 +639,7 @@ def create_dataloader(
         batch_size: Batch size.
         image_size: Target image size.
         num_workers: DataLoader workers.
+        augmentation_level: Level of data augmentation ("basic", "medium", "full").
 
     Returns:
         DataLoader yielding (images, breed_indices).
@@ -509,9 +647,13 @@ def create_dataloader(
     # Use ImageFolder directly
     from torchvision.datasets import ImageFolder
 
-    from dataset import build_transforms
+    from dataset import build_enhanced_transforms
 
-    transform = build_transforms(train=True, image_size=image_size)
+    transform = build_enhanced_transforms(
+        train=True,
+        image_size=image_size,
+        augmentation_level=augmentation_level,  # type: ignore[arg-type]
+    )
     dataset = ImageFolder(data_dir, transform=transform)
 
     return torch.utils.data.DataLoader(
@@ -526,16 +668,17 @@ def create_dataloader(
 
 def train_dit_local(
     data_dir: str,
-    steps: int = 200_000,
-    batch_size: int = 256,
-    lr: float = 1e-4,
+    steps: int = 100_000,
+    batch_size: int = 512,
+    lr: float = 5e-5,
     image_size: int = 128,
     output: str = "checkpoints/dit_model.pt",
     ema_output: str = "checkpoints/dit_model_ema.pt",
     num_workers: int = 4,
     mixed_precision: bool = True,
     gradient_clip: float = 1.0,
-    warmup_steps: int = 10_000,
+    gradient_accumulation_steps: int = 1,
+    warmup_steps: int = 2_000,
     log_interval: int = 100,
     save_interval: int = 10_000,
     sample_interval: int = 5_000,
@@ -544,6 +687,7 @@ def train_dit_local(
     seed: int = 42,
     logger: logging.Logger | None = None,
     resume: str | None = None,
+    augmentation_level: str = "full",
 ) -> float:
     """Full TinyDiT training loop with flow matching and EMA.
 
@@ -558,19 +702,31 @@ def train_dit_local(
         num_workers: DataLoader workers.
         mixed_precision: Enable AMP.
         gradient_clip: Gradient clipping.
+        gradient_accumulation_steps: Number of steps for gradient accumulation.
         warmup_steps: LR warmup steps.
         log_interval: Logging frequency.
         save_interval: Checkpoint frequency.
         sample_interval: Sampling frequency.
-        log_file: Log file path.
-        ema_beta: EMA decay rate.
+        log_file: Optional log file.
+        ema_beta: EMA decay factor.
         seed: Random seed.
-        logger: Logger instance.
-        resume: Checkpoint to resume from.
+        logger: Optional logger instance.
+        resume: Optional checkpoint to resume from.
+        augmentation_level: Level of data augmentation.
 
     Returns:
         Final training loss.
     """
+    # Import DiT modules (works for both local and Modal after path setup)
+    from dit import count_parameters, tinydit_128
+    from flow_matching import (
+        EMA,
+        FlowMatchingLoss,
+        flow_matching_step,
+        sample,
+        sample_t,
+    )
+
     # Setup logging
     if logger is None:
         logger = setup_logging(log_file)
@@ -605,8 +761,14 @@ def train_dit_local(
         batch_size=batch_size,
         image_size=image_size,
         num_workers=num_workers,
+        augmentation_level=augmentation_level,
     )
-    logger.info(f"DataLoader created: {len(train_loader)} batches per epoch")
+    effective_batch_size = batch_size * gradient_accumulation_steps
+    logger.info(
+        f"DataLoader created: {len(train_loader)} batches per epoch | "
+        f"Effective batch size: {effective_batch_size} "
+        f"(batch_size={batch_size} x accumulation_steps={gradient_accumulation_steps})"
+    )
 
     # Optimizer and loss
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=1e-4, betas=(0.9, 0.95))
@@ -670,6 +832,8 @@ def train_dit_local(
     # Training state
     best_loss = float("inf")
     shutdown_requested = False
+    patience_counter = 0
+    last_eval_step = 0
 
     def signal_handler(signum: int, frame: Any) -> None:
         nonlocal shutdown_requested
@@ -678,11 +842,14 @@ def train_dit_local(
 
     old_handler = signal.signal(signal.SIGINT, signal_handler)
     old_handler_term = signal.signal(signal.SIGTERM, signal_handler)
+    old_handler_hup = signal.signal(signal.SIGHUP, signal_handler)
 
     try:
         model.train()
         step = start_step
+        accum_step = 0  # Accumulation step counter
         epoch = 0
+        avg_loss = 0.0  # Default value if training exits early (ADR-042)
 
         while step < steps:
             epoch += 1
@@ -705,110 +872,161 @@ def train_dit_local(
                 with context:
                     # Flow matching step
                     pred, target = flow_matching_step(model, images, images, t, breeds)
-                    loss = loss_fn(pred, target)
+                    # Normalize loss by accumulation steps for correct gradient scaling
+                    loss = loss_fn(pred, target) / gradient_accumulation_steps
 
                 # Backward pass
                 if scaler:
                     scaler.scale(loss).backward()
-                    scaler.unscale_(optimizer)
-                    if gradient_clip > 0:
-                        torch.nn.utils.clip_grad_norm_(
-                            model.parameters(), gradient_clip
-                        )
-                    scaler.step(optimizer)
-                    scaler.update()
                 else:
                     loss.backward()
-                    if gradient_clip > 0:
-                        torch.nn.utils.clip_grad_norm_(
-                            model.parameters(), gradient_clip
+
+                accum_step += 1
+
+                # Perform optimizer step after accumulation steps
+                if accum_step % gradient_accumulation_steps == 0:
+                    if scaler:
+                        scaler.unscale_(optimizer)
+                        if gradient_clip > 0:
+                            torch.nn.utils.clip_grad_norm_(
+                                model.parameters(), gradient_clip
+                            )
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        if gradient_clip > 0:
+                            torch.nn.utils.clip_grad_norm_(
+                                model.parameters(), gradient_clip
+                            )
+                        optimizer.step()
+
+                    scheduler.step()
+                    ema.update(model)
+                    optimizer.zero_grad()
+
+                    # Track loss
+                    epoch_loss += loss.item() * gradient_accumulation_steps
+                    step += 1
+
+                    # Logging
+                    if step % log_interval == 0:
+                        avg_loss = epoch_loss / log_interval
+                        current_lr = scheduler.get_last_lr()[0]
+                        elapsed = time.time() - epoch_start
+                        steps_per_sec = log_interval / max(elapsed, 0.001)
+
+                        logger.info(
+                            f"Step {step:,}/{steps:,} | "
+                            f"Loss: {avg_loss:.4f} | "
+                            f"LR: {current_lr:.2e} | "
+                            f"Speed: {steps_per_sec:.1f} steps/s | "
+                            f"Effective batch: {effective_batch_size}"
                         )
-                    optimizer.step()
+                        log_gpu_memory(logger, "  ")
 
-                scheduler.step()
-                ema.update(model)
-                optimizer.zero_grad()
+                        tracker.log_metrics(
+                            {
+                                "loss": avg_loss,
+                                "learning_rate": current_lr,
+                            },
+                            step=step,
+                        )
 
-                # Track loss
-                epoch_loss += loss.item()
-                step += 1
+                        epoch_loss = 0.0
+                        epoch_start = time.time()
 
-                # Logging
-                if step % log_interval == 0:
-                    avg_loss = epoch_loss / log_interval
-                    current_lr = scheduler.get_last_lr()[0]
-                    elapsed = time.time() - epoch_start
-                    steps_per_sec = log_interval / max(elapsed, 0.001)
-
-                    logger.info(
-                        f"Step {step:,}/{steps:,} | "
-                        f"Loss: {avg_loss:.4f} | "
-                        f"LR: {current_lr:.2e} | "
-                        f"Speed: {steps_per_sec:.1f} steps/s"
-                    )
-                    log_gpu_memory(logger, "  ")
-
-                    tracker.log_metrics(
-                        {
-                            "loss": avg_loss,
-                            "learning_rate": current_lr,
-                        },
-                        step=step,
-                    )
-
-                    epoch_loss = 0.0
-                    epoch_start = time.time()
-
-                # Save checkpoint
-                if step % save_interval == 0:
-                    save_checkpoint(
-                        model=model,
-                        optimizer=optimizer,
-                        ema=ema,
-                        step=step,
-                        loss=avg_loss,
-                        path=output,
-                        logger=logger,
-                        is_best=(avg_loss < best_loss),
-                    )
-                    if avg_loss < best_loss:
-                        best_loss = avg_loss
-
-                # Generate samples
-                if step % sample_interval == 0:
-                    logger.info(f"Generating samples at step {step:,}...")
-                    sample_breeds = torch.arange(min(8, num_classes), device=device)
-                    generated = sample(
-                        model,
-                        sample_breeds,
-                        num_steps=50,
-                        device=device,
-                        image_size=image_size,
-                        cfg_scale=1.5,
-                        progress=False,
-                    )
-                    # Save samples (optional, requires PIL)
-                    try:
-                        from PIL import Image
-
-                        samples_dir = Path(output).parent / "samples"
-                        samples_dir.mkdir(parents=True, exist_ok=True)
-
-                        for i in range(len(generated)):
-                            img = (
-                                (
-                                    generated[i].permute(1, 2, 0).cpu().numpy() * 127.5
-                                    + 127.5
+                    # Save checkpoint
+                    if step % save_interval == 0:
+                        save_checkpoint(
+                            model=model,
+                            optimizer=optimizer,
+                            ema=ema,
+                            step=step,
+                            loss=avg_loss,
+                            path=output,
+                            logger=logger,
+                            is_best=(avg_loss < best_loss),
+                        )
+                        if avg_loss < best_loss:
+                            best_loss = avg_loss
+                            patience_counter = 0
+                            logger.info(f"New best loss: {best_loss:.4f}")
+                        else:
+                            improvement = best_loss - avg_loss
+                            if improvement > 0.001:
+                                patience_counter = 0
+                            else:
+                                patience_counter += 1
+                                logger.info(
+                                    f"Loss plateau detected ({patience_counter}/3 evaluations)"
                                 )
-                                .clip(0, 255)
-                                .astype("uint8")
+
+                        # Early stopping check
+                        if patience_counter >= 3:
+                            logger.info(
+                                f"Early stopping triggered at step {step:,}. "
+                                f"Loss hasn't improved for 3 evaluations."
                             )
-                            Image.fromarray(img).save(
-                                samples_dir / f"step_{step:,}_breed_{i}.png"
+                            logger.info(
+                                f"Final best loss: {best_loss:.4f} at step {step:,}"
                             )
-                        logger.info(f"Saved samples to {samples_dir}")
-                    except ImportError:
-                        logger.info("PIL not available, skipping sample save")
+                            save_checkpoint(
+                                model=model,
+                                optimizer=optimizer,
+                                ema=ema,
+                                step=step,
+                                loss=best_loss,
+                                path=output,
+                                logger=logger,
+                            )
+                            save_checkpoint(
+                                model=model,
+                                optimizer=optimizer,
+                                ema=ema,
+                                step=step,
+                                loss=best_loss,
+                                path=ema_output,
+                                logger=logger,
+                            )
+                            step = steps  # Break outer loop
+                            break
+
+                    # Generate samples
+                    if step % sample_interval == 0:
+                        logger.info(f"Generating samples at step {step:,}...")
+                        sample_breeds = torch.arange(min(8, num_classes), device=device)
+                        generated = sample(
+                            model,
+                            sample_breeds,
+                            num_steps=50,
+                            device=device,
+                            image_size=image_size,
+                            cfg_scale=1.5,
+                            progress=False,
+                        )
+                        # Save samples (optional, requires PIL)
+                        try:
+                            from PIL import Image
+
+                            samples_dir = Path(output).parent / "samples"
+                            samples_dir.mkdir(parents=True, exist_ok=True)
+
+                            for i in range(len(generated)):
+                                img = (
+                                    (
+                                        generated[i].permute(1, 2, 0).cpu().numpy()
+                                        * 127.5
+                                        + 127.5
+                                    )
+                                    .clip(0, 255)
+                                    .astype("uint8")
+                                )
+                                Image.fromarray(img).save(
+                                    samples_dir / f"step_{step:,}_breed_{i}.png"
+                                )
+                            logger.info(f"Saved samples to {samples_dir}")
+                        except ImportError:
+                            logger.info("PIL not available, skipping sample save")
 
                 # Check for shutdown
                 if shutdown_requested:
@@ -869,29 +1087,36 @@ def train_dit_local(
         return best_loss
 
     finally:
+        if shutdown_requested:
+            logger.info(f"Training ended at step {step}/{steps} due to signal shutdown")
+        else:
+            logger.info(f"Training ended at step {step}/{steps}")
         signal.signal(signal.SIGINT, old_handler)
         signal.signal(signal.SIGTERM, old_handler_term)
+        signal.signal(signal.SIGHUP, old_handler_hup)
 
 
 @app.local_entrypoint()
 def main(
     data_dir: str = "/data/cats",
-    steps: int = 200_000,
-    batch_size: int = 256,
-    lr: float = 1e-4,
+    steps: int = 100_000,
+    batch_size: int = 512,
+    lr: float = 5e-5,
     image_size: int = 128,
     output: str = "/outputs/dit_model.pt",
     ema_output: str = "/outputs/dit_model_ema.pt",
     num_workers: int = 0,
     mixed_precision: bool = True,
     gradient_clip: float = 1.0,
-    warmup_steps: int = 10_000,
+    gradient_accumulation_steps: int = 1,
+    warmup_steps: int = 2_000,
+    augmentation_level: str = "full",
 ):
     """Local entrypoint for Modal CLI.
 
     Usage:
-        modal run src/train_dit.py data/cats --steps 200000
-        modal run src/train_dit.py -- --steps 200000 --batch-size 256 --lr 0.0001
+        modal run src/train_dit.py data/cats --steps 100000
+        modal run src/train_dit.py -- --steps 100000 --batch-size 512 --lr 5e-5
     """
     result = train_dit_on_gpu.remote(
         data_dir=data_dir,
@@ -904,7 +1129,9 @@ def main(
         num_workers=num_workers,
         mixed_precision=mixed_precision,
         gradient_clip=gradient_clip,
+        gradient_accumulation_steps=gradient_accumulation_steps,
         warmup_steps=warmup_steps,
+        augmentation_level=augmentation_level,
     )
     print(f"Training completed: {result}")
 
@@ -923,6 +1150,7 @@ if __name__ == "__main__":
             num_workers=args.num_workers,
             mixed_precision=args.mixed_precision,
             gradient_clip=args.gradient_clip,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
             warmup_steps=args.warmup_steps,
             log_interval=args.log_interval,
             save_interval=args.save_interval,
@@ -930,6 +1158,7 @@ if __name__ == "__main__":
             log_file=args.log_file,
             ema_beta=args.ema_beta,
             resume=args.resume,
+            augmentation_level=args.augmentation_level,
         )
     except (TrainingError, Exception) as e:
         logging.error(f"Training failed: {e}")

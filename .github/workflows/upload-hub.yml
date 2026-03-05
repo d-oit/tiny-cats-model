@@ -1,0 +1,172 @@
+# .github/workflows/upload-hub.yml
+# Manual HuggingFace Hub upload workflow
+# ADR-055: Standalone upload for model publishing
+
+name: Upload to HuggingFace Hub
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_type:
+        description: "Model type to upload"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - classifier
+          - generator
+      version:
+        description: "Version tag (e.g., v1.0.0)"
+        required: false
+        default: ""
+        type: string
+      commit_message:
+        description: "Commit message"
+        required: false
+        default: "Upload model from GitHub Actions"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  upload:
+    name: Upload to HuggingFace Hub
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install huggingface_hub safetensors pillow
+          pip install -r requirements.txt
+
+      - name: Validate HF_TOKEN
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python -c "
+          import os
+          import sys
+          sys.path.insert(0, 'src')
+          from auth_utils import validate_hf_token
+
+          token = os.environ.get('HF_TOKEN')
+          if not token:
+              print('ERROR: HF_TOKEN not set')
+              sys.exit(1)
+
+          is_valid, message = validate_hf_token(token)
+          if not is_valid:
+              print(f'ERROR: {message}')
+              sys.exit(1)
+          print(f'HF token validated: {message}')
+          "
+
+      - name: Download classifier from Modal (if needed)
+        if: inputs.model_type == 'all' || inputs.model_type == 'classifier'
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          pip install modal
+          modal volume get cats-model-outputs /outputs/cats_classifier.onnx \
+            ./cats_classifier.onnx || echo "No classifier ONNX found"
+          modal volume get cats-model-outputs /outputs/best_cats_model.pt \
+            ./best_cats_model.pt || echo "No classifier checkpoint found"
+
+      - name: Download generator from Modal (if needed)
+        if: inputs.model_type == 'all' || inputs.model_type == 'generator'
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          pip install modal
+          modal volume get dit-outputs /outputs/generator.onnx \
+            ./generator.onnx || echo "No generator ONNX found"
+          modal volume get dit-outputs /outputs/tinydit_final.pt \
+            ./tinydit_final.pt || echo "No generator checkpoint found"
+
+      - name: Quantize models
+        run: |
+          python -c "
+          import os
+          sys.path.insert(0, 'src')
+
+          # Quantize classifier
+          if os.path.exists('cats_classifier.onnx'):
+              print('Quantizing classifier...')
+              from optimize_onnx import quantize_onnx_model
+              quantize_onnx_model('cats_classifier.onnx', 'cats_quantized.onnx')
+
+          # Quantize generator
+          if os.path.exists('generator.onnx'):
+              print('Quantizing generator...')
+              from optimize_onnx import quantize_onnx_model
+              quantize_onnx_model('generator.onnx', 'generator_quantized.onnx')
+          " || echo "Quantization optional, continuing..."
+
+      - name: Upload to HuggingFace Hub
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python src/upload_to_huggingface.py \
+            --classifier best_cats_model.pt \
+            --generator tinydit_final.pt \
+            --onnx-classifier cats_classifier.onnx \
+            --onnx-generator generator.onnx \
+            --repo-id d4oit/tiny-cats-model \
+            --commit-message "${{ inputs.commit_message }}" \
+            --version "${{ inputs.version }}" || \
+          python -c "
+          from huggingface_hub import HfApi
+          import os
+
+          api = HfApi()
+          repo_id = 'd4oit/tiny-cats-model'
+
+          # Upload available files
+          files = {
+              'cats_quantized.onnx': 'classifier/model_quantized.onnx',
+              'generator_quantized.onnx': 'generator/model_quantized.onnx',
+              'best_cats_model.pt': 'classifier/model.pt',
+              'tinydit_final.pt': 'generator/model.pt',
+          }
+
+          for local, remote in files.items():
+              if os.path.exists(local):
+                  print(f'Uploading {local} -> {remote}')
+                  api.upload_file(local, remote, repo_id)
+
+          print('Upload complete!')
+          "
+
+      - name: Verify upload
+        run: |
+          python -c "
+          from huggingface_hub import HfApi
+          api = HfApi()
+
+          # Check repo exists and has files
+          files = api.list_repo_files('d4oit/tiny-cats-model')
+          print(f'Repository has {len(files)} files:')
+          for f in files[:10]:
+              print(f'  - {f}')
+          if len(files) > 10:
+              print(f'  ... and {len(files) - 10} more')
+          "

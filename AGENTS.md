@@ -2,56 +2,173 @@
 
 AI agent guidance for tiny-cats-model (cat image classification with DiT).
 
-## Setup
+## Quick Commands
 
-- Install deps: `pip install -r requirements.txt`
-- Download data: `bash data/download.sh`
+```bash
+# Install & setup
+pip install -r requirements.txt && bash data/download.sh
 
-## Build & Run
+# Training (Modal GPU) - Optimized (100k steps with early stopping)
+bash scripts/train_dit_high_accuracy.sh
 
-- Train classifier (Modal GPU): `modal run src/train.py data/cats`
-- Train DiT (Modal GPU): `modal run src/train_dit.py data/cats`
-- Train local (CPU debug): `python src/train.py data/cats --epochs 1 --batch-size 8`
-- Evaluate: `python src/eval.py`
+# Local testing
+python src/train_dit.py --data-dir data/cats --steps 100 --batch-size 8
 
-## Verification
+# Quality gate
+bash scripts/quality-gate.sh
+```
 
-- Verify checkpoint: `python src/verify_checkpoint.py --checkpoint checkpoints/tinydit_final.pt`
-- Export and test ONNX: `python src/export_dit_onnx.py --verify --test`
-- Run E2E tests: `npx playwright test`
+## Training
+
+### Modal GPU Training
+
+```bash
+# Classifier (resnet18)
+modal run src/train.py data/cats --epochs 20 --batch-size 64
+
+# DiT Generator (optimized - 100k with early stopping)
+modal run src/train_dit.py data/cats --steps 100000 --batch-size 512
+
+# Custom configuration
+modal run src/train_dit.py data/cats --steps 50000 --batch-size 512 --lr 5e-5 --warmup-steps 2000
+```
+
+### Training Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--steps` | 100,000 | Max training steps (early stopping may stop earlier) |
+| `--batch-size` | 512 | Batch size (increased for better gradients) |
+| `--lr` | 5e-5 | Learning rate |
+| `--warmup-steps` | 2,000 | LR warmup (shorter = faster convergence) |
+| `--augmentation-level` | full | basic/medium/full |
+
+### Early Stopping
+
+Training automatically stops when loss plateaus for 3 consecutive evaluations (every 10k steps). This typically occurs at 50k-80k steps, saving 60-80% cost.
+
+## GitHub Actions
+
+```bash
+# Trigger training (optimized defaults)
+gh workflow run train.yml
+
+# Custom configuration
+gh workflow run train.yml -f steps=50000 -f batch_size=512
+
+# Monitor runs
+gh run list
+gh run view <run-id>
+gh run watch
+
+# Check secrets
+gh secret list
+```
+
+## Training
+
+### Modal GPU Training
+
+```bash
+# Classifier (resnet18)
+modal run src/train.py data/cats --epochs 20 --batch-size 64
+
+# DiT Generator (optimized - 100k with early stopping)
+modal run src/train_dit.py data/cats --steps 100000 --batch-size 512
+
+# Custom configuration
+modal run src/train_dit.py data/cats --steps 50000 --batch-size 512 --lr 5e-5 --warmup-steps 2000
+```
+
+### Training Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--steps` | 100,000 | Max training steps (early stopping may stop earlier) |
+| `--batch-size` | 512 | Batch size (increased for better gradients) |
+| `--lr` | 5e-5 | Learning rate |
+| `--warmup-steps` | 2,000 | LR warmup (shorter = faster convergence) |
+| `--augmentation-level` | full | basic/medium/full |
+
+### Early Stopping
+
+Training automatically stops when loss plateaus for 3 consecutive evaluations (every 10k steps). This typically occurs at 50k-80k steps, saving 60-80% cost.
+
+## GitHub Actions
+
+```bash
+# Trigger training (optimized defaults)
+gh workflow run train.yml
+
+# Custom configuration
+gh workflow run train.yml -f steps=50000 -f batch_size=512
+
+# Monitor runs
+gh run list
+gh run view <run-id>
+gh run watch
+
+# Check secrets
+gh secret list
+```
+
+## Authentication
+
+### Modal (1.0+)
+```bash
+modal token new          # Configure (NOT 'token set')
+modal token info         # Verify
+```
+
+### HuggingFace
+```bash
+# Local
+export HF_TOKEN=hf_xxx
+
+# GitHub Secrets
+gh secret set HF_TOKEN --body "hf_xxx"
+```
+
+Generate token: https://huggingface.co/settings/tokens (write permission)
 
 ## Code Style
 
-- PEP 8 with Ruff
-- Line length: 88 chars
-- Type hints required for new code
-- Format: `ruff format .`
-- Lint: `ruff check . --fix`
+- Ruff linting + formatting (88 char line)
+- Type hints required
 - 500 LOC max per file
 
 ## Testing
 
-- Run tests: `pytest tests/ -v`
-- Quality gate (lint + format + test): `bash scripts/quality-gate.sh`
-- Pre-commit hooks: `pre-commit install && pre-commit run --all-files`
+```bash
+pytest tests/ -v
+npx playwright test
+bash scripts/quality-gate.sh
+```
 
 ## Security
 
-- Never hardcode tokens or secrets
-- Never commit `.env` files
-- Use environment variables for credentials
-- Modal tokens: configured globally via `modal token set`
+- Never commit tokens/secrets
+- Use environment variables or GitHub Secrets
+- Token rotation: Every 90 days
 
-## PR Instructions
+## PR Rules
 
-- Run quality gate before committing: `bash scripts/quality-gate.sh`
-- Never skip CI checks before merging
+- Run quality gate before commit
 - Never merge if CI fails
+- Use specialist agents for CI fixes
 
-## Extended Docs
+## Extended Documentation
 
-- [Training detailed options](agents-docs/training.md)
-- [CI/CD workflows & debugging](agents-docs/ci-cd.md)
-- [Security best practices](agents-docs/security.md)
-- [Agent skills reference](agents-docs/skills.md)
-- [Learnings & patterns](agents-docs/learnings.md)
+- [Training](agents-docs/training.md)
+- [CI/CD](agents-docs/ci-cd.md)
+- [Security](agents-docs/security.md)
+- [Skills](agents-docs/skills.md)
+- [Auth Troubleshooting](agents-docs/auth-troubleshooting.md)
+- [Learnings](agents-docs/learnings.md)
+
+# Token Optimization Rules
+
+Never run raw testing, linting, or building commands directly in the terminal.
+
+- For build/test: `bash .agents/skills/token_safe_exec.sh "<command>"`
+- For lint/format: `python .agents/skills/smart_lint.py "<command>"`

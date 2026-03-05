@@ -46,7 +46,7 @@ class ExperimentTracker:
         """
         self.experiment_name = experiment_name
         self.tracking_uri = tracking_uri
-        self.run = None
+        self.run: Any = None
         self._enabled = HAS_MLFLOW
 
         if self._enabled:

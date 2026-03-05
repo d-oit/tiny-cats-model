@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "step": 0,
+    "loss": 0.0,
+    "timestamp": "unknown",
+    "config": {
+      "image_size": 128,
+      "num_classes": 13,
+      "patch_size": 16,
+      "embed_dim": 384,
+      "depth": 12,
+      "num_heads": 6
+    },
+    "num_samples_generated": 13
+  }
+}

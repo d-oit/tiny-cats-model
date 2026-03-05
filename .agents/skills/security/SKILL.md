@@ -104,20 +104,21 @@ git-secrets --scan-commits
 git-secrets --install
 ```
 
-## Modal Credentials
+## Modal Credentials (Modal 1.0+)
 
 ```bash
-# Set for Modal CLI globally (recommended)
-modal token set
+# Configure Modal token (Modal 1.0+ uses 'token new' NOT 'token set')
+modal token new
 
-# Verify
-modal token status
+# Verify token
+modal token info
+modal token list
 ```
 
 ## Key Rules
 
 1. **Never commit secrets** - Always use .gitignore
 2. **Use GitHub secrets** - For CI/CD automation
-3. **Use Modal global config** - `modal token set` for local
+3. **Use Modal global config** - `modal token new` for local (Modal 1.0+)
 4. **Rotate tokens regularly** - Especially if compromised
 5. **Mask in logs** - Use `::add-mask::` in GitHub Actions

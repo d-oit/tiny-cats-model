@@ -1,0 +1,22 @@
+{
+  "model_info": {
+    "name": "TinyDiT (ONNX)",
+    "onnx_file": "frontend/public/models/cats_quantized.onnx",
+    "device": "cpu",
+    "image_size": 224
+  },
+  "latency_ms": {
+    "p50": 19.448373499983518,
+    "p95": 35.851732749995335,
+    "p99": 48.28090288002268,
+    "mean": 22.805354520007768,
+    "std": 7.492281411932127,
+    "min": 17.79107999993812,
+    "max": 58.53414700004578
+  },
+  "throughput_images_per_sec": {},
+  "memory": {
+    "note": "Memory measurement not available for ONNX models"
+  },
+  "timestamp": "2026-02-27 09:15:20"
+}

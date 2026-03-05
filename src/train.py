@@ -42,7 +42,59 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
-from experiment_tracker import ExperimentTracker
+# Optional auth utilities import (for enhanced error handling)
+try:
+    from auth_utils import AuthenticationError, require_modal_auth, setup_auth_logging
+
+    AUTH_UTILS_AVAILABLE = True
+except ImportError:
+    AUTH_UTILS_AVAILABLE = False
+
+    # Fallback for Modal container
+    class AuthenticationError(Exception):  # type: ignore
+        def __init__(self, message: str, token_type: str | None = None):
+            self.message = message
+            self.token_type = token_type
+            super().__init__(self.message)
+
+    def require_modal_auth():  # type: ignore
+        pass
+
+    def setup_auth_logging(level=None):  # type: ignore
+        import logging
+
+        return logging.getLogger("cats_classifier")
+
+
+# Optional experiment tracker import
+try:
+    from experiment_tracker import ExperimentTracker
+except ImportError:
+    # Fallback simple tracker (ADR-042)
+    class ExperimentTracker:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start_run(self, *args, **kwargs):
+            return None
+
+        def log_params(self, *args, **kwargs):
+            pass
+
+        def log_metrics(self, *args, **kwargs):
+            pass
+
+        def log_model(self, *args, **kwargs):
+            pass
+
+        def log_artifact(self, *args, **kwargs):
+            pass
+
+        def end_run(self, *args, **kwargs):
+            pass
+
+        def close(self):
+            pass
 
 
 # Configure logging
@@ -367,6 +419,9 @@ image = (
     .add_local_file("src/dataset.py", "/app/dataset.py")
     .add_local_file("src/model.py", "/app/model.py")
     .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
+    .add_local_file("src/auth_utils.py", "/app/auth_utils.py")
+    .add_local_file("src/retry_utils.py", "/app/retry_utils.py")
+    .add_local_file("src/experiment_tracker.py", "/app/experiment_tracker.py")
     .add_local_file("data/download.py", "/app/data/download.py")
     .add_local_file("data/download.sh", "/app/data/download.sh")
 )
@@ -443,7 +498,39 @@ def train_on_gpu(
 
     Returns:
         Dictionary with training status and output path.
+
+    Raises:
+        AuthenticationError: If Modal authentication fails
     """
+    # Setup logging first for auth validation
+    preflight_logger = setup_auth_logging(level=logging.INFO)
+
+    # Validate Modal authentication before starting training
+    preflight_logger.info("=" * 60)
+    preflight_logger.info("MODAL TRAINING - PRE-FLIGHT CHECKS")
+    preflight_logger.info("=" * 60)
+
+    try:
+        require_modal_auth()
+        preflight_logger.info("✅ Modal authentication validated")
+    except AuthenticationError as e:
+        preflight_logger.error(f"❌ {e.message}")
+        preflight_logger.error("")
+        preflight_logger.error("To fix this:")
+        preflight_logger.error(
+            "  1. Run 'modal token new' to authenticate (Modal 1.0+)"
+        )
+        preflight_logger.error("  2. Verify with: modal token info")
+        preflight_logger.error(
+            "  3. For GitHub Actions, ensure MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are set"
+        )
+        preflight_logger.error("")
+        preflight_logger.error("See: https://modal.com/docs/reference/cli/token")
+        preflight_logger.error(
+            "See AGENTS.md or agents-docs/auth-troubleshooting.md for help"
+        )
+        raise
+
     # Initialize container (ADR-025: cold start optimization)
     _initialize_container()
 

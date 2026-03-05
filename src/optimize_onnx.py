@@ -1,13 +1,18 @@
 """src/optimize_onnx.py
 
-Optimize ONNX model using quantization for web deployment.
+Optimize ONNX models using quantization for web deployment.
 
 This script applies dynamic and static quantization to reduce model size
 and improve inference speed while maintaining accuracy.
 
+Supports:
+- Classifier model (cats.onnx -> cats_quantized.onnx)
+- Generator model (generator.onnx -> generator_quantized.onnx)
+
 Usage:
     python src/optimize_onnx.py
     python src/optimize_onnx.py --model PATH --output PATH
+    python src/optimize_onnx.py --model-type generator
 """
 
 from __future__ import annotations
@@ -47,10 +52,11 @@ except ImportError as e:
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 DEFAULT_IMAGE_SIZE = 224
+DEFAULT_GENERATOR_SIZE = 128
 
 
 class CatsCalibrationDataReader(CalibrationDataReader):
-    """Calibration data reader for static quantization.
+    """Calibration data reader for classifier static quantization.
 
     Generates synthetic calibration data based on ImageNet statistics.
     For production use, replace with real calibration dataset.
@@ -121,6 +127,78 @@ class CatsCalibrationDataReader(CalibrationDataReader):
 
         Returns:
             Dictionary with input tensor or None if exhausted.
+        """
+        if self.index < len(self.data):
+            result = self.data[self.index]
+            self.index += 1
+            return result
+        return None
+
+    def rewind(self) -> None:
+        """Reset the data reader to the beginning."""
+        self.index = 0
+
+
+class GeneratorCalibrationDataReader(CalibrationDataReader):
+    """Calibration data reader for generator (DiT) static quantization.
+
+    Generates synthetic calibration data for the generator model.
+    The generator has different inputs: noise, timestep, breed.
+    """
+
+    def __init__(
+        self,
+        num_samples: int = 100,
+        image_size: int = DEFAULT_GENERATOR_SIZE,
+    ) -> None:
+        """Initialize calibration data reader.
+
+        Args:
+            num_samples: Number of calibration samples to generate.
+            image_size: Input image size for calibration (default: 128).
+        """
+        self.num_samples = num_samples
+        self.image_size = image_size
+        self.index = 0
+        self.data = self._generate_calibration_data()
+
+    def _generate_calibration_data(self) -> list[dict[str, np.ndarray]]:
+        """Generate synthetic calibration data for generator.
+
+        Returns:
+            List of dictionaries with input tensors (noise, timestep, breed).
+        """
+        data = []
+
+        for i in range(self.num_samples):
+            np.random.seed(i)
+
+            # Generate random noise tensor (same as generator input)
+            noise = np.random.randn(1, 3, self.image_size, self.image_size).astype(
+                np.float32
+            )
+
+            # Random timestep between 0 and 1
+            timestep = np.array([np.random.random()], dtype=np.float32)
+
+            # Random breed index (0-12 for 13 breeds)
+            breed = np.array([np.random.randint(0, 13)], dtype=np.int64)
+
+            data.append(
+                {
+                    "noise": noise,
+                    "timestep": timestep,
+                    "breed": breed,
+                }
+            )
+
+        return data  # type: ignore[return-value]
+
+    def get_next(self) -> dict[str, np.ndarray] | None:
+        """Get next calibration sample.
+
+        Returns:
+            Dictionary with input tensors or None if exhausted.
         """
         if self.index < len(self.data):
             result = self.data[self.index]
@@ -310,12 +388,14 @@ def validate_accuracy(
 def apply_dynamic_quantization(
     model_path: str | Path,
     output_path: str | Path,
+    model_type: str = "classifier",
 ) -> dict[str, Any]:
     """Apply dynamic quantization to ONNX model.
 
     Args:
         model_path: Path to input ONNX model.
         output_path: Path to save quantized model.
+        model_type: Type of model ("classifier" or "generator").
 
     Returns:
         Dictionary with quantization results.
@@ -368,6 +448,7 @@ def apply_static_quantization(
     model_path: str | Path,
     output_path: str | Path,
     num_calibration_samples: int = 100,
+    model_type: str = "classifier",
 ) -> dict[str, Any]:
     """Apply static quantization to ONNX model.
 
@@ -375,6 +456,7 @@ def apply_static_quantization(
         model_path: Path to input ONNX model.
         output_path: Path to save quantized model.
         num_calibration_samples: Number of calibration samples.
+        model_type: Type of model ("classifier" or "generator").
 
     Returns:
         Dictionary with quantization results.
@@ -398,9 +480,17 @@ def apply_static_quantization(
     print(f"  Input: {model_path} ({format_size(original_size)})")
     print(f"  Calibration samples: {num_calibration_samples}")
 
-    calibration_reader = CatsCalibrationDataReader(
-        num_samples=num_calibration_samples,
-    )
+    # Select appropriate calibration data reader based on model type
+    if model_type == "generator":
+        calibration_reader = GeneratorCalibrationDataReader(
+            num_samples=num_calibration_samples,
+            image_size=DEFAULT_GENERATOR_SIZE,
+        )
+    else:
+        calibration_reader = CatsCalibrationDataReader(
+            num_samples=num_calibration_samples,
+            image_size=DEFAULT_IMAGE_SIZE,
+        )
 
     quantize_static(
         model_input=str(cleaned_path),
@@ -438,6 +528,7 @@ def optimize_onnx(
     num_calibration_samples: int = 100,
     validate: bool = True,
     num_validation_samples: int = 50,
+    model_type: str = "classifier",
 ) -> dict[str, Any]:
     """Optimize ONNX model using quantization.
 
@@ -448,6 +539,7 @@ def optimize_onnx(
         num_calibration_samples: Number of calibration samples for static quantization.
         validate: Whether to validate accuracy after quantization.
         num_validation_samples: Number of samples for accuracy validation.
+        model_type: Type of model ("classifier" or "generator").
 
     Returns:
         Dictionary with optimization results.
@@ -464,18 +556,28 @@ def optimize_onnx(
         "input_model": str(model_path),
         "original_size": get_file_size(model_path),
         "original_size_formatted": format_size(get_file_size(model_path)),
+        "model_type": model_type,
     }
+
+    # Determine output filename based on model type
+    if model_type == "generator":
+        base_name = "generator"
+    else:
+        base_name = "cats"
 
     # Apply quantization
     if method == "dynamic":
-        output_path = output_dir / "cats_quantized.onnx"
-        quant_results = apply_dynamic_quantization(model_path, output_path)
+        output_path = output_dir / f"{base_name}_quantized.onnx"
+        quant_results = apply_dynamic_quantization(
+            model_path, output_path, model_type=model_type
+        )
     elif method == "static":
-        output_path = output_dir / "cats_quantized_static.onnx"
+        output_path = output_dir / f"{base_name}_quantized_static.onnx"
         quant_results = apply_static_quantization(
             model_path,
             output_path,
             num_calibration_samples,
+            model_type=model_type,
         )
     else:
         raise ValueError(f"Unknown quantization method: {method}")
@@ -555,6 +657,13 @@ def parse_args() -> argparse.Namespace:
         help="Quantization method (default: dynamic)",
     )
     parser.add_argument(
+        "--model-type",
+        type=str,
+        choices=["classifier", "generator"],
+        default="classifier",
+        help="Type of model to optimize (default: classifier)",
+    )
+    parser.add_argument(
         "--calibration-samples",
         type=int,
         default=100,
@@ -586,6 +695,7 @@ def main() -> None:
             num_calibration_samples=args.calibration_samples,
             validate=not args.no_validate,
             num_validation_samples=args.validation_samples,
+            model_type=args.model_type,
         )
 
         # Exit with error if validation failed
@@ -598,8 +708,13 @@ def main() -> None:
 
     except FileNotFoundError as e:
         print(f"\n[ERROR] {e}")
-        print("\nHint: Export the model first with:")
-        print("  python src/export_onnx.py --checkpoint PATH_TO_CHECKPOINT")
+        if args.model_type == "classifier":
+            print("\nHint: Export the classifier first with:")
+            print("  python src/export_onnx.py --checkpoint PATH_TO_CHECKPOINT")
+            print("  or python src/export_classifier_onnx.py --checkpoint PATH")
+        else:
+            print("\nHint: Export the generator first with:")
+            print("  python src/export_dit_onnx.py --checkpoint PATH_TO_CHECKPOINT")
         sys.exit(1)
     except ImportError as e:
         print(f"\n[ERROR] {e}")

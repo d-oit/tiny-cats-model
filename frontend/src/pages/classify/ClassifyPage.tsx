@@ -12,14 +12,18 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 export default function ClassifyPage() {
   const MODEL_TYPE = "cats";
   const CONFIGS = MODEL_CONFIGS[MODEL_TYPE];
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState<ClassificationTelemetry | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
+
   const { ready, classify } = useInference(CONFIGS.modelPath, MODEL_TYPE);
+
+  // File size validation: max 10MB
+  const MAX_FILE_SIZE_MB = 10;
+  const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -27,6 +31,15 @@ export default function ClassifyPage() {
 
     setError(null);
     setResult(null);
+
+    // Validate file size
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      setError(`File size exceeds ${MAX_FILE_SIZE_MB}MB limit. Please upload a smaller image.`);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = async (event) => {

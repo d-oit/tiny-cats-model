@@ -89,8 +89,16 @@ def load_checkpoint(
         raise FileNotFoundError(f"Checkpoint not found: {path}")
 
     model = cats_model(num_classes=num_classes, backbone=backbone, pretrained=False)
-    state = torch.load(path, map_location="cpu")
-    model.load_state_dict(state)
+    state = torch.load(path, map_location="cpu", weights_only=False)
+
+    # Handle both state_dict-only and full checkpoint formats
+    if isinstance(state, dict):
+        # Extract model_state_dict if present (full checkpoint format)
+        if "model_state_dict" in state:
+            state = state["model_state_dict"]
+        # Ignore extra keys like 'epoch', 'optimizer_state_dict', etc.
+
+    model.load_state_dict(state, strict=True)
     model.eval()
     print(f"Loaded checkpoint from {path}")
     return model

@@ -5,6 +5,29 @@ import { GENERATOR_CONFIG, type GeneratorConfig } from "../constants";
 
 ort.env.wasm.wasmPaths = "/tiny-cats-model/";
 
+async function getExecutionProvider(): Promise<["wasm"] | ["webgpu"]> {
+  if (typeof navigator !== "undefined") {
+    try {
+      const gpu = (navigator as any).gpu;
+      if (gpu) {
+        return ["webgpu"];
+      }
+    } catch {
+      // WebGPU not available
+    }
+  }
+  return ["wasm"];
+}
+
+async function loadOrt(): Promise<typeof ort> {
+  const ep = await getExecutionProvider();
+  if (ep[0] === "webgpu") {
+    const ortWebGpu = await import("onnxruntime-web/webgpu");
+    return ortWebGpu as unknown as typeof ort;
+  }
+  return ort;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 if (typeof navigator !== "undefined" && (self as any).crossOriginIsolated) {
   ort.env.wasm.numThreads = navigator.hardwareConcurrency || 2;
@@ -13,6 +36,8 @@ if (typeof navigator !== "undefined" && (self as any).crossOriginIsolated) {
 }
 
 ort.env.wasm.proxy = false;
+
+let ortInstance: typeof ort | null = null;
 
 export interface GenerationProgress {
   step: number;
@@ -35,25 +60,60 @@ export interface GenerationOptions {
   noiseSeed?: number;
 }
 
+/**
+ * Load model with HF Hub primary and local fallback (ADR-034)
+ */
+async function fetchModelWithFallback(primaryPath: string, fallbackPath: string): Promise<ArrayBuffer> {
+  // Try primary (HF Hub) first
+  try {
+    console.log(`Loading model from HF Hub: ${primaryPath}`);
+    const response = await fetch(primaryPath, { mode: "cors", credentials: "omit" });
+    if (!response.ok) {
+      throw new Error(`HF Hub returned ${response.status}`);
+    }
+    const data = await response.arrayBuffer();
+    console.log("Model loaded successfully from HF Hub");
+    return data;
+  } catch (error) {
+    console.warn(`HF Hub load failed: ${error}`);
+    console.log(`Falling back to local model: ${fallbackPath}`);
+    
+    // Fall back to local model
+    const response = await fetch(fallbackPath, { mode: "cors", credentials: "omit" });
+    if (!response.ok) {
+      throw new Error(`Local model also failed: ${response.status}`);
+    }
+    const data = await response.arrayBuffer();
+    console.log("Model loaded successfully from local fallback");
+    return data;
+  }
+}
+
 class GenerationEngine {
   session: ort.InferenceSession | null = null;
   config: GeneratorConfig = GENERATOR_CONFIG;
+  executionProvider: "wasm" | "webgpu" = "wasm";
 
   async loadModel(): Promise<string> {
     console.log("Loading generator model...");
     try {
       console.log("Fetching model from:", this.config.modelPath);
-      const response = await fetch(this.config.modelPath, { mode: "cors", credentials: "omit" });
-      if (!response.ok) {
-        throw new Error(`Failed to fetch model: ${response.status}`);
-      }
-      const modelData = await response.arrayBuffer();
+
+      ortInstance = await loadOrt();
+      this.executionProvider = (await getExecutionProvider())[0];
+      console.log("Using execution provider:", this.executionProvider);
+
+      // Use HF Hub with local fallback (ADR-034)
+      const modelData = await fetchModelWithFallback(
+        this.config.modelPath,
+        this.config.localFallback
+      );
       const modelDataUint8 = new Uint8Array(modelData);
 
       console.log("Creating inference session...");
 
-      this.session = await ort.InferenceSession.create(modelDataUint8, {
-        executionProviders: ["wasm"],
+      this.session = await ortInstance.InferenceSession.create(modelDataUint8, {
+        executionProviders: [this.executionProvider],
         graphOptimizationLevel: "all"
       });
 
@@ -103,18 +163,19 @@ class GenerationEngine {
     cfgScale: number
   ): Promise<Float32Array> {
     if (!this.session) throw new Error("Model not loaded");
+    if (!ortInstance) throw new Error("ORT not loaded");
 
     const [height, width] = this.config.imgDims;
     const inputSize = 3 * height * width;
 
     // Create noise tensor
-    const noiseTensor = new ort.Tensor("float32", noise, [1, 3, height, width]);
+    const noiseTensor = new ortInstance.Tensor("float32", noise, [1, 3, height, width]);
 
     // Create timestep tensor
-    const timestepTensor = new ort.Tensor("float32", new Float32Array([timestep]), [1]);
+    const timestepTensor = new ortInstance.Tensor("float32", new Float32Array([timestep]), [1]);
 
     // Create breed tensor
-    const breedTensor = new ort.Tensor("int64", new BigInt64Array([BigInt(breedIndex)]), [1]);
+    const breedTensor = new ortInstance.Tensor("int64", new BigInt64Array([BigInt(breedIndex)]), [1]);
 
     // Run inference for conditional prediction
     const result = await this.session.run({
@@ -127,7 +188,7 @@ class GenerationEngine {
 
     // If CFG scale > 1, also run unconditional prediction
     if (cfgScale > 1.0) {
-      const uncondBreedTensor = new ort.Tensor("int64", new BigInt64Array([BigInt(-1)]), [1]);
+      const uncondBreedTensor = new ortInstance.Tensor("int64", new BigInt64Array([BigInt(-1)]), [1]);
 
       const uncondResult = await this.session.run({
         noise: noiseTensor,

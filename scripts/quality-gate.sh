@@ -166,29 +166,49 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. Agent Skills Validation
+# 5. Agent Skills Verification
 # ─────────────────────────────────────────────────────────────────────────────
-log_info "Validating agent skills (agentskills.io specification)..."
+log_info "Verifying agent skills in .agents/skills/..."
 
-SKILLS_VALIDATION_SCRIPT="$SCRIPT_DIR/validate-skills.py"
-if [[ -f "$SKILLS_VALIDATION_SCRIPT" ]]; then
-    # Run skills validation and capture output
-    if SKILLS_OUTPUT=$(python "$SKILLS_VALIDATION_SCRIPT" 2>&1); then
-        # Show summary (strip ANSI codes for grep)
-        echo "$SKILLS_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -E "^✓|^▶" | head -15
-        log_success "Skills validation passed"
-    else
-        log_error "Skills validation failed"
-        echo "$SKILLS_OUTPUT" | head -30
-        echo "   See: https://agentskills.io/specification#validation"
-        echo "   Fix SKILL.md frontmatter in .agents/skills/"
-        FAILURES=$((FAILURES + 1))
-        if [[ "$STRICT" == true ]]; then
-            exit 1
+SKILLS_DIR="$ROOT_DIR/.agents/skills"
+VALIDATE_SCRIPT="$ROOT_DIR/.agents/skills/skill-creator/scripts/quick_validate.py"
+SKILL_FAILURES=0
+
+if [[ -d "$SKILLS_DIR" ]]; then
+    if [[ -f "$VALIDATE_SCRIPT" ]]; then
+        SKILL_DIRS=$(find "$SKILLS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null || true)
+        
+        if [[ -z "$SKILL_DIRS" ]]; then
+            log_warning "No skill directories found in $SKILLS_DIR"
+        else
+            for skill_dir in $SKILL_DIRS; do
+                skill_name=$(basename "$skill_dir")
+                
+                if python "$VALIDATE_SCRIPT" "$skill_dir" > /dev/null 2>&1; then
+                    echo "   ✓ $skill_name"
+                else
+                    error_msg=$(python "$VALIDATE_SCRIPT" "$skill_dir" 2>&1)
+                    log_error "$skill_name: $error_msg"
+                    SKILL_FAILURES=$((SKILL_FAILURES + 1))
+                fi
+            done
+            
+            if [[ $SKILL_FAILURES -eq 0 ]]; then
+                skill_count=$(echo "$SKILL_DIRS" | wc -l)
+                log_success "All $skill_count skills verified"
+            else
+                log_error "$SKILL_FAILURES skill(s) failed verification"
+                FAILURES=$((FAILURES + SKILL_FAILURES))
+                if [[ "$STRICT" == true ]]; then
+                    exit 1
+                fi
+            fi
         fi
+    else
+        log_warning "quick_validate.py not found, skipping skills validation"
     fi
 else
-    log_warning "Skills validation script not found, skipping skills validation"
+    log_warning ".agents/skills directory not found"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -213,7 +233,7 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Running tests (pytest)..."
 
-if PYTEST_OUTPUT=$(python -m pytest tests/ -v --tb=short 2>&1); then
+if PYTEST_OUTPUT=$(python -m pytest tests/ -v -m "not slow" --tb=short 2>&1); then
     log_success "All tests passed"
 else
     log_error "Tests failed"

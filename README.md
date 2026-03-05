@@ -5,17 +5,25 @@
 [![CI](https://github.com/d-oit/tiny-cats-model/actions/workflows/ci.yml/badge.svg)](https://github.com/d-oit/tiny-cats-model/actions/workflows/ci.yml)
 [![Code Quality: Ruff](https://img.shields.io/badge/code%20quality-ruff-ff0000)](https://github.com/astral-sh/ruff)
 [![Type Check: mypy](https://img.shields.io/badge/type%20check-mypy-blue)](https://github.com/python/mypy)
+[![HuggingFace Model](https://img.shields.io/badge/🤗-Model-yellow)](https://huggingface.co/d4oit/tiny-cats-model)
 
-A cats classifier built on PyTorch with ResNet-18, following 2026 best practices for AI-agent-friendly repositories.
+A cats classifier and generator built on PyTorch with ResNet-18 and TinyDiT, following 2026 best practices for AI-agent-friendly repositories.
 
 ## Features
 
-- ResNet-18 fine-tuned for cat classification (cat / not-cat or breed labels)
-- Dataset download script (Oxford IIIT Pet compatible)
-- Modal-based GPU training support
-- Full CI via GitHub Actions (lint → test → type-check)
-- Agent Skills for autonomous task execution
-- ONNX model export support
+- **Classification**: ResNet-18 fine-tuned for cat breed classification (13 breeds)
+- **Generation**: TinyDiT diffusion model for conditional cat image generation
+- **Interactive Tutorials**: 3 Jupyter notebooks with Google Colab support
+- **Automated Deployment**: CI/CD pipeline with automated HuggingFace uploads
+- **Comprehensive Testing**: 215+ E2E tests covering all user journeys
+- **ONNX Export**: Quantized models for web deployment (11MB classifier, 33MB generator)
+
+## Quick Links
+
+- 📚 [Tutorial Notebooks](notebooks/README.md) - Interactive guides with Colab
+- 🤗 [HuggingFace Model](https://huggingface.co/d4oit/tiny-cats-model) - Download models
+- 📖 [Documentation](docs/) - Setup guides and ADRs
+- 🧪 [E2E Tests](tests/e2e/) - Playwright test suite
 
 ## Requirements
 
