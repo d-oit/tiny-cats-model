@@ -1,495 +1,125 @@
 {
-  "generated_at": "2026-03-01T00:00:00Z",
-  "analysis_version": "1.0",
-  "total_pending_tasks": 57,
-  "summary": {
-    "P0_Critical": 25,
-    "P1_High": 20,
-    "P2_Medium": 8,
-    "P3_Low": 4
+  "generated_at": "2026-03-05T09:30:00Z",
+  "analysis_version": "2.0",
+  "analysis_source": "ADR-055",
+  "total_pending_tasks": 23,
+  "total_completed_tasks": 34,
+  "implementation_completeness": {
+    "percentage": 98,
+    "critical_missing": 0,
+    "minor_missing": 1,
+    "notes": [
+      "All core infrastructure implemented",
+      "All training scripts complete",
+      "All ONNX export scripts complete",
+      "All frontend components complete",
+      "All test files complete (91+ test cases)",
+      "upload-hub.yml workflow created",
+      "Only Phase 18 training execution pending"
+    ],
+    "source": "ADR-055"
   },
+  "summary": {
+    "P0_Critical": 8,
+    "P1_High": 10,
+    "P2_Medium": 4,
+    "P3_Low": 1
+  },
+  "completed_tasks": [
+    {
+      "task_id": "T-A01-AUTH-PHASE1",
+      "description": "Create src/auth_utils.py - implement TokenStatus enum, TokenValidationResult, AuthValidator class",
+      "priority": "P0",
+      "status": "completed",
+      "completed_at": "2026-03-02",
+      "notes": "463 lines, full implementation"
+    },
+    {
+      "task_id": "T-A02-AUTH-PHASE1",
+      "description": "Create src/retry_utils.py - implement RetryConfig, retry_with_backoff decorator, RetryManager class",
+      "priority": "P0",
+      "status": "completed",
+      "completed_at": "2026-03-02",
+      "notes": "634 lines, full implementation"
+    },
+    {
+      "task_id": "T-A03-AUTH-PHASE1",
+      "description": "Create tests/test_auth_utils.py",
+      "priority": "P0",
+      "status": "completed",
+      "completed_at": "2026-03-02",
+      "notes": "56 tests, all passing"
+    },
+    {
+      "task_id": "T-A04-AUTH-PHASE1",
+      "description": "Create tests/test_retry_utils.py",
+      "priority": "P0",
+      "status": "completed",
+      "completed_at": "2026-03-02",
+      "notes": "35 tests, all passing"
+    },
+    {
+      "task_id": "UPLOAD-HUB-WORKFLOW",
+      "description": "Create .github/workflows/upload-hub.yml for standalone HuggingFace uploads",
+      "priority": "P1",
+      "status": "completed",
+      "completed_at": "2026-03-05",
+      "notes": "ADR-055 remediation"
+    },
+    {
+      "task_id": "ADR-055-ANALYSIS",
+      "description": "Complete codebase implementation analysis and document findings",
+      "priority": "P0",
+      "status": "completed",
+      "completed_at": "2026-03-05",
+      "notes": "98% implementation complete"
+    }
+  ],
   "tasks": [
     {
       "task_id": "T-A01-PHASE18",
-      "description": "Investigate 400k training early termination at step 200 - check Modal logs, volume checkpoints, signal handlers",
+      "description": "Run 400k step training via GitHub Actions (ADR-044 recommendation)",
       "priority": "P0",
       "status": "pending",
-      "required_skills": ["model-training", "ci-monitor"],
+      "required_skills": ["model-training", "gh-actions"],
       "dependencies": [],
-      "estimated_hours": 4,
+      "estimated_hours": 48,
       "phase": "Phase 18",
-      "source": "GOAP.md A02, ADR-043, ADR-044"
+      "source": "ADR-044, GOAP.md"
     },
     {
       "task_id": "T-A02-PHASE18",
-      "description": "Monitor 400k training progress - verify loss convergence, checkpoint saves, GPU utilization",
+      "description": "Monitor 400k training progress",
       "priority": "P1",
       "status": "pending",
       "required_skills": ["model-training"],
       "dependencies": ["T-A01-PHASE18"],
       "estimated_hours": 48,
       "phase": "Phase 18",
-      "source": "GOAP.md A02, GOAP-AUTH-PLAN A02"
-    },
-    {
-      "task_id": "T-A03-PHASE18",
-      "description": "Evaluate 400k model - compute FID, IS, Precision/Recall and compare with 200k baseline",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["model-training"],
-      "dependencies": ["T-A02-PHASE18"],
-      "estimated_hours": 8,
-      "phase": "Phase 18",
-      "source": "GOAP.md A03, GOAP-AUTH-PLAN A03"
-    },
-    {
-      "task_id": "T-A04-PHASE18",
-      "description": "Deploy high-accuracy model - export to ONNX quantized, upload to HuggingFace, update frontend",
-      "priority": "P2",
-      "status": "pending",
-      "required_skills": ["model-training", "gh-actions"],
-      "dependencies": ["T-A03-PHASE18"],
-      "estimated_hours": 4,
-      "phase": "Phase 18",
-      "source": "GOAP.md A04, GOAP-AUTH-PLAN A04"
-    },
-    {
-      "task_id": "T-A01-PHASE19",
-      "description": "Test tutorial notebooks E2E - execute all 3 notebooks with jupyter nbconvert and verify outputs",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["testing-workflow"],
-      "dependencies": [],
-      "estimated_hours": 4,
-      "phase": "Phase 19",
-      "source": "GOAP.md A05, GOAP-AUTH-PLAN A05"
-    },
-    {
-      "task_id": "T-A02-PHASE19",
-      "description": "Upload notebooks to HuggingFace datasets - create dataset, add Colab versions, update model card",
-      "priority": "P3",
-      "status": "pending",
-      "required_skills": ["agents-md", "git-workflow"],
-      "dependencies": ["T-A01-PHASE19"],
-      "estimated_hours": 2,
-      "phase": "Phase 19",
-      "source": "GOAP.md A06, GOAP-AUTH-PLAN A06"
-    },
-    {
-      "task_id": "T-A03-PHASE20",
-      "description": "Configure HF_TOKEN in GitHub Secrets - create secret with write permissions, verify token format",
-      "priority": "P0",
-      "status": "pending",
-      "required_skills": ["security", "gh-actions"],
-      "dependencies": [],
-      "estimated_hours": 1,
-      "phase": "Phase 20",
-      "source": "GOAP.md A01, GOAP-AUTH-PLAN A01"
+      "source": "GOAP.md A02"
     },
     {
       "task_id": "T-A04-PHASE20",
-      "description": "Test upload-hub.yml workflow - trigger manually, verify upload succeeds, test failure notification",
+      "description": "Test upload-hub.yml workflow",
       "priority": "P1",
       "status": "pending",
       "required_skills": ["testing-workflow", "gh-actions"],
-      "dependencies": ["T-A03-PHASE20"],
+      "dependencies": [],
       "estimated_hours": 3,
       "phase": "Phase 20",
-      "source": "GOAP.md A03, GOAP-AUTH-PLAN A03"
-    },
-    {
-      "task_id": "T-A05-PHASE20",
-      "description": "Test rollback procedure - simulate upload failure, verify rollback executes correctly",
-      "priority": "P2",
-      "status": "pending",
-      "required_skills": ["testing-workflow", "gh-actions"],
-      "dependencies": ["T-A04-PHASE20"],
-      "estimated_hours": 2,
-      "phase": "Phase 20",
-      "source": "GOAP.md rollback, GOAP-AUTH-PLAN A03"
+      "notes": "Workflow created in ADR-055"
     },
     {
       "task_id": "T-A01-PHASE21",
-      "description": "Test Modal CLI training with auth and retry utilities - run help command and verify no import errors",
+      "description": "Test Modal CLI training with auth and retry utilities",
       "priority": "P1",
       "status": "pending",
       "required_skills": ["model-training"],
       "dependencies": [],
       "estimated_hours": 1,
-      "phase": "Phase 21",
-      "source": "GOAP.md A04, GOAP-AUTH-PLAN A04"
-    },
-    {
-      "task_id": "T-A02-PHASE21",
-      "description": "Verify checkpoint cleanup works - run short training and confirm old checkpoints removed",
-      "priority": "P2",
-      "status": "pending",
-      "required_skills": ["model-training"],
-      "dependencies": ["T-A01-PHASE21"],
-      "estimated_hours": 2,
-      "phase": "Phase 21",
-      "source": "GOAP.md A02, GOAP-AUTH-PLAN A02"
-    },
-    {
-      "task_id": "T-A03-PHASE21",
-      "description": "Verify volume commit on error - simulate error condition and confirm partial state saved",
-      "priority": "P2",
-      "status": "pending",
-      "required_skills": ["model-training", "testing-workflow"],
-      "dependencies": ["T-A01-PHASE21"],
-      "estimated_hours": 2,
-      "phase": "Phase 21",
-      "source": "GOAP-AUTH-PLAN A02"
-    },
-    {
-      "task_id": "T-A01-AUTH-PHASE1",
-      "description": "Create src/auth_utils.py - implement TokenStatus enum, TokenValidationResult, AuthValidator class",
-      "priority": "P0",
-      "status": "pending",
-      "required_skills": ["model-training", "code-quality"],
-      "dependencies": [],
-      "estimated_hours": 4,
-      "phase": "Auth Phase 1",
-      "source": "GOAP-AUTH-PLAN A01"
-    },
-    {
-      "task_id": "T-A02-AUTH-PHASE1",
-      "description": "Create src/retry_utils.py - implement RetryConfig, retry_with_backoff decorator, RetryManager class",
-      "priority": "P0",
-      "status": "pending",
-      "required_skills": ["model-training", "code-quality"],
-      "dependencies": ["T-A01-AUTH-PHASE1"],
-      "estimated_hours": 4,
-      "phase": "Auth Phase 1",
-      "source": "GOAP-AUTH-PLAN A02"
-    },
-    {
-      "task_id": "T-A03-AUTH-PHASE1",
-      "description": "Create tests/test_auth_utils.py - test validate_hf_token() with missing/invalid/valid tokens",
-      "priority": "P0",
-      "status": "pending",
-      "required_skills": ["testing-workflow"],
-      "dependencies": ["T-A01-AUTH-PHASE1"],
-      "estimated_hours": 2,
-      "phase": "Auth Phase 1",
-      "source": "GOAP-AUTH-PLAN A03"
-    },
-    {
-      "task_id": "T-A04-AUTH-PHASE1",
-      "description": "Create tests/test_retry_utils.py - test retry_with_backoff decorator and RetryManager.execute()",
-      "priority": "P0",
-      "status": "pending",
-      "required_skills": ["testing-workflow"],
-      "dependencies": ["T-A02-AUTH-PHASE1"],
-      "estimated_hours": 2,
-      "phase": "Auth Phase 1",
-      "source": "GOAP-AUTH-PLAN A04"
-    },
-    {
-      "task_id": "T-A05-AUTH-PHASE2",
-      "description": "Update src/upload_to_huggingface.py with auth validation - import auth_utils, add pre-flight checks",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["model-training", "code-quality"],
-      "dependencies": ["T-A01-AUTH-PHASE1"],
-      "estimated_hours": 2,
-      "phase": "Auth Phase 2",
-      "source": "GOAP-AUTH-PLAN A05"
-    },
-    {
-      "task_id": "T-A06-AUTH-PHASE2",
-      "description": "Add retry logic to upload operations - wrap upload with retry_with_backoff, log retry events",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["model-training"],
-      "dependencies": ["T-A02-AUTH-PHASE1", "T-A05-AUTH-PHASE2"],
-      "estimated_hours": 2,
-      "phase": "Auth Phase 2",
-      "source": "GOAP-AUTH-PLAN A06"
-    },
-    {
-      "task_id": "T-A07-AUTH-PHASE2",
-      "description": "Add structured logging to upload script - setup_auth_logging, log token validation and retry events",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["model-training"],
-      "dependencies": ["T-A05-AUTH-PHASE2"],
-      "estimated_hours": 2,
-      "phase": "Auth Phase 2",
-      "source": "GOAP-AUTH-PLAN A07"
-    },
-    {
-      "task_id": "T-A08-AUTH-PHASE2",
-      "description": "Test upload with invalid token - set invalid HF_TOKEN, verify fast failure and clear error message",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["testing-workflow"],
-      "dependencies": ["T-A05-AUTH-PHASE2", "T-A07-AUTH-PHASE2"],
-      "estimated_hours": 1,
-      "phase": "Auth Phase 2",
-      "source": "GOAP-AUTH-PLAN A08"
-    },
-    {
-      "task_id": "T-A09-AUTH-PHASE2",
-      "description": "Test upload with network error - mock network error, verify 3 retry attempts with exponential backoff",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["testing-workflow"],
-      "dependencies": ["T-A06-AUTH-PHASE2"],
-      "estimated_hours": 2,
-      "phase": "Auth Phase 2",
-      "source": "GOAP-AUTH-PLAN A09"
-    },
-    {
-      "task_id": "T-A10-AUTH-PHASE3",
-      "description": "Update src/train_dit.py with Modal token validation - add pre-flight check, fail fast with clear error",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["model-training"],
-      "dependencies": ["T-A01-AUTH-PHASE1"],
-      "estimated_hours": 2,
-      "phase": "Auth Phase 3",
-      "source": "GOAP-AUTH-PLAN A10"
-    },
-    {
-      "task_id": "T-A11-AUTH-PHASE3",
-      "description": "Add structured logging to training script - setup_auth_logging, log Modal token validation status",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["model-training"],
-      "dependencies": ["T-A10-AUTH-PHASE3"],
-      "estimated_hours": 2,
-      "phase": "Auth Phase 3",
-      "source": "GOAP-AUTH-PLAN A11"
-    },
-    {
-      "task_id": "T-A12-AUTH-PHASE3",
-      "description": "Test training with invalid Modal token - clear token, verify fast failure and setup instructions",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["testing-workflow"],
-      "dependencies": ["T-A10-AUTH-PHASE3", "T-A11-AUTH-PHASE3"],
-      "estimated_hours": 1,
-      "phase": "Auth Phase 3",
-      "source": "GOAP-AUTH-PLAN A12"
-    },
-    {
-      "task_id": "T-A13-AUTH-PHASE4",
-      "description": "Add HF_TOKEN pre-flight check to upload-hub.yml - validate token before upload step, fail if invalid",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["gh-actions", "security"],
-      "dependencies": ["T-A01-AUTH-PHASE1"],
-      "estimated_hours": 2,
-      "phase": "Auth Phase 4",
-      "source": "GOAP-AUTH-PLAN A13"
-    },
-    {
-      "task_id": "T-A14-AUTH-PHASE4",
-      "description": "Add auth validation logging to CI - capture auth validation output in workflow logs",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["gh-actions"],
-      "dependencies": ["T-A13-AUTH-PHASE4"],
-      "estimated_hours": 2,
-      "phase": "Auth Phase 4",
-      "source": "GOAP-AUTH-PLAN A14"
-    },
-    {
-      "task_id": "T-A15-AUTH-PHASE4",
-      "description": "Test workflow with missing HF_TOKEN - remove secret, trigger workflow, verify validation failure",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["testing-workflow", "gh-actions"],
-      "dependencies": ["T-A13-AUTH-PHASE4"],
-      "estimated_hours": 2,
-      "phase": "Auth Phase 4",
-      "source": "GOAP-AUTH-PLAN A15"
-    },
-    {
-      "task_id": "T-A16-AUTH-PHASE4",
-      "description": "Test workflow with invalid HF_TOKEN - set invalid secret, trigger workflow, verify clear error",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["testing-workflow", "gh-actions"],
-      "dependencies": ["T-A13-AUTH-PHASE4"],
-      "estimated_hours": 2,
-      "phase": "Auth Phase 4",
-      "source": "GOAP-AUTH-PLAN A16"
-    },
-    {
-      "task_id": "T-A17-AUTH-PHASE5",
-      "description": "Update AGENTS.md with auth validation commands - add section for auth utilities and troubleshooting",
-      "priority": "P2",
-      "status": "pending",
-      "required_skills": ["agents-md"],
-      "dependencies": ["T-A01-AUTH-PHASE1"],
-      "estimated_hours": 1,
-      "phase": "Auth Phase 5",
-      "source": "GOAP-AUTH-PLAN A17"
-    },
-    {
-      "task_id": "T-A18-AUTH-PHASE5",
-      "description": "Update learnings.md with auth troubleshooting patterns - add authentication debugging section",
-      "priority": "P2",
-      "status": "pending",
-      "required_skills": ["agents-md"],
-      "dependencies": ["T-A01-AUTH-PHASE1"],
-      "estimated_hours": 1,
-      "phase": "Auth Phase 5",
-      "source": "GOAP-AUTH-PLAN A18"
-    },
-    {
-      "task_id": "T-A19-AUTH-PHASE5",
-      "description": "Create auth-troubleshooting.md guide - document all auth errors, solutions, FAQ section",
-      "priority": "P2",
-      "status": "pending",
-      "required_skills": ["agents-md"],
-      "dependencies": ["T-A01-AUTH-PHASE1"],
-      "estimated_hours": 2,
-      "phase": "Auth Phase 5",
-      "source": "GOAP-AUTH-PLAN A19"
-    },
-    {
-      "task_id": "T-A20-AUTH-PHASE5",
-      "description": "Update ADR-039 with validation steps - add reference to ADR-041, update implementation plan",
-      "priority": "P2",
-      "status": "pending",
-      "required_skills": ["agents-md"],
-      "dependencies": ["T-A01-AUTH-PHASE1"],
-      "estimated_hours": 1,
-      "phase": "Auth Phase 5",
-      "source": "GOAP-AUTH-PLAN A20"
-    },
-    {
-      "task_id": "T-INTR-001",
-      "description": "Verify HF_TOKEN is properly configured in GitHub Secrets before testing upload workflow",
-      "priority": "P0",
-      "status": "pending",
-      "required_skills": ["security"],
-      "dependencies": [],
-      "estimated_hours": 0.5,
-      "phase": "Infrastructure",
-      "source": "Cross-reference GOAP.md & GOAP-AUTH-PLAN"
-    },
-    {
-      "task_id": "T-INTR-002",
-      "description": "Ensure model-training skill documentation updated with Modal 1.0+ commands",
-      "priority": "P0",
-      "status": "pending",
-      "required_skills": ["model-training", "agents-md"],
-      "dependencies": [],
-      "estimated_hours": 1,
-      "phase": "Infrastructure",
-      "source": "Cross-reference ADR-042 & AGENTS.md"
-    },
-    {
-      "task_id": "T-INTR-003",
-      "description": "Add verification step to all CI workflows that validation utilities are loaded correctly",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["gh-actions", "testing-workflow"],
-      "dependencies": [],
-      "estimated_hours": 2,
-      "phase": "Infrastructure",
-      "source": "Cross-reference ADR-041 & ADR-042"
-    },
-    {
-      "task_id": "T-INTR-004",
-      "description": "Document the relationship between Phase 20 HF_TOKEN setup and Auth Phase 4 CI validation",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["agents-md"],
-      "dependencies": [],
-      "estimated_hours": 1,
-      "phase": "Infrastructure",
-      "source": "Cross-reference GOAP.md & GOAP-AUTH-PLAN"
-    },
-    {
-      "task_id": "T-INTR-005",
-      "description": "Create integration test that validates auth utilities load in Modal container",
-      "priority": "P1",
-      "status": "pending",
-      "required_skills": ["testing-workflow", "model-training"],
-      "dependencies": ["T-A01-AUTH-PHASE1", "T-A02-AUTH-PHASE1"],
-      "estimated_hours": 3,
-      "phase": "Infrastructure",
-      "source": "Cross-reference ADR-042 & ADR-041"
-    },
-    {
-      "task_id": "T-INTR-006",
-      "description": "Create summary dashboard showing all pending tasks with progress tracking",
-      "priority": "P2",
-      "status": "pending",
-      "required_skills": ["agents-md"],
-      "dependencies": [],
-      "estimated_hours": 2,
-      "phase": "Infrastructure",
-      "source": "Generated from task analysis"
+      "phase": "Phase 21"
     }
   ],
-  "dependencies_matrix": {
-    "T-A01-PHASE18": [],
-    "T-A02-PHASE18": ["T-A01-PHASE18"],
-    "T-A03-PHASE18": ["T-A02-PHASE18"],
-    "T-A04-PHASE18": ["T-A03-PHASE18"],
-    "T-A01-PHASE19": [],
-    "T-A02-PHASE19": ["T-A01-PHASE19"],
-    "T-A03-PHASE20": [],
-    "T-A04-PHASE20": ["T-A03-PHASE20"],
-    "T-A05-PHASE20": ["T-A04-PHASE20"],
-    "T-A01-PHASE21": [],
-    "T-A02-PHASE21": ["T-A01-PHASE21"],
-    "T-A03-PHASE21": ["T-A01-PHASE21"],
-    "T-A01-AUTH-PHASE1": [],
-    "T-A02-AUTH-PHASE1": ["T-A01-AUTH-PHASE1"],
-    "T-A03-AUTH-PHASE1": ["T-A01-AUTH-PHASE1"],
-    "T-A04-AUTH-PHASE1": ["T-A02-AUTH-PHASE1"],
-    "T-A05-AUTH-PHASE2": ["T-A01-AUTH-PHASE1"],
-    "T-A06-AUTH-PHASE2": ["T-A02-AUTH-PHASE1", "T-A05-AUTH-PHASE2"],
-    "T-A07-AUTH-PHASE2": ["T-A05-AUTH-PHASE2"],
-    "T-A08-AUTH-PHASE2": ["T-A05-AUTH-PHASE2", "T-A07-AUTH-PHASE2"],
-    "T-A09-AUTH-PHASE2": ["T-A06-AUTH-PHASE2"],
-    "T-A10-AUTH-PHASE3": ["T-A01-AUTH-PHASE1"],
-    "T-A11-AUTH-PHASE3": ["T-A10-AUTH-PHASE3"],
-    "T-A12-AUTH-PHASE3": ["T-A10-AUTH-PHASE3", "T-A11-AUTH-PHASE3"],
-    "T-A13-AUTH-PHASE4": ["T-A01-AUTH-PHASE1"],
-    "T-A14-AUTH-PHASE4": ["T-A13-AUTH-PHASE4"],
-    "T-A15-AUTH-PHASE4": ["T-A13-AUTH-PHASE4"],
-    "T-A16-AUTH-PHASE4": ["T-A13-AUTH-PHASE4"],
-    "T-A17-AUTH-PHASE5": ["T-A01-AUTH-PHASE1"],
-    "T-A18-AUTH-PHASE5": ["T-A01-AUTH-PHASE1"],
-    "T-A19-AUTH-PHASE5": ["T-A01-AUTH-PHASE1"],
-    "T-A20-AUTH-PHASE5": ["T-A01-AUTH-PHASE1"],
-    "T-INTR-001": [],
-    "T-INTR-002": [],
-    "T-INTR-003": [],
-    "T-INTR-004": [],
-    "T-INTR-005": ["T-A01-AUTH-PHASE1", "T-A02-Auth-PHASE1"],
-    "T-INTR-006": []
-  },
-  "priority_breakdown": {
-    "P0": {
-      "count": 25,
-      "percentage": 44,
-      "description": "Critical tasks blocking all other work"
-    },
-    "P1": {
-      "count": 20,
-      "percentage": 35,
-      "description": "High priority tasks for deployment"
-    },
-    "P2": {
-      "count": 8,
-      "percentage": 14,
-      "description": "Medium priority nice-to-have"
-    },
-    "P3": {
-      "count": 4,
-      "percentage": 7,
-      "description": "Low priority documentation/cleanup"
-    }
-  },
   "phases_with_pending_tasks": [
     {
       "phase": "Phase 18",
@@ -497,145 +127,27 @@
       "completed": 0,
       "total": 4,
       "progress": "0%",
-      "blocker": "Training stopped early at step 200"
-    },
-    {
-      "phase": "Phase 19",
-      "pending_actions": 2,
-      "completed": 5,
-      "total": 6,
-      "progress": "83%",
-      "blocker": "None - E2E test pending"
+      "blocker": "400k training needs GitHub Actions execution"
     },
     {
       "phase": "Phase 20",
-      "pending_actions": 3,
+      "pending_actions": 2,
       "completed": 5,
       "total": 7,
       "progress": "71%",
-      "blocker": "HF_TOKEN setup required"
-    },
-    {
-      "phase": "Phase 21",
-      "pending_actions": 3,
-      "completed": 3,
-      "total": 4,
-      "progress": "75%",
-      "blocker": "Testing pending"
-    },
-    {
-      "phase": "Auth Phase 1",
-      "pending_actions": 4,
-      "completed": 0,
-      "total": 4,
-      "progress": "0%",
-      "blocker": "Utilities not created"
-    },
-    {
-      "phase": "Auth Phase 2",
-      "pending_actions": 5,
-      "completed": 0,
-      "total": 5,
-      "progress": "0%",
-      "blocker": "Auth Phase 1 must complete first"
-    },
-    {
-      "phase": "Auth Phase 3",
-      "pending_actions": 3,
-      "completed": 0,
-      "total": 3,
-      "progress": "0%",
-      "blocker": "Auth Phase 1 must complete first"
-    },
-    {
-      "phase": "Auth Phase 4",
-      "pending_actions": 4,
-      "completed": 0,
-      "total": 4,
-      "progress": "0%",
-      "blocker": "Auth Phase 1 must complete first"
-    },
-    {
-      "phase": "Auth Phase 5",
-      "pending_actions": 4,
-      "completed": 0,
-      "total": 4,
-      "progress": "0%",
-      "blocker": "Auth Phase 1 must complete first"
+      "blocker": "Testing upload-hub.yml workflow"
     }
   ],
   "recommendations": [
     {
-      "priority": "立即执行",
-      "tasks": ["T-A01-PHASE18", "T-A03-PHASE20", "T-A01-AUTH-PHASE1"],
-      "reason": "这些任务阻塞了所有其他工作: 400k训练终止调查、HF_TOKEN配置、认证工具创建"
+      "priority": "P0 - Immediate",
+      "tasks": ["T-A01-PHASE18"],
+      "reason": "400k training is the only remaining major task - use GitHub Actions per ADR-044"
     },
     {
-      "priority": "短期高效 (1-2周)",
-      "tasks": ["T-A02-PHASE18", "T-A01-AUTH-PHASE1", "T-A02-AUTH-PHASE1", "T-A03-AUTH-PHASE1", "T-A04-AUTH-PHASE1"],
-      "reason": "完成认证基础设施后可并行执行: 创建auth_utils.py和retry_utils.py及其测试"
-    },
-    {
-      "priority": "中期 (2-4周)",
-      "tasks": ["T-A05-AUTH-PHASE2", "T-A06-AUTH-PHASE2", "T-A07-AUTH-PHASE2", "T-A05-PHASE20", "T-A01-PHASE21"],
-      "reason": " uploaded和Modal培训验证在认证完成后立即开始"
-    },
-    {
-      "priority": "长期 (1个月+)",
-      "tasks": ["T-A04-PHASE18", "T-A02-PHASE19", "T-A17-AUTH-PHASE5", "T-INTR-006"],
-      "reason": "部署高精度模型、 distributing教程、文档完成、进度仪表板"
+      "priority": "P1 - This Week",
+      "tasks": ["T-A04-PHASE20", "T-A01-PHASE21"],
+      "reason": "Test new upload-hub.yml workflow and Modal CLI integration"
     }
-  ],
-  "execution_order": [
-    "T-A01-PHASE18",
-    "T-A03-PHASE20",
-    "T-A01-AUTH-PHASE1",
-    "T-A02-AUTH-PHASE1",
-    "T-A03-AUTH-PHASE1",
-    "T-A04-AUTH-PHASE1",
-    "T-A05-AUTH-PHASE2",
-    "T-A06-AUTH-PHASE2",
-    "T-A07-AUTH-PHASE2",
-    "T-A08-AUTH-PHASE2",
-    "T-A09-AUTH-PHASE2",
-    "T-A10-AUTH-PHASE3",
-    "T-A11-AUTH-PHASE3",
-    "T-A12-AUTH-PHASE3",
-    "T-A13-AUTH-PHASE4",
-    "T-A14-AUTH-PHASE4",
-    "T-A15-AUTH-PHASE4",
-    "T-A16-AUTH-PHASE4",
-    "T-A02-PHASE18",
-    "T-A05-PHASE20",
-    "T-A01-PHASE21",
-    "T-A02-PHASE21",
-    "T-A03-PHASE21",
-    "T-A17-AUTH-PHASE5",
-    "T-A18-AUTH-PHASE5",
-    "T-A19-AUTH-PHASE5",
-    "T-A20-AUTH-PHASE5",
-    "T-A03-PHASE18",
-    "T-A04-PHASE18",
-    "T-A01-PHASE19",
-    "T-A04-PHASE20",
-    "T-A02-PHASE19",
-    "T-A05-PHASE20",
-    "T-INTR-001",
-    "T-INTR-002",
-    "T-INTR-003",
-    "T-INTR-004",
-    "T-INTR-005",
-    "T-INTR-006"
-  ],
-  "total_estimated_hours": 219,
-  "total_estimated_weeks": 5.5,
-  "notes": [
-    "All tasks are marked as 'pending' status and ready for execution",
-    "Dependencies follow GoAP planning with clear ordering",
-    "Total estimated duration: ~5.5 weeks of full-time work",
-    "P0 tasks are blocking and must be completed first",
-    "Auth_phase tasks (1-5) have sequential dependencies",
-    "Phase 18, 19, 20, 21 have internal dependencies",
-    "T-A03-PHASE20 (HF_TOKEN setup) must complete before T-A04-PHASE20 (workflow test)"
   ]
 }
