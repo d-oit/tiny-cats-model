@@ -85,8 +85,10 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           pip install modal
-          modal volume get cats-model-outputs /outputs/cats_classifier.onnx ./cats_classifier.onnx || echo "No classifier ONNX found"
-          modal volume get cats-model-outputs /outputs/best_cats_model.pt ./best_cats_model.pt || echo "No classifier checkpoint found"
+          modal volume get cats-model-outputs /outputs/cats_classifier.onnx \
+            ./cats_classifier.onnx || echo "No classifier ONNX found"
+          modal volume get cats-model-outputs /outputs/best_cats_model.pt \
+            ./best_cats_model.pt || echo "No classifier checkpoint found"
 
       - name: Download generator from Modal (if needed)
         if: inputs.model_type == 'all' || inputs.model_type == 'generator'
@@ -95,8 +97,10 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           pip install modal
-          modal volume get dit-outputs /outputs/generator.onnx ./generator.onnx || echo "No generator ONNX found"
-          modal volume get dit-outputs /outputs/tinydit_final.pt ./tinydit_final.pt || echo "No generator checkpoint found"
+          modal volume get dit-outputs /outputs/generator.onnx \
+            ./generator.onnx || echo "No generator ONNX found"
+          modal volume get dit-outputs /outputs/tinydit_final.pt \
+            ./tinydit_final.pt || echo "No generator checkpoint found"
 
       - name: Quantize models
         run: |
