@@ -10,7 +10,7 @@ torchvision==0.20.1
 pillow==12.1.1
 
 # Progress bars
-tqdm==4.67.1
+tqdm==4.67.3
 
 # Modal SDK (for local development)
 modal==0.72.0
