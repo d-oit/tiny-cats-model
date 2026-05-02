@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import gc
 import logging
+import math
 import os
 import signal
 import subprocess
@@ -40,7 +41,7 @@ import modal
 import torch
 import torch.nn as nn
 from torch.optim import Adam
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+from torch.optim.lr_scheduler import LambdaLR
 
 # Optional auth utilities import (for enhanced error handling)
 try:
@@ -286,7 +287,7 @@ def train_one_epoch(
             if (batch_idx + 1) % 10 == 0:
                 logger.info(
                     f"  Epoch {epoch} | Batch {batch_idx + 1}/{len(loader)} | "
-                    f"Loss: {loss.item() * grad_accum_steps:.4f}"
+                    f"Loss: {loss.item() * grad_accum_steps:.6e}"
                 )
 
         except RuntimeError as e:
@@ -797,15 +798,18 @@ def train(
     optimizer = Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     loss_fn = nn.CrossEntropyLoss()
 
-    warmup_scheduler = LinearLR(
-        optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs
-    )
-    main_scheduler = CosineAnnealingLR(optimizer, T_max=epochs - warmup_epochs)
-    scheduler = SequentialLR(
-        optimizer,
-        schedulers=[warmup_scheduler, main_scheduler],
-        milestones=[warmup_epochs],
-    )
+    # LR scheduler with warmup and cosine annealing using LambdaLR (ADR-032)
+    def lr_lambda(current_epoch):
+        if current_epoch < warmup_epochs:
+            # Linear warmup: 0.01 -> 1.0
+            return 0.01 + 0.99 * float(current_epoch) / float(max(1, warmup_epochs))
+        # Cosine annealing: 1.0 -> 0.0
+        progress = float(current_epoch - warmup_epochs) / float(
+            max(1, epochs - warmup_epochs)
+        )
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    scheduler = LambdaLR(optimizer, lr_lambda)
 
     scaler = (
         torch.amp.GradScaler("cuda")
@@ -862,8 +866,8 @@ def train(
 
                 logger.info(
                     f"Epoch {epoch:>3}/{epochs} | "
-                    f"Train loss: {train_loss:.4f} acc: {train_acc:.3f} | "
-                    f"Val loss: {val_loss:.4f} acc: {val_acc:.3f} | "
+                    f"Train loss: {train_loss:.6e} acc: {train_acc:.3f} | "
+                    f"Val loss: {val_loss:.6e} acc: {val_acc:.3f} | "
                     f"LR: {current_lr:.2e} | "
                     f"Time: {elapsed:.1f}s"
                 )

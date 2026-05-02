@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import gc
 import logging
+import math
 import os
 import signal
 import sys
@@ -44,7 +45,7 @@ import modal
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+from torch.optim.lr_scheduler import LambdaLR
 
 # Optional auth utilities import (for enhanced error handling)
 try:
@@ -329,7 +330,7 @@ def save_checkpoint(
     }
 
     torch.save(checkpoint, path)
-    logger.info(f"Saved checkpoint at step {step:,} (loss={loss:.4f}) to {path}")
+    logger.info(f"Saved checkpoint at step {step:,} (loss={loss:.6e}) to {path}")
 
     if is_best:
         best_path = path.parent / f"best_{path.name}"
@@ -810,16 +811,18 @@ def train_dit_local(
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=1e-4, betas=(0.9, 0.95))
     loss_fn = FlowMatchingLoss(prediction_type="velocity")
 
-    # LR scheduler with warmup
-    warmup_scheduler = LinearLR(
-        optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_steps
-    )
-    main_scheduler = CosineAnnealingLR(optimizer, T_max=steps - warmup_steps)
-    scheduler = SequentialLR(
-        optimizer,
-        schedulers=[warmup_scheduler, main_scheduler],
-        milestones=[warmup_steps],
-    )
+    # LR scheduler with warmup and cosine annealing using LambdaLR (ADR-032)
+    def lr_lambda(current_step):
+        if current_step < warmup_steps:
+            # Linear warmup: 0.01 -> 1.0
+            return 0.01 + 0.99 * float(current_step) / float(max(1, warmup_steps))
+        # Cosine annealing: 1.0 -> 0.0
+        progress = float(current_step - warmup_steps) / float(
+            max(1, steps - warmup_steps)
+        )
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    scheduler = LambdaLR(optimizer, lr_lambda)
 
     # Mixed precision
     scaler = (
@@ -986,7 +989,7 @@ def train_dit_local(
                         if avg_loss < best_loss:
                             best_loss = avg_loss
                             patience_counter = 0
-                            logger.info(f"New best loss: {best_loss:.4f}")
+                            logger.info(f"New best loss: {best_loss:.6e}")
                         else:
                             improvement = best_loss - avg_loss
                             if improvement > 0.001:
@@ -1004,7 +1007,7 @@ def train_dit_local(
                                 f"Loss hasn't improved for 3 evaluations."
                             )
                             logger.info(
-                                f"Final best loss: {best_loss:.4f} at step {step:,}"
+                                f"Final best loss: {best_loss:.6e} at step {step:,}"
                             )
                             save_checkpoint(
                                 model=model,
@@ -1092,7 +1095,7 @@ def train_dit_local(
 
         # Final save
         logger.info("=" * 60)
-        logger.info(f"Training complete. Final loss: {best_loss:.4f}")
+        logger.info(f"Training complete. Final loss: {best_loss:.6e}")
 
         save_checkpoint(
             model=model,
