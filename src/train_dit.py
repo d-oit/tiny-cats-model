@@ -953,7 +953,7 @@ def train_dit_local(
 
                         logger.info(
                             f"Step {step:,}/{steps:,} | "
-                            f"Loss: {avg_loss:.4f} | "
+                            f"Loss: {avg_loss:.6e} | "
                             f"LR: {current_lr:.2e} | "
                             f"Speed: {steps_per_sec:.1f} steps/s | "
                             f"Effective batch: {effective_batch_size}"
