@@ -631,7 +631,9 @@ def train_dit_on_gpu(
                 method="dynamic",
                 model_type="generator",
             )
-            logger.info(f"✅ Quantized model saved to {quant_dir}/generator_quantized.onnx")
+            logger.info(
+                f"✅ Quantized model saved to {quant_dir}/generator_quantized.onnx"
+            )
 
             # Copy best .pt to root for easier CI download
             import shutil

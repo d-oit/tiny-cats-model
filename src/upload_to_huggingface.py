@@ -535,7 +535,9 @@ def upload_to_huggingface(
             )
 
         if quantized_classifier_path and Path(quantized_classifier_path).exists():
-            shutil.copy(quantized_classifier_path, classifier_dir / "model_quantized.onnx")
+            shutil.copy(
+                quantized_classifier_path, classifier_dir / "model_quantized.onnx"
+            )
             print(
                 f"Copied quantized classifier: {quantized_classifier_path} → {classifier_dir / 'model_quantized.onnx'}"
             )
@@ -552,7 +554,9 @@ def upload_to_huggingface(
             )
 
         if quantized_generator_path and Path(quantized_generator_path).exists():
-            shutil.copy(quantized_generator_path, generator_dir / "model_quantized.onnx")
+            shutil.copy(
+                quantized_generator_path, generator_dir / "model_quantized.onnx"
+            )
             print(
                 f"Copied quantized generator: {quantized_generator_path} → {generator_dir / 'model_quantized.onnx'}"
             )
