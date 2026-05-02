@@ -413,6 +413,8 @@ image = (
     .add_local_file("src/dit.py", "/app/dit.py")
     .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
     .add_local_file("src/dataset.py", "/app/dataset.py")
+    .add_local_file("src/export_dit_onnx.py", "/app/export_dit_onnx.py")
+    .add_local_file("src/optimize_onnx.py", "/app/optimize_onnx.py")
     .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
     .add_local_file("src/auth_utils.py", "/app/auth_utils.py")
     .add_local_file("src/retry_utils.py", "/app/retry_utils.py")
@@ -607,6 +609,38 @@ def train_dit_on_gpu(
             logger=logger,
             augmentation_level=augmentation_level,
         )
+
+        # Export to ONNX and Quantize (Issue #63)
+        logger.info("Exporting to ONNX...")
+        try:
+            from export_dit_onnx import export_generator_onnx, load_model
+            from optimize_onnx import optimize_onnx
+
+            onnx_path = "/outputs/generator.onnx"
+            quant_dir = "/outputs"
+
+            # Load best model for export
+            model_to_export = load_model(output, image_size=image_size)
+            export_generator_onnx(model_to_export, output_path=onnx_path)
+            logger.info(f"✅ Exported to {onnx_path}")
+
+            logger.info("Quantizing ONNX model...")
+            optimize_onnx(
+                model_path=onnx_path,
+                output_dir=quant_dir,
+                method="dynamic",
+                model_type="generator",
+            )
+            logger.info(f"✅ Quantized model saved to {quant_dir}/generator_quantized.onnx")
+
+            # Copy best .pt to root for easier CI download
+            import shutil
+
+            shutil.copy2(output, "/outputs/tinydit_final.pt")
+            logger.info("✅ Copied best model to /outputs/tinydit_final.pt")
+
+        except Exception as e:
+            logger.warning(f"ONNX export/quantization failed: {e}")
 
         # Commit volume after successful training (ADR-024: explicit commits)
         volume_outputs.commit()

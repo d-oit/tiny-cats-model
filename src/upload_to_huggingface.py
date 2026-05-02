@@ -418,6 +418,8 @@ def upload_to_huggingface(
     generator_path: str | Path | None = None,
     onnx_classifier_path: str | Path | None = None,
     onnx_generator_path: str | Path | None = None,
+    quantized_classifier_path: str | Path | None = None,
+    quantized_generator_path: str | Path | None = None,
     evaluation_report_path: str | Path | None = None,
     benchmark_report_path: str | Path | None = None,
     samples_dir: str | Path | None = None,
@@ -532,6 +534,12 @@ def upload_to_huggingface(
                 f"Copied ONNX classifier: {onnx_classifier_path} → {classifier_dir / 'model.onnx'}"
             )
 
+        if quantized_classifier_path and Path(quantized_classifier_path).exists():
+            shutil.copy(quantized_classifier_path, classifier_dir / "model_quantized.onnx")
+            print(
+                f"Copied quantized classifier: {quantized_classifier_path} → {classifier_dir / 'model_quantized.onnx'}"
+            )
+
         # Copy generator files
         if generator_path and Path(generator_path).exists():
             shutil.copy(generator_path, generator_dir / "model.pt")
@@ -541,6 +549,12 @@ def upload_to_huggingface(
             shutil.copy(onnx_generator_path, generator_dir / "model.onnx")
             print(
                 f"Copied ONNX generator: {onnx_generator_path} → {generator_dir / 'model.onnx'}"
+            )
+
+        if quantized_generator_path and Path(quantized_generator_path).exists():
+            shutil.copy(quantized_generator_path, generator_dir / "model_quantized.onnx")
+            print(
+                f"Copied quantized generator: {quantized_generator_path} → {generator_dir / 'model_quantized.onnx'}"
             )
 
         # Copy evaluation report
@@ -623,6 +637,16 @@ def parse_args() -> argparse.Namespace:
         help="Path to generator ONNX model",
     )
     parser.add_argument(
+        "--quantized-classifier",
+        type=str,
+        help="Path to quantized classifier ONNX model",
+    )
+    parser.add_argument(
+        "--quantized-generator",
+        type=str,
+        help="Path to quantized generator ONNX model",
+    )
+    parser.add_argument(
         "--evaluation-report",
         type=str,
         help="Path to evaluation JSON report",
@@ -680,6 +704,8 @@ def main() -> None:
             generator_path=args.generator,
             onnx_classifier_path=args.onnx_classifier,
             onnx_generator_path=args.onnx_generator,
+            quantized_classifier_path=args.quantized_classifier,
+            quantized_generator_path=args.quantized_generator,
             evaluation_report_path=args.evaluation_report,
             benchmark_report_path=args.benchmark_report,
             samples_dir=args.samples_dir,

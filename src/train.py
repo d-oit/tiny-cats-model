@@ -418,6 +418,8 @@ image = (
     .add_local_file("src/train.py", "/app/train.py")
     .add_local_file("src/dataset.py", "/app/dataset.py")
     .add_local_file("src/model.py", "/app/model.py")
+    .add_local_file("src/export_onnx.py", "/app/export_onnx.py")
+    .add_local_file("src/optimize_onnx.py", "/app/optimize_onnx.py")
     .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
     .add_local_file("src/auth_utils.py", "/app/auth_utils.py")
     .add_local_file("src/retry_utils.py", "/app/retry_utils.py")
@@ -597,6 +599,36 @@ def train_on_gpu(
             log_file=log_file,
             logger=logger,
         )
+
+        # Export to ONNX and Quantize (Issue #63)
+        logger.info("Exporting to ONNX...")
+        try:
+            from export_onnx import export_onnx
+            from optimize_onnx import optimize_onnx
+
+            onnx_path = "/outputs/cats_classifier.onnx"
+            quant_dir = "/outputs"
+
+            export_onnx(checkpoint_path=output, output_path=onnx_path)
+            logger.info(f"✅ Exported to {onnx_path}")
+
+            logger.info("Quantizing ONNX model...")
+            optimize_onnx(
+                model_path=onnx_path,
+                output_dir=quant_dir,
+                method="dynamic",
+                model_type="classifier",
+            )
+            logger.info(f"✅ Quantized model saved to {quant_dir}/cats_quantized.onnx")
+
+            # Copy best .pt to root for easier CI download
+            import shutil
+
+            shutil.copy2(output, "/outputs/best_cats_model.pt")
+            logger.info("✅ Copied best model to /outputs/best_cats_model.pt")
+
+        except Exception as e:
+            logger.warning(f"ONNX export/quantization failed: {e}")
 
         # Commit volume after successful training (ADR-024: explicit commits)
         volume_outputs.commit()
