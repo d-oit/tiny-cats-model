@@ -285,9 +285,9 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           pip install modal
-          modal volume get dit-outputs /outputs/generator.onnx ./generator.onnx
-          modal volume get dit-outputs /outputs/generator_quantized.onnx ./generator_quantized.onnx || true
-          modal volume get dit-outputs /outputs/tinydit_final.pt ./tinydit_final.pt || true
+          modal volume get dit-outputs /outputs/generator.onnx ./generator.onnx || echo "No generator ONNX found"
+          modal volume get dit-outputs /outputs/generator_quantized.onnx ./generator_quantized.onnx || echo "No quantized generator ONNX found"
+          modal volume get dit-outputs /outputs/tinydit_final.pt ./tinydit_final.pt || echo "No TinyDiT checkpoint found"
 
       - name: Upload to Hugging Face Hub
         if: env.HF_TOKEN != ''
