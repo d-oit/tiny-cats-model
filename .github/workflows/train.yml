@@ -59,22 +59,18 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: requirements*.txt
-
       - name: Install lint dependencies
         run: |
           pip install --upgrade pip
           pip install ruff
-
       - name: Run ruff format check
         run: ruff format --check .
-
       - name: Run ruff lint
         run: ruff check .
 
@@ -85,18 +81,15 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
           cache: pip
           cache-dependency-path: requirements*.txt
-
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-
       - name: Run tests
         run: |
           pytest tests/ -v --tb=short
@@ -108,19 +101,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
           cache: pip
           cache-dependency-path: requirements*.txt
-
       - name: Install dependencies
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
-
       - name: Verify model builds
         run: |
           python -c "
@@ -132,7 +122,6 @@ jobs:
           print(f'Model OK: {params:,} trainable parameters')
           assert params > 0, 'Model has no trainable parameters'
           "
-
       - name: Verify dataset module imports
         run: |
           python -c "
@@ -154,43 +143,37 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
+          cache: pip
+          cache-dependency-path: requirements*.txt
       - name: Install Modal
         run: pip install modal
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Run training
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
-          modal run src/train.py \
+          modal run src/train.py -- \
             --data-dir /data/cats
-
       - name: Download ONNX from Modal
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
-          pip install modal
           modal volume get cats-model-outputs /outputs/cats_classifier.onnx ./cats_classifier.onnx
           modal volume get cats-model-outputs /outputs/cats_quantized.onnx ./cats_quantized.onnx || true
           modal volume get cats-model-outputs /outputs/best_cats_model.pt ./best_cats_model.pt || true
-
       - name: Upload to Hugging Face Hub
         if: env.HF_TOKEN != ''
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           pip install huggingface_hub safetensors pillow
-
           # Run evaluation if generator checkpoint exists
           if [ -f "tinydit_final.pt" ]; then
             echo "Running evaluation..."
@@ -199,7 +182,6 @@ jobs:
               --output-dir samples/evaluation \
               --report-path evaluation_report.json || true
           fi
-
           # Run benchmarks if models exist
           if [ -f "tinydit_final.pt" ]; then
             echo "Running benchmarks..."
@@ -208,7 +190,6 @@ jobs:
               --benchmark-throughput --batch-sizes 1,4,8 \
               --report-path benchmark_report.json || true
           fi
-
           # Use comprehensive upload utility
           python src/upload_to_huggingface.py \
             --classifier best_cats_model.pt \
@@ -225,21 +206,20 @@ jobs:
           python -c "
           from huggingface_hub import HfApi
           api = HfApi()
-
           # Fallback: upload individual files
           import os
           if os.path.exists('cats_classifier.onnx'):
-              api.upload_file('cats_classifier.onnx', 'classifier/model.onnx', 'd4oit/tiny-cats-model')
+            api.upload_file('cats_classifier.onnx', 'classifier/model.onnx', 'd4oit/tiny-cats-model')
           if os.path.exists('cats_quantized.onnx'):
-              api.upload_file('cats_quantized.onnx', 'classifier/model_quantized.onnx', 'd4oit/tiny-cats-model')
+            api.upload_file('cats_quantized.onnx', 'classifier/model_quantized.onnx', 'd4oit/tiny-cats-model')
           if os.path.exists('best_cats_model.pt'):
-              api.upload_file('best_cats_model.pt', 'classifier/model.pt', 'd4oit/tiny-cats-model')
+            api.upload_file('best_cats_model.pt', 'classifier/model.pt', 'd4oit/tiny-cats-model')
           if os.path.exists('generator.onnx'):
-              api.upload_file('generator.onnx', 'generator/model.onnx', 'd4oit/tiny-cats-model')
+            api.upload_file('generator.onnx', 'generator/model.onnx', 'd4oit/tiny-cats-model')
           if os.path.exists('generator_quantized.onnx'):
-              api.upload_file('generator_quantized.onnx', 'generator/model_quantized.onnx', 'd4oit/tiny-cats-model')
+            api.upload_file('generator_quantized.onnx', 'generator/model_quantized.onnx', 'd4oit/tiny-cats-model')
           if os.path.exists('tinydit_final.pt'):
-              api.upload_file('tinydit_final.pt', 'generator/model.pt', 'd4oit/tiny-cats-model')
+            api.upload_file('tinydit_final.pt', 'generator/model.pt', 'd4oit/tiny-cats-model')
           print('Files uploaded successfully')
           "
 
@@ -254,48 +234,42 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
+          cache: pip
+          cache-dependency-path: requirements*.txt
       - name: Install Modal
         run: pip install modal
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Run DiT training
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
-          modal run src/train_dit.py \
+          modal run src/train_dit.py -- \
             --data-dir /data/cats \
             --steps ${{ github.event.inputs.steps || '100000' }} \
             --batch-size ${{ github.event.inputs.batch_size || '512' }} \
             --lr ${{ github.event.inputs.lr || '5e-5' }} \
             --warmup-steps ${{ github.event.inputs.warmup_steps || '2000' }} \
             --gradient-accumulation-steps ${{ github.event.inputs.gradient_accumulation_steps || '1' }}
-
       - name: Download ONNX from Modal
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
-          pip install modal
           modal volume get dit-outputs /outputs/generator.onnx ./generator.onnx || echo "No generator ONNX found"
           modal volume get dit-outputs /outputs/generator_quantized.onnx ./generator_quantized.onnx || echo "No quantized generator ONNX found"
           modal volume get dit-outputs /outputs/tinydit_final.pt ./tinydit_final.pt || echo "No TinyDiT checkpoint found"
-
       - name: Upload to Hugging Face Hub
         if: env.HF_TOKEN != ''
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           pip install huggingface_hub safetensors pillow
-
           # Run evaluation if generator checkpoint exists
           if [ -f "tinydit_final.pt" ]; then
             echo "Running evaluation..."
@@ -304,7 +278,6 @@ jobs:
               --output-dir samples/evaluation \
               --report-path evaluation_report.json || true
           fi
-
           # Run benchmarks if models exist
           if [ -f "tinydit_final.pt" ] || [ -f "generator.onnx" ]; then
             echo "Running benchmarks..."
@@ -313,7 +286,6 @@ jobs:
               --benchmark-throughput --batch-sizes 1,4,8 \
               --report-path benchmark_report.json || true
           fi
-
           # Use comprehensive upload utility
           python src/upload_to_huggingface.py \
             --generator tinydit_final.pt \
@@ -327,14 +299,13 @@ jobs:
           python -c "
           from huggingface_hub import HfApi
           api = HfApi()
-
           # Fallback: upload individual files
           import os
           if os.path.exists('generator.onnx'):
-              api.upload_file('generator.onnx', 'generator/model.onnx', 'd4oit/tiny-cats-model')
+            api.upload_file('generator.onnx', 'generator/model.onnx', 'd4oit/tiny-cats-model')
           if os.path.exists('generator_quantized.onnx'):
-              api.upload_file('generator_quantized.onnx', 'generator/model_quantized.onnx', 'd4oit/tiny-cats-model')
+            api.upload_file('generator_quantized.onnx', 'generator/model_quantized.onnx', 'd4oit/tiny-cats-model')
           if os.path.exists('tinydit_final.pt'):
-              api.upload_file('tinydit_final.pt', 'generator/model.pt', 'd4oit/tiny-cats-model')
+            api.upload_file('tinydit_final.pt', 'generator/model.pt', 'd4oit/tiny-cats-model')
           print('Files uploaded successfully')
           "
