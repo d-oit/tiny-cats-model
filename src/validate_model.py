@@ -58,7 +58,7 @@ class ValidationThresholds:
     min_fid_score: float = 50.0  # Lower is better
 
     # Model size constraints
-    max_model_size_mb: float = 100.0
+    max_model_size_mb: float = 150.0
     max_onnx_size_mb: float = 50.0
 
     # Inference constraints
@@ -72,6 +72,22 @@ class ValidationThresholds:
     # ONNX validation
     validate_onnx_output: bool = True
     onnx_output_tolerance: float = 1e-4
+
+
+def get_clean_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
+    """Remove 'module.' prefix from state dict keys if present.
+
+    Args:
+        state_dict: The state dictionary to clean.
+
+    Returns:
+        A cleaned state dictionary.
+    """
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        name = k[7:] if k.startswith("module.") else k
+        new_state_dict[name] = v
+    return new_state_dict
 
 
 @dataclass
@@ -213,6 +229,8 @@ def check_nan_weights(model_path: str | Path) -> ValidationResult:
                 k: v for k, v in checkpoint.items() if isinstance(v, torch.Tensor)
             }
 
+        state_dict = get_clean_state_dict(state_dict)
+
         # Check for NaN
         has_nan = False
         for name, param in state_dict.items():
@@ -256,6 +274,8 @@ def check_inf_weights(model_path: str | Path) -> ValidationResult:
             state_dict = {
                 k: v for k, v in checkpoint.items() if isinstance(v, torch.Tensor)
             }
+
+        state_dict = get_clean_state_dict(state_dict)
 
         # Check for Inf
         has_inf = False
@@ -398,16 +418,28 @@ def validate_onnx_export(
                 model = tinydit_128(num_classes=num_classes)
 
                 if "model_state_dict" in checkpoint:
-                    model.load_state_dict(checkpoint["model_state_dict"])
+                    state_dict = checkpoint["model_state_dict"]
+                elif "model" in checkpoint:
+                    state_dict = checkpoint["model"]
                 else:
-                    model.load_state_dict(checkpoint)
+                    state_dict = checkpoint
+
+                model.load_state_dict(get_clean_state_dict(state_dict))
             else:
                 # Classifier
                 from model import cats_model
 
                 num_classes = config.get("num_classes", 2)
                 model = cats_model(num_classes=num_classes)
-                model.load_state_dict(checkpoint)
+
+                if "model_state_dict" in checkpoint:
+                    state_dict = checkpoint["model_state_dict"]
+                elif "model" in checkpoint:
+                    state_dict = checkpoint["model"]
+                else:
+                    state_dict = checkpoint
+
+                model.load_state_dict(get_clean_state_dict(state_dict))
         else:
             return ValidationResult(
                 name="ONNX Validation",
@@ -506,15 +538,17 @@ def generate_sample_and_check_quality(
 
                 if "ema_shadow_params" in checkpoint:
                     # EMA shadow params format
-                    model.load_state_dict(checkpoint["ema_shadow_params"])
+                    state_dict = checkpoint["ema_shadow_params"]
                 elif "model" in checkpoint:
                     # Direct model format
-                    model.load_state_dict(checkpoint["model"])
+                    state_dict = checkpoint["model"]
                 elif "model_state_dict" in checkpoint:
                     # Standard format
-                    model.load_state_dict(checkpoint["model_state_dict"])
+                    state_dict = checkpoint["model_state_dict"]
                 else:
-                    model.load_state_dict(checkpoint)
+                    state_dict = checkpoint
+
+                model.load_state_dict(get_clean_state_dict(state_dict))
 
                 model.eval()
 

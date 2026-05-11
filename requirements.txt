@@ -11,3 +11,4 @@ onnxruntime-tools>=1.7.0
 onnx>=1.21.0
 onnxscript>=0.7.0
 mlflow>=3.11.1
+gradio>=4.0.0
