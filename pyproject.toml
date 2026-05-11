@@ -110,7 +110,11 @@ ignore = ["E203", "E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
-filterwarnings = ["ignore::DeprecationWarning"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore:.*lr_scheduler.step().* before .*optimizer.step().*:UserWarning",
+    "ignore:.*pin_memory.*:UserWarning"
+]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]

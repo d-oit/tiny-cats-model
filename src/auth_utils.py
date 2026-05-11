@@ -357,6 +357,8 @@ def setup_auth_logging(
     auth_logger.setLevel(level)
 
     # Clear existing handlers
+    for handler in auth_logger.handlers:
+        handler.close()
     auth_logger.handlers.clear()
 
     # Console handler with structured format
