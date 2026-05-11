@@ -26,12 +26,17 @@ NC='\033[0m' # No Color
 # Track failures
 FAILURES=0
 STRICT=false
+COVERAGE=false
 
 # Parse arguments
-if [[ "${1:-}" == "--strict" ]]; then
-    STRICT=true
-    set -e  # Exit on first failure
-fi
+for arg in "$@"; do
+    if [[ "$arg" == "--strict" ]]; then
+        STRICT=true
+        set -e  # Exit on first failure
+    elif [[ "$arg" == "--coverage" ]]; then
+        COVERAGE=true
+    fi
+done
 
 # Helper functions
 log_info() {
@@ -233,8 +238,17 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Running tests (pytest)..."
 
-if PYTEST_OUTPUT=$(python -m pytest tests/ -v -m "not slow" --tb=short 2>&1); then
+PYTEST_ARGS=(tests/ -v -m "not slow" --tb=short)
+if [[ "$COVERAGE" == true ]]; then
+    PYTEST_ARGS+=(--cov=src --cov-report=term-missing --cov-report=xml:coverage.xml)
+    log_info "Coverage reporting enabled"
+fi
+
+if PYTEST_OUTPUT=$(python -m pytest "${PYTEST_ARGS[@]}" 2>&1); then
     log_success "All tests passed"
+    if [[ "$COVERAGE" == true ]]; then
+        echo "$PYTEST_OUTPUT" | grep -A 100 "TOTAL"
+    fi
 else
     log_error "Tests failed"
     echo "$PYTEST_OUTPUT" | tail -30
