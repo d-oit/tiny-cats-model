@@ -3,8 +3,8 @@
 # Use with: .uv_pip_install_from_requirements("requirements-modal.txt")
 
 # Core ML dependencies
-torch==2.11.0
-torchvision==0.26.0
+torch==2.12.0
+torchvision==0.27.0
 
 # Image processing
 pillow==12.2.0
@@ -13,11 +13,11 @@ pillow==12.2.0
 tqdm==4.67.3
 
 # Modal SDK (for local development)
-modal==1.4.2
+modal==1.4.3
 
 # HuggingFace Hub integration (ADR-026)
-huggingface_hub==1.12.0
+huggingface_hub==1.15.0
 safetensors==0.7.0
 
 # Experiment tracking (ADR-027)
-mlflow==3.11.1
+mlflow==3.12.0
