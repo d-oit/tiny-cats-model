@@ -16,8 +16,8 @@ tqdm==4.67.3
 modal==1.4.3
 
 # HuggingFace Hub integration (ADR-026)
-huggingface_hub==1.15.0
+huggingface_hub==1.17.0
 safetensors==0.7.0
 
 # Experiment tracking (ADR-027)
-mlflow==3.12.0
+mlflow==3.13.0
