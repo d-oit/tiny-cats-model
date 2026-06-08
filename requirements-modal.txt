@@ -10,14 +10,14 @@ torchvision==0.27.0
 pillow==12.2.0
 
 # Progress bars
-tqdm==4.67.3
+tqdm==4.68.1
 
 # Modal SDK (for local development)
 modal==1.4.3
 
 # HuggingFace Hub integration (ADR-026)
-huggingface_hub==1.15.0
+huggingface_hub==1.18.0
 safetensors==0.7.0
 
 # Experiment tracking (ADR-027)
-mlflow==3.12.0
+mlflow==3.13.0
