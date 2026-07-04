@@ -18,7 +18,7 @@ Usage:
 
 Modal GPU training:
     modal run src/train.py data/cats
-    modal run src/train.py -- --epochs 20 --batch-size 64 --backbone resnet34
+    modal run src/train.py --epochs 20 --batch-size 64 --backbone resnet34
 """
 
 from __future__ import annotations
@@ -419,6 +419,8 @@ image = (
         "torchvision==0.20.1",
         "pillow==11.0.0",
         "tqdm==4.67.1",
+        "onnx==1.17.0",
+        "onnxruntime==1.20.0",
     )
     .add_local_file("src/train.py", "/app/train.py")
     .add_local_file("src/dataset.py", "/app/dataset.py")
@@ -692,7 +694,7 @@ def main(
 
     Usage:
         modal run src/train.py data/cats --epochs 20 --batch-size 64
-        modal run src/train.py -- --epochs 20 --batch-size 64 --backbone resnet34
+        modal run src/train.py --epochs 20 --batch-size 64 --backbone resnet34
     """
     result = train_on_gpu.remote(
         data_dir=data_dir,
