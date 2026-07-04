@@ -486,6 +486,7 @@ def train_dit_on_gpu(
     ema_beta: float = 0.9999,
     seed: int = 42,
     augmentation_level: str = "full",
+    resume_checkpoint: str | None = None,
 ) -> dict[str, Any]:
     """Modal function for DiT GPU training.
 
@@ -509,6 +510,9 @@ def train_dit_on_gpu(
         ema_beta: EMA decay.
         seed: Random seed.
         augmentation_level: Level of data augmentation ("basic", "medium", "full").
+        resume_checkpoint: Explicit path to resume from (overrides auto-detection).
+            Auto-detection kicks in when this is None and a checkpoint already
+            exists at ``output``.
 
     Returns:
         Training status dict.
@@ -544,22 +548,31 @@ def train_dit_on_gpu(
     # Initialize container (ADR-025)
     _initialize_dit_container()
 
-    from datetime import datetime
-
     # Import DiT modules after container initialization (ADR-042)
     # This ensures sys.path is set correctly in Modal container
 
-    # Create dated checkpoint directory (ADR-024: organized storage)
-    run_date = datetime.now().strftime("%Y-%m-%d")
-    checkpoint_dir = f"/outputs/checkpoints/dit/{run_date}"
+    # Use a stable (non-dated) checkpoint directory so Modal retries and
+    # manually re-triggered runs can find and resume prior progress.
+    # A dated directory meant every retry silently restarted from step 0.
+    checkpoint_dir = "/outputs/checkpoints/dit/current"
     Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
     samples_dir = f"{checkpoint_dir}/samples"
     Path(samples_dir).mkdir(parents=True, exist_ok=True)
 
-    # Use dated directory for outputs and logs
+    # Stable output paths enable resume across retries
     output = output or f"{checkpoint_dir}/dit_model.pt"
     ema_output = ema_output or f"{checkpoint_dir}/dit_model_ema.pt"
     log_file = log_file or f"{checkpoint_dir}/dit_training.log"
+
+    # Auto-resume: if a checkpoint already exists (e.g. from a prior Modal retry),
+    # pass it through to train_dit_local so training continues from that step.
+    # resume_checkpoint overrides auto-detection when set explicitly.
+    resume: str | None = resume_checkpoint
+    if resume is None and Path(output).exists():
+        resume = output
+        logger.info(f"Found existing checkpoint; will resume from: {output}")
+    elif resume is not None:
+        logger.info(f"Using explicit resume checkpoint: {resume}")
 
     # Setup training-specific logging (after auth validation)
     logger = setup_logging(log_file)
@@ -608,6 +621,7 @@ def train_dit_on_gpu(
             ema_beta=ema_beta,
             seed=seed,
             logger=logger,
+            resume=resume,
             augmentation_level=augmentation_level,
         )
 
@@ -1150,12 +1164,14 @@ def main(
     gradient_accumulation_steps: int = 1,
     warmup_steps: int = 2_000,
     augmentation_level: str = "full",
+    resume: str | None = None,
 ):
     """Local entrypoint for Modal CLI.
 
     Usage:
         modal run src/train_dit.py data/cats --steps 100000
         modal run src/train_dit.py -- --steps 100000 --batch-size 512 --lr 5e-5
+        modal run src/train_dit.py -- --resume /outputs/checkpoints/dit/current/dit_model.pt
     """
     result = train_dit_on_gpu.remote(
         data_dir=data_dir,
@@ -1171,6 +1187,7 @@ def main(
         gradient_accumulation_steps=gradient_accumulation_steps,
         warmup_steps=warmup_steps,
         augmentation_level=augmentation_level,
+        resume_checkpoint=resume,
     )
     print(f"Training completed: {result}")
 
