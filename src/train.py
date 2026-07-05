@@ -842,8 +842,7 @@ def train(
             ckpt_data = torch.load(output_path, map_location="cpu", weights_only=False)
             best_val_acc = float(ckpt_data.get("val_acc", 0.0))
             logger.info(
-                f"Resumed from epoch {start_epoch - 1}, "
-                f"best_val_acc={best_val_acc:.4f}"
+                f"Resumed from epoch {start_epoch - 1}, best_val_acc={best_val_acc:.4f}"
             )
         except Exception as exc:
             logger.warning(
