@@ -138,7 +138,11 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--data-dir",         dest="data_dir",         type=str,         required=True,         help="Path to dataset root (ImageFolder format)"
+            "--data-dir",
+            dest="data_dir",
+            type=str,
+            required=True,
+            help="Path to dataset root (ImageFolder format)",
     )
     parser.add_argument(
         "--epochs", type=int, default=10, help="Number of training epochs"
