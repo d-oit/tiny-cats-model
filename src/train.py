@@ -537,14 +537,13 @@ def train_on_gpu(
     # Initialize container (ADR-025: cold start optimization)
     _initialize_container()
 
-    from datetime import datetime
-
-    # Create dated checkpoint directory (ADR-024: organized storage)
-    run_date = datetime.now().strftime("%Y-%m-%d")
-    checkpoint_dir = f"/outputs/checkpoints/classifier/{run_date}"
+    # Use a stable (non-dated) checkpoint directory so Modal retries and
+    # manually re-triggered runs can find and resume prior progress.
+    # Dated directories meant every retry silently restarted from epoch 0.
+    checkpoint_dir = "/outputs/checkpoints/classifier/current"
     Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
 
-    # Use dated directory for output and logs
+    # Stable output path enables resume across retries
     output = output or f"{checkpoint_dir}/cats_model.pt"
     log_file = f"{checkpoint_dir}/training.log"
 
@@ -727,8 +726,14 @@ def train(
     log_file: str | None = None,
     logger: logging.Logger | None = None,
     seed: int = 42,
+    resume: bool = True,
 ) -> float:
-    """Full training loop with validation, checkpointing, and memory management."""
+    """Full training loop with validation, checkpointing, and memory management.
+
+    Args:
+        resume: If True, automatically resume from an existing checkpoint at
+                ``output`` (enables Modal retry/preemption recovery).
+    """
     if logger is None:
         logger = setup_logging(log_file)
 
@@ -825,6 +830,26 @@ def train(
     best_val_acc = 0.0
     start_epoch = 1
     shutdown_requested = False
+
+    # Auto-resume: if a checkpoint exists at the output path, load it so that
+    # Modal retries and preemptions don't restart from epoch 0.
+    output_path = Path(output)
+    if resume and output_path.exists():
+        try:
+            model, optimizer, start_epoch = load_checkpoint(
+                output_path, model, optimizer, logger
+            )
+            ckpt_data = torch.load(output_path, map_location="cpu", weights_only=False)
+            best_val_acc = float(ckpt_data.get("val_acc", 0.0))
+            logger.info(
+                f"Resumed from epoch {start_epoch - 1}, best_val_acc={best_val_acc:.4f}"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"Could not resume from {output_path}: {exc}. Starting fresh."
+            )
+            start_epoch = 1
+            best_val_acc = 0.0
 
     def signal_handler(signum: int, frame: Any) -> None:
         nonlocal shutdown_requested
