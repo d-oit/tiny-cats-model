@@ -558,7 +558,7 @@ IF upload fails (A12):
 ### A01: validate_modal_cli Checklist
 - [ ] Install modal CLI if needed
 - [ ] Run `modal token set` if not authenticated
-- [ ] Execute test training run: `modal run src/train.py -- --epochs 1`
+- [ ] Execute test training run: `modal run src/train.py --epochs 1`
 - [ ] Verify training completes without errors
 - [ ] Check checkpoint saved to volume
 - [ ] Update deployment_state.json

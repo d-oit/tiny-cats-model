@@ -93,7 +93,7 @@ modal token new
 modal run src/train.py
 
 # Run with custom options
-modal run src/train.py -- --epochs 20 --batch-size 64
+modal run src/train.py --epochs 20 --batch-size 64
 ```
 
 ## Full Verification

@@ -924,7 +924,7 @@ modal token new
 
 # Run training
 modal run src/train.py
-modal run src/train.py -- --epochs 20 --batch-size 64
+modal run src/train.py --epochs 20 --batch-size 64
 ```
 
 **Pattern**: Always use Modal volumes for persistent storage. Download data inside container or pre-upload to volume.

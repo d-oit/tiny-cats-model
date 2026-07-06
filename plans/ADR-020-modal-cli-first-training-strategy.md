@@ -48,8 +48,8 @@ modal run src/train.py data/cats --epochs 20 --batch-size 64
 modal run src/train_dit.py data/cats --steps 200000 --batch-size 256
 
 # With custom options
-modal run src/train.py -- --epochs 30 --lr 0.0001 --backbone resnet34
-modal run src/train_dit.py -- --steps 100000 --image-size 256
+modal run src/train.py --epochs 30 --lr 0.0001 --backbone resnet34
+modal run src/train_dit.py --steps 100000 --image-size 256
 ```
 
 ### 2. modal.yml as Documentation Reference
@@ -145,12 +145,12 @@ python src/train.py data/cats --epochs 20
 | **Classifier Training** | |
 | Modal GPU (default) | `modal run src/train.py data/cats` |
 | Modal GPU (custom epochs) | `modal run src/train.py data/cats --epochs 30` |
-| Modal GPU (all options) | `modal run src/train.py -- --epochs 20 --batch-size 64 --backbone resnet34` |
+| Modal GPU (all options) | `modal run src/train.py --epochs 20 --batch-size 64 --backbone resnet34` |
 | Local CPU (debug) | `python src/train.py data/cats --epochs 1 --batch-size 8` |
 | **DiT Training** | |
 | Modal GPU (default) | `modal run src/train_dit.py data/cats` |
 | Modal GPU (custom steps) | `modal run src/train_dit.py data/cats --steps 100000` |
-| Modal GPU (all options) | `modal run src/train_dit.py -- --steps 200000 --batch-size 256 --lr 0.0001` |
+| Modal GPU (all options) | `modal run src/train_dit.py --steps 200000 --batch-size 256 --lr 0.0001` |
 | Local CPU (debug) | `python src/train_dit.py data/cats --steps 100 --batch-size 8` |
 | **Authentication** | |
 | Setup Modal tokens | `modal token set` |
@@ -219,8 +219,8 @@ def main(
 Modal CLI passes arguments to scripts:
 
 ```bash
-# Arguments after -- go to the script
-modal run src/train.py -- --epochs 20 --batch-size 64
+# Arguments are passed directly to the script
+modal run src/train.py --epochs 20 --batch-size 64
 
 # Or positional arguments directly
 modal run src/train.py data/cats

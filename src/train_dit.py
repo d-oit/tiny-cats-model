@@ -409,6 +409,8 @@ image = (
         "torchvision==0.20.1",
         "pillow==11.0.0",
         "tqdm==4.67.1",
+        "onnx==1.17.0",
+        "onnxruntime==1.20.0",
     )
     .add_local_file("src/train_dit.py", "/app/train_dit.py")
     .add_local_file("src/dit.py", "/app/dit.py")
@@ -1170,8 +1172,8 @@ def main(
 
     Usage:
         modal run src/train_dit.py data/cats --steps 100000
-        modal run src/train_dit.py -- --steps 100000 --batch-size 512 --lr 5e-5
-        modal run src/train_dit.py -- --resume /outputs/checkpoints/dit/current/dit_model.pt
+        modal run src/train_dit.py --steps 100000 --batch-size 512 --lr 5e-5
+        modal run src/train_dit.py --resume /outputs/checkpoints/dit/current/dit_model.pt
     """
     result = train_dit_on_gpu.remote(
         data_dir=data_dir,
