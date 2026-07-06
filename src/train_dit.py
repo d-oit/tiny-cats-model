@@ -409,6 +409,8 @@ image = (
         "torchvision==0.20.1",
         "pillow==11.0.0",
         "tqdm==4.67.1",
+        "onnx==1.17.0",
+        "onnxruntime==1.20.0",
     )
     .add_local_file("src/train_dit.py", "/app/train_dit.py")
     .add_local_file("src/dit.py", "/app/dit.py")
