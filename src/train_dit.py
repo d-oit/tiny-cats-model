@@ -849,6 +849,9 @@ def train_dit_local(
     if scaler:
         logger.info("Mixed precision training enabled (AMP)")
 
+    # Null token for CFG dropout (matches forward_with_cfg)
+    null_token = torch.tensor(num_classes - 1, device=device)
+
     # EMA
     ema = EMA(beta=ema_beta)
     ema.init(model)
@@ -880,9 +883,9 @@ def train_dit_local(
         )
         # Use loaded EMA if available
         ema = _ema if _ema is not None else ema
-        # Adjust scheduler to current step
-        for _ in range(start_step):
-            scheduler.step()
+        # Adjust scheduler to current step without triggering the
+        # "scheduler.step() before optimizer.step()" warning
+        scheduler.last_epoch = start_step - 1
 
     # Training state
     best_loss = float("inf")
@@ -925,8 +928,19 @@ def train_dit_local(
                 context = torch.amp.autocast("cuda") if scaler else nullcontext()
 
                 with context:
-                    # Flow matching step
-                    pred, target = flow_matching_step(model, images, images, t, breeds)
+                    # Classifier-free guidance: drop breed conditioning 10% of time
+                    # Uses same null token as forward_with_cfg (num_classes - 1)
+                    dropout_prob = 0.1
+                    drop_mask = (
+                        torch.rand(breeds.shape[0], device=device) < dropout_prob
+                    )
+                    train_breeds = torch.where(drop_mask, null_token, breeds)
+
+                    # Flow matching: x0 is noise, x1 is target image
+                    x0 = torch.randn_like(images)
+                    pred, target = flow_matching_step(
+                        model, x0, images, t, train_breeds
+                    )
                     # Normalize loss by accumulation steps for correct gradient scaling
                     loss = loss_fn(pred, target) / gradient_accumulation_steps
 
