@@ -16,13 +16,13 @@
 #
 # Classifier Training:
 #   modal run src/train.py data/cats                    # Default settings
-#   modal run src/train.py data/cats -- --epochs 20     # Custom epochs
-#   modal run src/train.py -- --epochs 20 --batch-size 64 --backbone resnet34
+#   modal run src/train.py --data-dir data/cats --epochs 20     # Custom epochs
+#   modal run src/train.py --epochs 20 --batch-size 64 --backbone resnet34
 #
 # DiT Training:
 #   modal run src/train_dit.py data/cats                # Default settings
-#   modal run src/train_dit.py -- --steps 200000        # Custom steps
-#   modal run src/train_dit.py -- --steps 200000 --batch-size 256 --lr 0.0001
+#   modal run src/train_dit.py --data-dir data/cats --steps 200000        # Custom steps
+#   modal run src/train_dit.py --data-dir data/cats --steps 200000 --batch-size 256 --lr 0.0001
 #
 # Local Testing (CPU):
 #   python src/train.py data/cats --epochs 1 --batch-size 8

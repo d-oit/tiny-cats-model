@@ -1170,8 +1170,8 @@ def main(
 
     Usage:
         modal run src/train_dit.py data/cats --steps 100000
-        modal run src/train_dit.py -- --steps 100000 --batch-size 512 --lr 5e-5
-        modal run src/train_dit.py -- --resume /outputs/checkpoints/dit/current/dit_model.pt
+        modal run src/train_dit.py --steps 100000 --batch-size 512 --lr 5e-5
+        modal run src/train_dit.py --resume /outputs/checkpoints/dit/current/dit_model.pt
     """
     result = train_dit_on_gpu.remote(
         data_dir=data_dir,

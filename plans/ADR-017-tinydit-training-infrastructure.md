@@ -105,7 +105,8 @@ modal run src/train_dit.py data/cats
 python src/train_dit.py data/cats --resume checkpoints/dit_model.pt
 
 # Custom configuration (Modal GPU)
-modal run src/train_dit.py -- \
+modal run src/train_dit.py \
+  --data-dir data/cats \
   --steps 200000 \
   --batch-size 256 \
   --lr 0.0001 \
