@@ -4,24 +4,24 @@
 
 # Core ML dependencies
 torch==2.12.1
-torchvision==0.27.0
+torchvision==0.27.1
 
 # Image processing
-pillow==12.2.0
+pillow==12.3.0
 
 # Progress bars
-tqdm==4.67.3
+tqdm==4.68.3
 
 # Modal SDK (for local development)
-modal==1.4.3
+modal==1.5.1
 
 # HuggingFace Hub integration (ADR-026)
-huggingface_hub==1.15.0
-safetensors==0.7.0
+huggingface_hub==1.22.0
+safetensors==0.8.0
 
 # Experiment tracking (ADR-027)
-mlflow==3.12.0
+mlflow==3.14.0
 
 # ONNX export support (ADR-022)
-onnx==1.21.0
+onnx==1.22.0
 onnxruntime==1.23.2
