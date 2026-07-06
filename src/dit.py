@@ -334,8 +334,10 @@ class TinyDiT(nn.Module):
             embed_dim=embed_dim,
         )
 
-        # Class embedding (breed conditioning)
-        self.breed_embedder = BreedEmbedder(num_breeds=num_classes, embed_dim=embed_dim)
+        # Class embedding (breed conditioning + 1 dedicated null token for CFG)
+        self.breed_embedder = BreedEmbedder(
+            num_breeds=num_classes + 1, embed_dim=embed_dim
+        )
 
         # Timestep embedding
         self.t_embedder = TimestepEmbedder(hidden_size=embed_dim)
@@ -435,8 +437,8 @@ class TinyDiT(nn.Module):
         if cfg_scale == 1.0:
             return self.forward(x, t, breeds)
 
-        # Unconditional pass (use special "other" class)
-        uncond = torch.full_like(breeds, self.num_classes - 1)
+        # Unconditional pass (use dedicated null token)
+        uncond = torch.full_like(breeds, self.num_classes)
         pred_uncond = self.forward(x, t, uncond)
         pred_cond = self.forward(x, t, breeds)
 
