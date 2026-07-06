@@ -203,10 +203,14 @@ def load_model(
 
     # Load checkpoint if it exists
     if checkpoint_path.exists():
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint = torch.load(
+            checkpoint_path, map_location=device, weights_only=False
+        )
 
         # Handle different checkpoint formats
-        if "model" in checkpoint:
+        if "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
+        elif "model" in checkpoint:
             state_dict = checkpoint["model"]
         elif "ema_params" in checkpoint and checkpoint["ema_params"] is not None:
             state_dict = checkpoint["ema_params"]
