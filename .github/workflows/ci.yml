@@ -18,6 +18,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Tighten GITHUB_TOKEN scope (addresses CodeQL "workflow does not contain
+# permissions" alert on this workflow). `contents: read` is sufficient for
+# actions/checkout and actions/upload-artifact at v4+. This block is INHERITED
+# by every job — override locally with `permissions: { contents: write }` only
+# on jobs that need to commit back to the repo (e.g., auto-format commit).
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint
@@ -134,3 +142,31 @@ jobs:
           name: frontend-dist
           path: ./frontend/dist
           retention-days: 7
+
+  guardrail-deps:
+    # Unconditional guardrail (no `paths:` filter) so every PR triggers it.
+    # This makes the check a reliable required-status-check that catches
+    # Dependabot bumps to versions that don't exist on PyPI (the bug that
+    # caused PR #95 to fail with `onnxruntime>=1.24.3`). Complements PR
+    # #96 (version constraint in requirements) and PR #97 (dependabot
+    # ignore rule). Pure-shell grep so there's no Python/packaging dep.
+    name: Dependency guardrail
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Forbid onnxruntime >= 1.24.0 or >= 2.0.0
+        run: |
+          # Forbid any constraint that allows onnxruntime 1.24+ or 2.x
+          # (neither exists on PyPI; latest valid is 1.23.2).
+          # `1\.(2[4-9]|[3-9][0-9])` matches 1.24-1.99 generically instead
+          # of a hand-listed version set.
+          # `[^#\n]*` stops at inline `#` comments.
+          matches=$(grep -nE 'onnxruntime[^#\n]*(\b>=|\b==|\b~=)\s*(2\.|1\.(2[4-9]|[3-9][0-9]))' requirements.txt requirements-modal.txt || true)
+          if [ -n "$matches" ]; then
+            echo "::error::onnxruntime constraint allows a non-existent version (>= 1.24.0 or >= 2.0.0; latest on PyPI is 1.23.2):"
+            echo "$matches"
+            exit 1
+          fi
+          echo "OK: every onnxruntime constraint excludes 1.24+ and 2.x"
