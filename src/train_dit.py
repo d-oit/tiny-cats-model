@@ -925,8 +925,10 @@ def train_dit_local(
                 context = torch.amp.autocast("cuda") if scaler else nullcontext()
 
                 with context:
-                    # Flow matching step
-                    pred, target = flow_matching_step(model, images, images, t, breeds)
+                    # x0 must be independent noise so target velocity
+                    # (x1 - x0) is non-zero. (Prior bug collapsed target to zero.)
+                    x0 = torch.randn_like(images)
+                    pred, target = flow_matching_step(model, x0, images, t, breeds)
                     # Normalize loss by accumulation steps for correct gradient scaling
                     loss = loss_fn(pred, target) / gradient_accumulation_steps
 
