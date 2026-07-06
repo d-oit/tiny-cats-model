@@ -20,3 +20,10 @@ updates:
       pip-dependencies:
         patterns:
           - "*"
+    # Ignore onnxruntime versions that do not exist on PyPI yet.
+    # Dependabot's version map hallucinated 1.24.x; the latest published
+    # release is 1.23.2. Drop this ignore once 1.24+ ships GA so future
+    # bumps are picked up normally.
+    ignore:
+      - dependency-name: "onnxruntime"
+        versions: [">= 1.24.0"]
