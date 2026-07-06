@@ -58,9 +58,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -80,9 +80,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.10"
           cache: pip
@@ -102,9 +102,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.10"
           cache: pip
@@ -146,9 +146,9 @@ jobs:
     timeout-minutes: 180
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -175,7 +175,7 @@ jobs:
           modal volume get cats-model-outputs cats_quantized.onnx ./cats_quantized.onnx || true
           modal volume get cats-model-outputs best_cats_model.pt ./best_cats_model.pt || true
       - name: Upload training artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: classifier-outputs-${{ github.run_id }}
@@ -250,9 +250,9 @@ jobs:
     timeout-minutes: 1440
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -284,7 +284,7 @@ jobs:
           modal volume get dit-outputs generator_quantized.onnx ./generator_quantized.onnx || echo "No quantized generator ONNX found"
           modal volume get dit-outputs tinydit_final.pt ./tinydit_final.pt || echo "No TinyDiT checkpoint found"
       - name: Upload training artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: dit-outputs-${{ github.run_id }}

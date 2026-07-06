@@ -198,6 +198,10 @@ class EMA:
 
         for name, param in model.named_parameters():
             if param.requires_grad and name in self.shadow_params:
+                # Move shadow param to model param device on mismatch
+                # (e.g. after loading checkpoint with map_location="cpu")
+                if self.shadow_params[name].device != param.device:
+                    self.shadow_params[name] = self.shadow_params[name].to(param.device)
                 self.shadow_params[name].mul_(beta).add_(param.data, alpha=1 - beta)
 
     def apply(self, model: nn.Module) -> None:
@@ -208,7 +212,7 @@ class EMA:
         """
         for name, param in model.named_parameters():
             if param.requires_grad and name in self.shadow_params:
-                param.data.copy_(self.shadow_params[name].data)
+                param.data.copy_(self.shadow_params[name].to(param.device))
 
     def save(self, path: str) -> None:
         """Save EMA weights.
