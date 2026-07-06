@@ -145,3 +145,5 @@ package-lock.json
 .mypy_cache/
 .claude/settings.local.json
 train_fail_log.txt
+*.onnx
+*.onnx.data

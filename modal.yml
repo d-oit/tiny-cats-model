@@ -30,7 +30,7 @@
 #
 # Volume Management:
 #   modal volume ls cats-model-outputs                  # List outputs
-#   modal volume get cats-model-outputs /outputs/model.pt ./model.pt
+#   modal volume get cats-model-outputs model.pt ./model.pt
 #
 # Monitoring:
 #   modal app list                                      # List apps
