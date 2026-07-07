@@ -13,6 +13,13 @@ Usage:
     python src/optimize_onnx.py
     python src/optimize_onnx.py --model PATH --output PATH
     python src/optimize_onnx.py --model-type generator
+
+Generator validation: when ``--model-type generator`` is selected, the
+post-quantization accuracy check feeds the required
+``{noise, timestep, breed}`` inputs (the same shape contract used by
+``GeneratorCalibrationDataReader``); classifiers continue to feed
+``{input}``. The classification-only ``prediction_match_rate`` metric
+is reported as ``None`` for generator runs.
 """
 
 from __future__ import annotations
@@ -290,21 +297,50 @@ def clean_onnx_model(model_path: str | Path, output_path: str | Path) -> Path:
     return output_path
 
 
+def _build_generator_inputs(
+    seed: int,
+    image_size: int = DEFAULT_GENERATOR_SIZE,
+) -> dict[str, np.ndarray]:
+    """Build a generator feed dict ``{noise, timestep, breed}``.
+
+    Mirrors the per-sample shape/dtype contract of
+    ``GeneratorCalibrationDataReader`` so static-quantization calibration
+    inputs and accuracy-validation inputs are interchangeable:
+
+        noise:    (1, 3, image_size, image_size) float32
+        timestep: (1,)                          float32 in [0, 1)
+        breed:    (1,)                          int64 in [0, 13)
+
+    Args:
+        seed: Seed for ``np.random`` (lets callers pin generation).
+        image_size: Spatial size of the noise tensor.
+
+    Returns:
+        Feed dict compatible with the exported generator ONNX model.
+    """
+    np.random.seed(seed)
+    noise = np.random.randn(1, 3, image_size, image_size).astype(np.float32)
+    timestep = np.array([np.random.random()], dtype=np.float32)
+    breed = np.array([np.random.randint(0, 13)], dtype=np.int64)
+    return {"noise": noise, "timestep": timestep, "breed": breed}
+
+
 def run_inference(
     session: ort.InferenceSession,
-    input_array: np.ndarray,
+    feeds: dict[str, np.ndarray],
 ) -> np.ndarray:
-    """Run ONNX inference.
+    """Run ONNX inference with an explicit feed dict.
 
     Args:
         session: ONNX Runtime inference session.
-        input_array: Input numpy array.
+        feeds: Mapping from input name to numpy array. Must contain every
+            entry the model expects (classifier: ``{"input": ...}``;
+            generator: ``{"noise", "timestep", "breed"}``).
 
     Returns:
-        Model output.
+        First model output.
     """
-    input_name = session.get_inputs()[0].name
-    outputs = session.run(None, {input_name: input_array})
+    outputs = session.run(None, feeds)
     return outputs[0]
 
 
@@ -313,6 +349,7 @@ def validate_accuracy(
     quantized_model_path: str | Path,
     num_samples: int = 50,
     image_size: int = DEFAULT_IMAGE_SIZE,
+    model_type: str = "classifier",
 ) -> dict[str, Any]:
     """Validate quantized model accuracy against original.
 
@@ -320,11 +357,33 @@ def validate_accuracy(
         original_model_path: Path to original ONNX model.
         quantized_model_path: Path to quantized ONNX model.
         num_samples: Number of test samples.
-        image_size: Input image size.
+        image_size: Input image size. ``DEFAULT_IMAGE_SIZE`` (224) for
+            classifier; ``DEFAULT_GENERATOR_SIZE`` (128) for generator.
+        model_type: Either ``"classifier"`` or ``"generator"``. Drives
+            the shape of the feed dict and the metric set:
+            - ``"classifier"``: argmax-based prediction match rate.
+            - ``"generator"``: only velocity-field diff metrics; argmax
+              is meaningless for a velocity output.
 
     Returns:
-        Dictionary with accuracy metrics.
+        Dictionary with accuracy metrics. Always contains
+        ``max_difference``, ``mean_difference``, ``std_difference``,
+        ``model_type``, ``prediction_match_rate``, ``predictions_matched``,
+        and ``total_samples``. For the generator model, the classifier-only
+        counters (``prediction_match_rate`` and ``predictions_matched``) are
+        set to ``None`` -- velocity-field diff has no argmax meaning.
+
+    Raises:
+        ValueError: If ``model_type`` is neither ``"classifier"`` nor
+            ``"generator"``. Validating up-front silently rejecting an
+            unknown ``model_type`` would otherwise produce garbage diff
+            metrics over a sample loop that never built any feeds.
     """
+    if model_type not in {"classifier", "generator"}:
+        raise ValueError(
+            f"Unknown model_type: {model_type!r}; expected 'classifier' or 'generator'"
+        )
+
     # Load models
     original_session = ort.InferenceSession(
         original_model_path,
@@ -335,54 +394,64 @@ def validate_accuracy(
         providers=["CPUExecutionProvider"],
     )
 
-    # Generate test data
-    transform = T.Compose(
-        [
-            T.ToTensor(),
-            T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-        ]
-    )
-
     prediction_matches = 0
     max_diff = 0.0
-    mean_diff = 0.0
     differences = []
 
     for i in range(num_samples):
-        np.random.seed(i + 1000)  # Different seed from calibration
-        img_array = np.random.randint(
-            0, 256, (image_size, image_size, 3), dtype=np.uint8
-        )
-        img = Image.fromarray(img_array, mode="RGB")
-        input_tensor = transform(img).unsqueeze(0).numpy().astype(np.float32)
+        if model_type == "generator":
+            feeds = _build_generator_inputs(seed=i + 1000, image_size=image_size)
+        else:
+            np.random.seed(i + 1000)  # Disjoint from calibration seeds
+            transform = T.Compose(
+                [
+                    T.ToTensor(),
+                    T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+                ]
+            )
+            img_array = np.random.randint(
+                0, 256, (image_size, image_size, 3), dtype=np.uint8
+            )
+            img = Image.fromarray(img_array, mode="RGB")
+            input_tensor = transform(img).unsqueeze(0).numpy().astype(np.float32)
+            feeds = {"input": input_tensor}
 
-        original_output = run_inference(original_session, input_tensor)
-        quantized_output = run_inference(quantized_session, input_tensor)
+        original_output = run_inference(original_session, feeds)
+        quantized_output = run_inference(quantized_session, feeds)
 
         # Calculate output difference
         diff = float(np.abs(original_output - quantized_output).max())
         differences.append(diff)
         max_diff = max(max_diff, diff)
 
-        # Check prediction match
-        original_pred = int(np.argmax(original_output, axis=1)[0])
-        quantized_pred = int(np.argmax(quantized_output, axis=1)[0])
-
-        if original_pred == quantized_pred:
-            prediction_matches += 1
+        if model_type == "classifier":
+            # Argmax is meaningful only for categorical classifiers.
+            original_pred = int(np.argmax(original_output, axis=1)[0])
+            quantized_pred = int(np.argmax(quantized_output, axis=1)[0])
+            if original_pred == quantized_pred:
+                prediction_matches += 1
 
     mean_diff = float(np.mean(differences))
     std_diff = float(np.std(differences))
-    accuracy = prediction_matches / num_samples
 
-    return {
+    results: dict[str, Any] = {
+        "model_type": model_type,
         "max_difference": max_diff,
         "mean_difference": mean_diff,
         "std_difference": std_diff,
-        "prediction_match_rate": accuracy,
-        "predictions_matched": prediction_matches,
         "total_samples": num_samples,
+        # Classifier-only counters are populated only when the metric is
+        # meaningful; for the generator, both are ``None`` so the schema
+        # is uniform and downstream callers can ``.get(...)`` safely.
+        "prediction_match_rate": (
+            prediction_matches / num_samples if model_type == "classifier" else None
+        ),
+        "predictions_matched": (
+            prediction_matches if model_type == "classifier" else None
+        ),
     }
+
+    return results
 
 
 def apply_dynamic_quantization(
@@ -587,21 +656,34 @@ def optimize_onnx(
     # Validate accuracy
     if validate:
         print("\nValidating accuracy...")
+        # Pick the right image size for the model's input.
+        validation_image_size = (
+            DEFAULT_GENERATOR_SIZE if model_type == "generator" else DEFAULT_IMAGE_SIZE
+        )
         accuracy_results = validate_accuracy(
             model_path,
             output_path,
             num_samples=num_validation_samples,
+            image_size=validation_image_size,
+            model_type=model_type,
         )
         results["accuracy_validation"] = accuracy_results
 
-        # Check if accuracy drop is acceptable (<1% prediction change)
-        match_rate = accuracy_results["prediction_match_rate"]
-        if match_rate >= 0.99:
-            print(f"  Accuracy validation PASSED (match rate: {match_rate:.1%})")
+        if model_type == "classifier":
+            # Classifier: argmax prediction match is the meaningful gate.
+            match_rate = accuracy_results["prediction_match_rate"]
+            if match_rate >= 0.99:
+                print(f"  Accuracy validation PASSED (match rate: {match_rate:.1%})")
+            else:
+                print(
+                    f"  Warning: Accuracy drop may be significant "
+                    f"(match rate: {match_rate:.1%})"
+                )
         else:
+            # Generator: only velocity-field diff is meaningful.
             print(
-                f"  Warning: Accuracy drop may be significant "
-                f"(match rate: {match_rate:.1%})"
+                f"  Generator diff: max={accuracy_results['max_difference']:.6f}, "
+                f"mean={accuracy_results['mean_difference']:.6f}"
             )
 
     # Summary
@@ -613,12 +695,14 @@ def optimize_onnx(
     print(f"Size reduction: {quant_results['reduction_percent']:.1f}%")
     if validate and "accuracy_validation" in results:
         acc = results["accuracy_validation"]
-        print(f"Prediction match rate: {acc['prediction_match_rate']:.1%}")
-        print(
-            f"Predictions matched: {acc['predictions_matched']}/{acc['total_samples']}"
-        )
         print(f"Max output difference: {acc['max_difference']:.6f}")
         print(f"Mean output difference: {acc['mean_difference']:.6f}")
+        if acc.get("model_type") == "classifier":
+            print(f"Prediction match rate: {acc['prediction_match_rate']:.1%}")
+            print(
+                f"Predictions matched: "
+                f"{acc['predictions_matched']}/{acc['total_samples']}"
+            )
     print(f"Output: {quant_results['output_path']}")
     print("=" * 60)
 
@@ -698,10 +782,13 @@ def main() -> None:
             model_type=args.model_type,
         )
 
-        # Exit with error if validation failed
+        # Exit with error if validation failed. The 99% match-rate
+        # threshold only applies to classifiers; generator velocity-field
+        # diff has no fixed acceptable bound and is informational.
         if (
             not args.no_validate
             and "accuracy_validation" in results
+            and results["accuracy_validation"].get("model_type") == "classifier"
             and results["accuracy_validation"]["prediction_match_rate"] < 0.99
         ):
             print("\n[WARNING] Accuracy validation shows significant differences")
