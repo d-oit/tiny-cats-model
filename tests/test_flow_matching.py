@@ -32,9 +32,8 @@ import torch.nn as nn
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from flow_matching import EMA, FlowMatchingLoss, flow_matching_step, sample_t
 from dit import tinydit_128
-
+from flow_matching import EMA, FlowMatchingLoss, flow_matching_step, sample_t
 
 # ---------------------------------------------------------------------------
 # Per-function fixtures so EMA's in-place weight mutations do not
@@ -211,9 +210,7 @@ def test_sample_t_single_step() -> None:
 class TestEMA:
     """Tests for EMA weight averaging."""
 
-    def test_ema_init_copies_params(
-        self, trainable_dit_model: nn.Module
-    ) -> None:
+    def test_ema_init_copies_params(self, trainable_dit_model: nn.Module) -> None:
         ema = EMA(beta=0.9999)
         ema.init(trainable_dit_model)
 
@@ -222,9 +219,7 @@ class TestEMA:
                 assert name in ema.shadow_params
                 assert torch.equal(ema.shadow_params[name], param.data)
 
-    def test_ema_update_moves_shadow(
-        self, trainable_dit_model: nn.Module
-    ) -> None:
+    def test_ema_update_moves_shadow(self, trainable_dit_model: nn.Module) -> None:
         ema = EMA(beta=0.9)
         ema.init(trainable_dit_model)
 
@@ -240,9 +235,7 @@ class TestEMA:
                     f"EMA shadow={name} should not instantly match model params"
                 )
 
-    def test_ema_apply_overwrites_model(
-        self, trainable_dit_model: nn.Module
-    ) -> None:
+    def test_ema_apply_overwrites_model(self, trainable_dit_model: nn.Module) -> None:
         ema = EMA(beta=0.9999)
         ema.init(trainable_dit_model)
 
@@ -282,9 +275,7 @@ class TestEMA:
 class TestForwardWithCFG:
     """Tests for TinyDiT.forward_with_cfg that match the current API."""
 
-    def test_cfg_scale_one_short_circuits(
-        self, dit_model: nn.Module
-    ) -> None:
+    def test_cfg_scale_one_short_circuits(self, dit_model: nn.Module) -> None:
         """cfg_scale == 1.0 must take the no-guidance path (return forward verbatim).
 
         We assert shape + finiteness rather than bitwise identity, because
@@ -330,9 +321,7 @@ class TestForwardWithCFG:
         )
         assert torch.isfinite(out_cfg).all()
 
-    def test_cfg_uncond_token_index_matches_api(
-        self, dit_model: nn.Module
-    ) -> None:
+    def test_cfg_uncond_token_index_matches_api(self, dit_model: nn.Module) -> None:
         """Current src/dit.py uses a dedicated null slot at index num_classes
         and the breed embedder has num_classes + 1 slots. This matches the
         CFG dropout in src/train_dit.py: null_token = num_classes.
@@ -356,18 +345,14 @@ class TestForwardWithCFG:
             emb = dit_model.breed_embedder(uncond)
         assert emb.shape == (3, dit_model.embed_dim)
 
-    def test_cfg_extreme_scale_stable(
-        self, dit_model_with_outputs: nn.Module
-    ) -> None:
+    def test_cfg_extreme_scale_stable(self, dit_model_with_outputs: nn.Module) -> None:
         """Large cfg_scale must still produce finite outputs."""
         x = torch.randn(2, 3, 128, 128)
         t = torch.rand(2)
         breeds = torch.tensor([0, 5])
 
         with torch.no_grad():
-            out = dit_model_with_outputs.forward_with_cfg(
-                x, t, breeds, cfg_scale=5.0
-            )
+            out = dit_model_with_outputs.forward_with_cfg(x, t, breeds, cfg_scale=5.0)
 
         assert torch.isfinite(out).all()
 
