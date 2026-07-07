@@ -12,7 +12,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 #
 # Authentication (one-time setup):
-#   modal token set
+#   modal token new          # Modal 1.0+ (NOT 'token set')
 #
 # Classifier Training:
 #   modal run src/train.py data/cats                    # Default settings
@@ -75,8 +75,8 @@ environment:
   # Never store actual secrets in this file
   DATA_DIR: "data/cats"
   OUTPUT_PATH: "cats_model.pt"
-  # MODAL_TOKEN_ID: Set via `modal token set`
-  # MODAL_TOKEN_SECRET: Set via `modal token set`
+  # MODAL_TOKEN_ID: Set via `modal token new` (Modal 1.0+)
+  # MODAL_TOKEN_SECRET: Set via `modal token new` (Modal 1.0+)
 
 dataset:
   # Dataset can be downloaded inside Modal via data/download.sh

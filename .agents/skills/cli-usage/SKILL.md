@@ -96,6 +96,21 @@ modal run src/train.py
 modal run src/train.py --epochs 20 --batch-size 64
 ```
 
+### Modal best practices
+
+- Modal **timeout is 24h** per function call. Our scripts comply (3600 s for classifier,
+  86400 s = 24 h for DiT). For runs > 24h, design as reentrant + use `--detach`.
+- Always call `volume.commit()` after writing a checkpoint volume. We do this in both
+  `train.py` and `train_dit.py`.
+- **`modal token new`** is the canonical auth command. The old `modal token set` (Modal
+  0.x) no longer works.
+- The live per-iteration `Speed: 2.2 steps/s` printed by the trainer reflects GPU
+  forward+backward only — wall-clock between step reports includes container cold-start,
+  image pull, dataset download, and per-iteration volume/ONNX overhead. See
+  `plans/ADR-057-modal-cli-verification-and-best-practices-2026.md` for the full breakdown.
+- When triggering from GitHub Actions, prefer **reusing a running run** over
+  cancelling/re-triggering — every re-trigger pays container cold-start + image-pull cost.
+
 ## Full Verification
 
 ```bash

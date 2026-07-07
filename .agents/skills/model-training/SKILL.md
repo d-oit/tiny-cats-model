@@ -113,7 +113,25 @@ retries=modal.Retries(
     initial_delay=10.0,
     max_delay=60.0,
 )
+# BEST PRACTICE: also use single_use_containers=True to reset in-memory
+# state on every retry (e.g. EMA shadow params, optimizer momentum).
 ```
+
+### Cold Start (Modal best practice)
+
+- **Move heavy init out of the function body** — use `@modal.enter()` per ADR-025 so it
+  runs once per container, not once per call. Currently `src/train*.py` use a free-standing
+  `_initialize_container()` called inside the function — that works but doesn't benefit
+  from container-snapshot caching.
+- **Warm up CUDA in `@enter`** — first CUDA allocation triggers driver init (~1-3 s);
+  do it once.
+- **`scaledown_window=300`** on `@app.function(gpu=...)` keeps the container alive for
+  5 min after a run, so subsequent re-runs skip cold start.
+- **`single_use_containers=True`** forces a fresh container on every retry; safe for
+  training (PyTorch + EMA + optimizer state can have subtle bugs after a crash).
+
+See `plans/ADR-057-modal-cli-verification-and-best-practices-2026.md` for the live
+verification + full audit.
 
 ## Hyperparameters
 

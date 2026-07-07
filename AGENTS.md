@@ -65,6 +65,13 @@ gh run watch
 gh secret list
 ```
 
+> **Note:** The DiT training prints `Speed: 2.2 steps/s` per loop iteration but wall-clock
+> between step reports is ~15 min/100 steps because of container cold-start + image pull
+> on GH-Actions, dataset download on first iter, and per-iteration volume + ONNX overhead.
+> This is expected — see `plans/ADR-057-modal-cli-verification-and-best-practices-2026.md`
+> for the full diagnosis and mitigation options (`@modal.enter`, `single_use_containers=True`,
+> larger `save_interval`, GH-Action container reuse).
+
 ## Training
 
 ### Modal GPU Training
