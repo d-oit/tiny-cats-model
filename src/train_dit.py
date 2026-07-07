@@ -458,7 +458,7 @@ def _initialize_dit_container():
         "/outputs": volume_outputs,
         "/data": volume_data,
     },
-    gpu="A10G",  # Better for transformer training (ADR-023)
+    gpu="L40S",  # Non-spot GPU: avoids preemptions on A10G (ADR-057/058)
     timeout=86400,  # 24 hours max for long training runs
     # Retry configuration (ADR-023: automatic recovery from transient failures)
     retries=modal.Retries(
