@@ -14,14 +14,10 @@ Covers:
   not (images, images) which collapses the target to zero and produces
   zero loss.
 
-NOTE on null token wiring:
-    Earlier commits suggest a planned "dedicated null token at index
-    num_classes" refactor (size embedder = num_classes + 1). That
-    refactor is not in current src/dit.py as of main 67b56e6 — the
-    uncond token is `num_classes - 1` (i.e. the last breed class 'other')
-    and the embedder has exactly `num_classes` slots. Tests below assert
-    the *current* behavior to keep CI green; flip the assertions when
-    applying the dedicated-null-slot refactor.
+Null token wiring: src/dit.py uses a dedicated null slot at index
+    num_classes (embedder has num_classes + 1 slots); forward_with_cfg
+    selects it via `uncond = self.num_classes` and src/train_dit.py
+    matches that index in its CFG dropout (null_token = num_classes).
 """
 
 from __future__ import annotations
@@ -325,7 +321,7 @@ class TestForwardWithCFG:
             )
             out_cond = dit_model_with_outputs.forward(x, t, breeds)
             out_uncond = dit_model_with_outputs.forward(
-                x, t, torch.full_like(breeds, dit_model_with_outputs.num_classes - 1)
+                x, t, torch.full_like(breeds, dit_model_with_outputs.num_classes)
             )
 
         assert out_cfg.shape == out_cond.shape == out_uncond.shape
@@ -337,19 +333,25 @@ class TestForwardWithCFG:
     def test_cfg_uncond_token_index_matches_api(
         self, dit_model: nn.Module
     ) -> None:
-        """Current src/dit.py uses uncond = num_classes - 1, and the
-        embedder has exactly num_classes slots. When the dedicated
-        null-slot refactor lands (commit history implies this), flip
-        both assertions below to (num_classes, num_classes + 1).
+        """Current src/dit.py uses a dedicated null slot at index num_classes
+        and the breed embedder has num_classes + 1 slots. This matches the
+        CFG dropout in src/train_dit.py: null_token = num_classes.
+
+        Locks the API contract: any future refactor that regresses the
+        null-slot sizing will surface here.
         """
         assert dit_model.num_classes == 13
 
         breeds = torch.tensor([0, 5, 12])
-        uncond = torch.full_like(breeds, dit_model.num_classes - 1)
-        assert uncond.tolist() == [12, 12, 12]
+        uncond = torch.full_like(breeds, dit_model.num_classes)
+        assert uncond.tolist() == [13, 13, 13]
 
-        # Embedder has exactly num_classes slots; index num_classes is invalid.
-        assert dit_model.breed_embedder.embedding.num_embeddings == dit_model.num_classes
+        # Embedder has num_classes + 1 slots (0..num_classes-1 are breeds,
+        # index num_classes is the dedicated null token).
+        assert (
+            dit_model.breed_embedder.embedding.num_embeddings
+            == dit_model.num_classes + 1
+        )
         with torch.no_grad():
             emb = dit_model.breed_embedder(uncond)
         assert emb.shape == (3, dit_model.embed_dim)
