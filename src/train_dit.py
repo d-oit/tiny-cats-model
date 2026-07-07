@@ -1194,14 +1194,21 @@ def main(
     gradient_clip: float = 1.0,
     gradient_accumulation_steps: int = 1,
     warmup_steps: int = 2_000,
+    save_interval: int = 10_000,
     augmentation_level: str = "full",
     resume: str | None = None,
 ):
     """Local entrypoint for Modal CLI.
 
+    Note: Modal parses CLI args from this signature, so every CLI flag the
+    .github/workflows/train.yml forwards (save_interval, gradient_clip, ...)
+    must appear here. Adding it on the train() side without adding it here
+    makes `modal run` reject the flag with "No such option".
+
     Usage:
         modal run src/train_dit.py data/cats --steps 100000
         modal run src/train_dit.py --steps 100000 --batch-size 512 --lr 5e-5
+        modal run src/train_dit.py --save-interval 1000
         modal run src/train_dit.py --resume /outputs/checkpoints/dit/current/dit_model.pt
     """
     result = train_dit_on_gpu.remote(
@@ -1217,6 +1224,7 @@ def main(
         gradient_clip=gradient_clip,
         gradient_accumulation_steps=gradient_accumulation_steps,
         warmup_steps=warmup_steps,
+        save_interval=save_interval,
         augmentation_level=augmentation_level,
         resume_checkpoint=resume,
     )
