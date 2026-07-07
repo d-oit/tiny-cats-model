@@ -36,6 +36,7 @@ import os
 import signal
 import sys
 import time
+import zipfile
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -355,13 +356,44 @@ def load_checkpoint(
         logger: Optional logger.
 
     Returns:
-        Tuple of (model, optimizer, ema, start_step).
+        Tuple of (model, optimizer, ema, start_step). When ``path`` exists but
+        is unreadable (truncated zip from a preempted run, EOFError on partial
+        write, etc.) the file is renamed to ``<path>.corrupt`` for forensics
+        and ``start_step=0`` is returned so training restarts from scratch.
+
+    Raises:
+        FileNotFoundError: If ``path`` does not exist.
     """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {path}")
 
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    try:
+        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    except (zipfile.BadZipFile, RuntimeError, EOFError, OSError) as exc:
+        # Stale or partial checkpoint from a previously preempted run. Quarantine
+        # the bad file (so it stays available for post-mortem) and return
+        # start_step=0 so train_dit_local restarts from scratch with fresh
+        # weights. Without this guard, a left-over `dit_model.pt` at the
+        # volume root can poison every subsequent auto-resume attempt until
+        # the operator manually deletes it (see ADR-058).
+        # Use `with_name(name + ".corrupt")` instead of `with_suffix(...)` so that
+        # multi-dot filenames (e.g. `.tar.gz`, `.pt.bak`) still quarantine cleanly.
+        quarantine = path.with_name(path.name + ".corrupt")
+        try:
+            path.rename(quarantine)
+        except OSError as rename_exc:  # pragma: no cover - defensive
+            if logger:
+                logger.warning(
+                    f"Could not quarantine corrupt checkpoint {path} -> "
+                    f"{quarantine}: {rename_exc}"
+                )
+        if logger:
+            logger.warning(
+                f"Checkpoint at {path} is unreadable ({type(exc).__name__}: "
+                f"{exc}); moved to {quarantine} and restarting from step 0."
+            )
+        return model, optimizer, ema, 0
     model.load_state_dict(checkpoint["model_state_dict"])
 
     if optimizer and "optimizer_state_dict" in checkpoint:
@@ -569,10 +601,22 @@ def train_dit_on_gpu(
     # Auto-resume: if a checkpoint already exists (e.g. from a prior Modal retry),
     # pass it through to train_dit_local so training continues from that step.
     # resume_checkpoint overrides auto-detection when set explicitly.
+    #
+    # Only resume when the file *looks* like a valid torch checkpoint zip -
+    # otherwise a stale, partially-written `dit_model.pt` from a previous
+    # preempt would silently restart training at step 0 instead of raising
+    # (or worse, raise and abort the run). load_checkpoint() itself also has
+    # a defensive try/except as belt-and-braces (ADR-058).
     resume: str | None = resume_checkpoint
-    if resume is None and Path(output).exists():
+    if resume is None and Path(output).exists() and zipfile.is_zipfile(output):
         resume = output
         logger.info(f"Found existing checkpoint; will resume from: {output}")
+    elif resume is None and Path(output).exists():
+        logger.warning(
+            f"Ignoring non-zip file at {output} (likely a stale partial "
+            "checkpoint from a previously preempted run); starting fresh. "
+            "load_checkpoint() will quarantine the file if it is unreadable."
+        )
     elif resume is not None:
         logger.info(f"Using explicit resume checkpoint: {resume}")
 
