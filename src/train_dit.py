@@ -980,26 +980,41 @@ def train_dit_local(
                     # Logging
                     if step % log_interval == 0:
                         avg_loss = epoch_loss / log_interval
-                        current_lr = scheduler.get_last_lr()[0]
-                        elapsed = time.time() - epoch_start
-                        steps_per_sec = log_interval / max(elapsed, 0.001)
+                        # Non-finite avg_loss can occur at the start of a
+                        # warmup window (small batch + early-step AMP scaler
+                        # has not yet calibrated its dynamic scale) or on an
+                        # outlier batch. Emit a one-line warning instead of
+                        # the confusing "Loss: inf" line and skip the metric
+                        # log; the model + EMA continue to update, and the
+                        # next log interval starts clean once epoch_loss is
+                        # reset below.
+                        if not math.isfinite(avg_loss):
+                            logger.warning(
+                                f"Step {step:,}/{steps:,} | "
+                                f"Non-finite avg loss ({avg_loss}); "
+                                "skipping this log entry."
+                            )
+                        else:
+                            current_lr = scheduler.get_last_lr()[0]
+                            elapsed = time.time() - epoch_start
+                            steps_per_sec = log_interval / max(elapsed, 0.001)
 
-                        logger.info(
-                            f"Step {step:,}/{steps:,} | "
-                            f"Loss: {avg_loss:.6e} | "
-                            f"LR: {current_lr:.2e} | "
-                            f"Speed: {steps_per_sec:.1f} steps/s | "
-                            f"Effective batch: {effective_batch_size}"
-                        )
-                        log_gpu_memory(logger, "  ")
+                            logger.info(
+                                f"Step {step:,}/{steps:,} | "
+                                f"Loss: {avg_loss:.6e} | "
+                                f"LR: {current_lr:.2e} | "
+                                f"Speed: {steps_per_sec:.1f} steps/s | "
+                                f"Effective batch: {effective_batch_size}"
+                            )
+                            log_gpu_memory(logger, "  ")
 
-                        tracker.log_metrics(
-                            {
-                                "loss": avg_loss,
-                                "learning_rate": current_lr,
-                            },
-                            step=step,
-                        )
+                            tracker.log_metrics(
+                                {
+                                    "loss": avg_loss,
+                                    "learning_rate": current_lr,
+                                },
+                                step=step,
+                            )
 
                         epoch_loss = 0.0
                         epoch_start = time.time()
