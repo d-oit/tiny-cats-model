@@ -42,6 +42,11 @@ on:
         required: false
         default: "2000"
         type: string
+      save_interval:
+        description: "Checkpoint save interval in steps (default: 1000 - tight because L40S runs are preempt-free)"
+        required: false
+        default: "1000"
+        type: string
 
 permissions:
   contents: read
@@ -274,6 +279,7 @@ jobs:
             --batch-size ${{ github.event.inputs.batch_size || '512' }} \
             --lr ${{ github.event.inputs.lr || '5e-5' }} \
             --warmup-steps ${{ github.event.inputs.warmup_steps || '2000' }} \
+            --save-interval ${{ github.event.inputs.save_interval || '1000' }} \
             --gradient-accumulation-steps ${{ github.event.inputs.gradient_accumulation_steps || '1' }}
       - name: Download ONNX from Modal
         env:
