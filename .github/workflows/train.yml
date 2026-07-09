@@ -47,6 +47,11 @@ on:
         required: false
         default: "500"
         type: string
+      early_stopping_patience:
+        description: "Early stopping patience in evaluations (default: 10)"
+        required: false
+        default: "10"
+        type: string
 
 permissions:
   contents: read
@@ -276,11 +281,12 @@ jobs:
           modal run src/train_dit.py \
             --data-dir /data/cats \
             --steps ${{ github.event.inputs.steps || '100000' }} \
-            --batch-size ${{ github.event.inputs.batch_size || '512' }} \
+            --batch-size ${{ github.event.inputs.batch_size || '128' }} \
             --lr ${{ github.event.inputs.lr || '5e-5' }} \
             --warmup-steps ${{ github.event.inputs.warmup_steps || '2000' }} \
-            --save-interval ${{ github.event.inputs.save_interval || '1000' }} \
-            --gradient-accumulation-steps ${{ github.event.inputs.gradient_accumulation_steps || '1' }}
+            --save-interval ${{ github.event.inputs.save_interval || '500' }} \
+            --gradient-accumulation-steps ${{ github.event.inputs.gradient_accumulation_steps || '1' }} \
+            --early-stopping-patience ${{ github.event.inputs.early_stopping_patience || '10' }}
       - name: Download ONNX from Modal
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
