@@ -490,7 +490,7 @@ def _initialize_dit_container():
         "/outputs": volume_outputs,
         "/data": volume_data,
     },
-    gpu="L40S",  # Non-spot GPU: avoids preemptions on A10G (ADR-057/058)
+    gpu=["T4", "L4"],  # Cost-optimized: T4 ($0.59/hr) with L4 fallback ($0.80/hr)
     timeout=86400,  # 24 hours max for long training runs
     # Retry configuration (ADR-023: automatic recovery from transient failures)
     retries=modal.Retries(
