@@ -490,7 +490,7 @@ def _initialize_dit_container():
         "/outputs": volume_outputs,
         "/data": volume_data,
     },
-    gpu=["T4", "L4"],  # Cost-optimized: T4 ($0.59/hr) with L4 fallback ($0.80/hr)
+    gpu=["L4", "T4"],  # L4 ($0.80/hr) faster per step; T4 ($0.59/hr) fallback
     timeout=86400,  # 24 hours max for long training runs
     # Retry configuration (ADR-023: automatic recovery from transient failures)
     retries=modal.Retries(
@@ -503,7 +503,7 @@ def _initialize_dit_container():
 def train_dit_on_gpu(
     data_dir: str = "/data/cats",
     steps: int = 100_000,
-    batch_size: int = 512,
+    batch_size: int = 128,
     lr: float = 5e-5,
     image_size: int = 128,
     output: str | None = None,
@@ -514,8 +514,8 @@ def train_dit_on_gpu(
     gradient_accumulation_steps: int = 1,
     warmup_steps: int = 2_000,
     log_interval: int = 100,
-    save_interval: int = 10_000,
-    sample_interval: int = 5_000,
+    save_interval: int = 500,
+    sample_interval: int = 2_000,
     log_file: str | None = None,
     ema_beta: float = 0.9999,
     seed: int = 42,
@@ -1228,7 +1228,7 @@ def train_dit_local(
 def main(
     data_dir: str = "/data/cats",
     steps: int = 100_000,
-    batch_size: int = 512,
+    batch_size: int = 128,
     lr: float = 5e-5,
     image_size: int = 128,
     output: str = "/outputs/dit_model.pt",
@@ -1238,7 +1238,7 @@ def main(
     gradient_clip: float = 1.0,
     gradient_accumulation_steps: int = 1,
     warmup_steps: int = 2_000,
-    save_interval: int = 10_000,
+    save_interval: int = 500,
     augmentation_level: str = "full",
     resume: str | None = None,
 ):

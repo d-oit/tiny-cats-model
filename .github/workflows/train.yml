@@ -23,9 +23,9 @@ on:
         default: "100000"
         type: string
       batch_size:
-        description: "Batch size (default: 512 for better gradients)"
+        description: "Batch size (default: 128 for cost-optimized L4/T4)"
         required: false
-        default: "512"
+        default: "128"
         type: string
       lr:
         description: "Learning rate (default: 5e-5)"
@@ -43,9 +43,9 @@ on:
         default: "2000"
         type: string
       save_interval:
-        description: "Checkpoint save interval in steps (default: 1000 - tight for cost-optimized T4/L4 runs)"
+        description: "Checkpoint save interval in steps (default: 500 - save more frequently for cost-optimized L4/T4 runs)"
         required: false
-        default: "1000"
+        default: "500"
         type: string
 
 permissions:
