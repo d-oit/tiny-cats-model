@@ -934,11 +934,6 @@ def train_dit_local(
         # "scheduler.step() before optimizer.step()" warning
         scheduler.last_epoch = start_step - 1
 
-    # torch.compile for 2-3x speedup (2026 best practice) - after checkpoint loading
-    if torch.cuda.is_available():
-        model = torch.compile(model, mode="reduce-overhead")
-        logger.info("torch.compile enabled for 2-3x speedup")
-
     # Training state
     best_loss = float("inf")
     shutdown_requested = False
