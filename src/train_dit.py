@@ -850,11 +850,6 @@ def train_dit_local(
     num_classes = 13  # 12 cat breeds + other
     model = tinydit_128(num_classes=num_classes).to(device)
 
-    # torch.compile for 2-3x speedup (2026 best practice)
-    if torch.cuda.is_available():
-        model = torch.compile(model, mode="reduce-overhead")
-        logger.info("torch.compile enabled for 2-3x speedup")
-
     logger.info(
         f"Model: TinyDiT | Image size: {image_size} | "
         f"Parameters: {count_parameters(model):,}"
@@ -938,6 +933,11 @@ def train_dit_local(
         # Adjust scheduler to current step without triggering the
         # "scheduler.step() before optimizer.step()" warning
         scheduler.last_epoch = start_step - 1
+
+    # torch.compile for 2-3x speedup (2026 best practice) - after checkpoint loading
+    if torch.cuda.is_available():
+        model = torch.compile(model, mode="reduce-overhead")
+        logger.info("torch.compile enabled for 2-3x speedup")
 
     # Training state
     best_loss = float("inf")
