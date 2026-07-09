@@ -161,26 +161,10 @@ def parse_args() -> argparse.Namespace:
         description="Train TinyDiT for cat image generation",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+
+    # Data & output
     parser.add_argument(
         "--data-dir", type=str, required=True, help="Path to dataset root"
-    )
-    parser.add_argument(
-        "--steps", type=int, default=100_000, help="Total training steps"
-    )
-    parser.add_argument("--batch-size", type=int, default=512, help="Batch size")
-    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
-    parser.add_argument(
-        "--image-size", type=int, default=128, help="Image size (128 or 256)"
-    )
-    parser.add_argument("--patch-size", type=int, default=16, help="Patch size")
-    parser.add_argument(
-        "--embed-dim", type=int, default=384, help="Embedding dimension"
-    )
-    parser.add_argument(
-        "--depth", type=int, default=12, help="Number of transformer blocks"
-    )
-    parser.add_argument(
-        "--num-heads", type=int, default=6, help="Number of attention heads"
     )
     parser.add_argument(
         "--output",
@@ -194,11 +178,21 @@ def parse_args() -> argparse.Namespace:
         default="checkpoints/dit_model_ema.pt",
         help="Output EMA checkpoint path",
     )
-    parser.add_argument("--num-workers", type=int, default=4, help="DataLoader workers")
     parser.add_argument(
-        "--mixed-precision",
-        action="store_true",
-        help="Enable automatic mixed precision training",
+        "--resume", type=str, default=None, help="Path to checkpoint to resume from"
+    )
+
+    # Training
+    parser.add_argument(
+        "--steps", type=int, default=100_000, help="Total training steps"
+    )
+    parser.add_argument("--batch-size", type=int, default=512, help="Batch size")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument(
+        "--warmup-steps", type=int, default=2_000, help="LR warmup steps"
+    )
+    parser.add_argument(
+        "--min-lr", type=float, default=1e-6, help="Minimum LR for cosine decay"
     )
     parser.add_argument(
         "--gradient-clip",
@@ -210,14 +204,32 @@ def parse_args() -> argparse.Namespace:
         "--gradient-accumulation-steps",
         type=int,
         default=1,
-        help="Number of steps for gradient accumulation (effective batch = batch_size * accumulation_steps)",
+        help="Gradient accumulation steps",
     )
     parser.add_argument(
-        "--warmup-steps", type=int, default=2_000, help="LR warmup steps"
+        "--mixed-precision",
+        action="store_true",
+        help="Enable automatic mixed precision training",
+    )
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+
+    # Model architecture
+    parser.add_argument(
+        "--image-size", type=int, default=128, help="Image size (128 or 256)"
+    )
+    parser.add_argument("--patch-size", type=int, default=16, help="Patch size")
+    parser.add_argument(
+        "--embed-dim", type=int, default=384, help="Embedding dimension"
     )
     parser.add_argument(
-        "--min-lr", type=float, default=1e-6, help="Minimum LR for cosine decay"
+        "--depth", type=int, default=12, help="Number of transformer blocks"
     )
+    parser.add_argument(
+        "--num-heads", type=int, default=6, help="Number of attention heads"
+    )
+
+    # Logging & checkpointing
+    parser.add_argument("--log-file", type=str, default=None, help="Path to log file")
     parser.add_argument(
         "--log-interval", type=int, default=100, help="Logging interval in steps"
     )
@@ -227,6 +239,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sample-interval", type=int, default=5_000, help="Sample generation interval"
     )
+    parser.add_argument(
+        "--num-sample-images",
+        type=int,
+        default=8,
+        help="Number of images to generate during sampling",
+    )
+
+    # Early stopping
     parser.add_argument(
         "--early-stopping-patience",
         type=int,
@@ -239,28 +259,25 @@ def parse_args() -> argparse.Namespace:
         default=0.001,
         help="Minimum loss improvement to count as progress",
     )
-    parser.add_argument("--log-file", type=str, default=None, help="Path to log file")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument(
-        "--resume", type=str, default=None, help="Path to checkpoint to resume from"
-    )
+
+    # EMA & sampling
     parser.add_argument("--ema-beta", type=float, default=0.9999, help="EMA decay rate")
-    parser.add_argument(
-        "--num-sample-images",
-        type=int,
-        default=8,
-        help="Number of images to generate during sampling",
-    )
     parser.add_argument(
         "--cfg-scale", type=float, default=1.5, help="Classifier-free guidance scale"
     )
+
+    # Data augmentation
     parser.add_argument(
         "--augmentation-level",
         type=str,
         default="full",
         choices=["basic", "medium", "full"],
-        help="Level of data augmentation (basic, medium, full)",
+        help="Level of data augmentation",
     )
+
+    # Performance
+    parser.add_argument("--num-workers", type=int, default=4, help="DataLoader workers")
+
     return parser.parse_args()
 
 
