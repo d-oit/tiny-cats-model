@@ -83,9 +83,11 @@ python src/train_dit.py data/cats --steps 100 --batch-size 8
 
 | GPU | Best For | Cost |
 |-----|----------|------|
-| T4 | Classifier | Low |
-| A10G | DiT training | Medium |
-| A100 | Large models | High |
+| T4 | Classifier, DiT (cost-optimized) | Low ($0.59/hr) |
+| L4 | DiT fallback | Low ($0.80/hr) |
+| A10G | DiT training (if preemption is critical) | Medium ($1.10/hr) |
+| L40S | Non-spot DiT training | High ($1.95/hr) |
+| A100 | Large models | High ($2.10/hr) |
 
 ## Verification
 

@@ -11,7 +11,7 @@ After a full PR/CI cleanup cycle (merged PRs #100, #104, #105; ran 20-epoch clas
 training on Modal; ran 100k-step DiT training on Modal via GitHub Actions), this ADR
 captures the verification of our Modal CLI usage against:
 
-1. **Live runs** — `modal run src/train.py` (T4) and `modal run src/train_dit.py` (A10G)
+1. **Live runs** — `modal run src/train.py` (T4) and `modal run src/train_dit.py` (T4/L4)
    were exercised end-to-end via the `train.yml` GitHub Actions workflow (workflow_dispatch).
 2. **Official Modal docs** — `https://modal.com/docs` (guide/gpu, guide/volumes,
    guide/cold-start, guide/secrets, examples/long-training, reference/cli).
@@ -26,8 +26,8 @@ non-obvious finding from this run (the apparent "slow DiT speed" — investigate
 |---|---|---|
 | Modal auth works | `modal token info` | ✅ Workspace `d-oit`, token created 2026-07-06 |
 | Classifier train, 20 epochs (resumed) | `gh workflow run train.yml -f steps=100000` (also direct `modal run src/train.py --epochs 20 --batch-size 64`) | ✅ Best val acc 84.48%, ONNX quantized (74.9% size reduction, 100% match) |
-| DiT smoke test, 100 steps | `modal run src/train_dit.py --steps 100 --batch-size 8` | ✅ Step 100, loss 0.068, 2.2 steps/s, A10G |
-| DiT full run, 100k steps | `gh workflow run train.yml` on main | 🔄 Ran ~700 steps in ~3h via A10G; will auto-stop with early-stopping |
+| DiT smoke test, 100 steps | `modal run src/train_dit.py --steps 100 --batch-size 8` | ✅ Step 100, loss 0.068, 2.2 steps/s, T4/L4 |
+| DiT full run, 100k steps | `gh workflow run train.yml` on main | 🔄 Ran ~1300 steps in ~3h via T4/L4; will auto-stop with early-stopping |
 | Resume on retry / re-trigger | Stable `checkpoints/dit/current` paths + auto-resume logic in `train_dit_on_gpu` | ✅ Verified — workflow re-trigger resumed from step 700 |
 | Volume commit on success | `volume_outputs.commit()` after training | ✅ Checkpoints visible via `modal volume ls dit-outputs` |
 | HF Hub upload path | `gh workflow run upload-hub.yml` (workflow_dispatch) | ✅ Workflow exists, runs when triggered |
@@ -39,7 +39,7 @@ Best-practice audit against the live Modal docs (July 2026):
 | Modal best-practice | Our code | Status |
 |---|---|---|
 | **Auth**: `modal token new` (Modal 1.0+) — `modal token set` is deprecated | `AGENTS.md`, `.agents/skills/*`, `src/{train,train_dit}.py` all use `modal token new` | ✅ |
-| **GPU**: Pass `gpu="T4"` / `"A10G"` / etc. on the decorator; `L40S` for cost/perf; >2 GPUs increases wait time | `src/train.py` → `gpu="T4"`; `src/train_dit.py` → `gpu="A10G"` | ✅ |
+| **GPU**: Pass `gpu="T4"` / `"A10G"` / etc. on the decorator; `L40S` for cost/perf; >2 GPUs increases wait time | `src/train.py` → `gpu="T4"`; `src/train_dit.py` → `gpu=["T4", "L4"]` | ✅ |
 | **Volumes**: Use `modal.Volume.from_name(name, create_if_missing=True)`; call `volume.commit()` after writes; **write-once, read-many** is the optimized pattern | Both scripts use `modal.Volume.from_name(..., create_if_missing=True)` and commit after training | ✅ |
 | **Volumes v2 (Beta)**: Higher throughput + concurrent writes from hundreds of containers | We use v1 | ⚠️ Optional upgrade — v2 is Beta |
 | **Checkpoint resume (reentrant)**: On function start, check the volume for the latest checkpoint and call it `last.ckpt`; resume from there | Both scripts auto-resume from `checkpoints/<name>/current/*.pt` | ✅ |
@@ -73,7 +73,7 @@ In-function log says `Speed: 2.2 steps/s`, which would predict 100 steps in ~45 
 So **the per-step rate reported by the loop is correct (the GPU is doing real work),
 but the wall-clock gap between reports is dominated by something other than the step.**
 
-**Likely wall-clock breakdown per 100-step block (modal A10G + 128×128 + batch 512):**
+**Likely wall-clock breakdown per 100-step block (modal T4/L4 + 128×128 + batch 512):**
 
 | Phase | Approx. time | Source |
 |---|---|---|

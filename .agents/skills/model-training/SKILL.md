@@ -101,9 +101,11 @@ cleanup_memory()  # gc.collect() + torch.cuda.empty_cache()
 ### GPU Selection
 | GPU | Best For | Cost |
 |-----|----------|------|
-| T4 | Classifier training | Low |
-| A10G | DiT training | Medium |
-| A100 | Large models | High |
+| T4 | Classifier training, DiT (cost-optimized) | Low ($0.59/hr) |
+| L4 | DiT fallback | Low ($0.80/hr) |
+| A10G | DiT training (if preemption is critical) | Medium ($1.10/hr) |
+| L40S | Non-spot DiT training | High ($1.95/hr) |
+| A100 | Large models | High ($2.10/hr) |
 
 ### Retry Configuration
 ```python
@@ -225,7 +227,7 @@ data/cats/
 |-------|----------|
 | AuthError | Run `modal token new` (Modal 1.0+) |
 | OOM errors | Reduce batch-size or use gradient accumulation |
-| Slow training | Use A10G GPU instead of T4 |
+| Slow training | Use T4/L4 GPU fallback for cost optimization |
 | CUDA error | Use `--device cpu` for local testing |
 | Import errors | Verify `sys.path` in Modal container |
 | Download failed | Check `data/download.py` in container |
@@ -234,7 +236,7 @@ data/cats/
 
 ```python
 # GPU selection in train.py/train_dit.py
-@app.function(gpu="A10G")  # T4, A10G, A100
+@app.function(gpu=["T4", "L4"])  # Cost-optimized: T4 ($0.59/hr) with L4 fallback ($0.80/hr)
 
 # Timeout for long training
 @app.function(timeout=86400)  # 24 hours max

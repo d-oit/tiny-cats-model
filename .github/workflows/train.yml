@@ -43,7 +43,7 @@ on:
         default: "2000"
         type: string
       save_interval:
-        description: "Checkpoint save interval in steps (default: 1000 - tight because L40S runs are preempt-free)"
+        description: "Checkpoint save interval in steps (default: 1000 - tight for cost-optimized T4/L4 runs)"
         required: false
         default: "1000"
         type: string
