@@ -490,14 +490,12 @@ def _initialize_dit_container():
         "/outputs": volume_outputs,
         "/data": volume_data,
     },
-    gpu=["L4", "T4"],  # L4 ($0.80/hr) faster per step; T4 ($0.59/hr) fallback
+    gpu=["T4", "L4"],  # T4 ($0.59/hr) for $7 budget; L4 ($0.80/hr) fallback
     timeout=86400,  # 24 hours max for long training runs
-    # Retry configuration (ADR-023: automatic recovery from transient failures)
+    # Retry configuration (Modal best practice: immediate retry for preemptions)
     retries=modal.Retries(
-        max_retries=2,  # Fewer retries for long jobs
-        backoff_coefficient=2.0,
-        initial_delay=30.0,  # Longer initial delay
-        max_delay=60.0,  # Max allowed: 60 seconds
+        max_retries=10,
+        initial_delay=0.0,  # Immediate retry on preemption
     ),
 )
 def train_dit_on_gpu(
@@ -515,7 +513,7 @@ def train_dit_on_gpu(
     warmup_steps: int = 2_000,
     log_interval: int = 100,
     save_interval: int = 500,
-    early_stopping_patience: int = 10,
+    early_stopping_patience: int = 15,
     sample_interval: int = 2_000,
     log_file: str | None = None,
     ema_beta: float = 0.9999,
@@ -1243,7 +1241,7 @@ def main(
     gradient_accumulation_steps: int = 1,
     warmup_steps: int = 2_000,
     save_interval: int = 500,
-    early_stopping_patience: int = 10,
+    early_stopping_patience: int = 15,
     augmentation_level: str = "full",
     resume: str | None = None,
 ):

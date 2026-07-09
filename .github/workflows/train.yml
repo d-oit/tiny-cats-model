@@ -48,9 +48,9 @@ on:
         default: "500"
         type: string
       early_stopping_patience:
-        description: "Early stopping patience in evaluations (default: 10)"
+        description: "Early stopping patience in evaluations (default: 15)"
         required: false
-        default: "10"
+        default: "15"
         type: string
 
 permissions:
