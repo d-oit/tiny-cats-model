@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# scripts/memory-persist.sh
+# harness/memory-persist.sh
 # Memory persistence and cleanup for MiMoCode sessions.
 #
 # Usage:
-#   bash scripts/memory-persist.sh [--dry-run] [--days N]
+#   bash harness/memory-persist.sh [--dry-run] [--days N] [--promote]
 #
 # What it does:
 #   1. Archives old session checkpoints (>N days, default 14)
 #   2. Extracts durable learnings from notes.md files
-#   3. Reports memory statistics
+#   3. Auto-promotes learnings to project MEMORY.md (with --promote)
+#   4. Reports memory statistics
 #
 # Options:
 #   --dry-run   Show what would be done without making changes
 #   --days N    Days before archiving (default: 14)
+#   --promote   Auto-promote durable learnings to MEMORY.md
 
 set -euo pipefail
 
@@ -33,6 +35,7 @@ log_stat() { echo -e "${CYAN}  $1${NC}"; }
 # Defaults
 DRY_RUN=false
 ARCHIVE_DAYS=14
+AUTO_PROMOTE=false
 MEMORY_BASE="${HOME}/.local/share/mimocode/memory"
 
 # Parse arguments
@@ -40,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run) DRY_RUN=true; shift ;;
         --days) ARCHIVE_DAYS="$2"; shift 2 ;;
+        --promote) AUTO_PROMOTE=true; shift ;;
         *) log_error "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -130,27 +134,71 @@ fi
 echo ""
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. Extract Durable Learnings
+# 3. Extract and Auto-Promote Durable Learnings
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Scanning for durable learnings in notes.md files"
 
 LEARNINGS_FOUND=0
+PROMOTED=0
+
+# Find notes files with durable learnings
 find "$SESSIONS_DIR" -name "notes.md" -type f -size +100c 2>/dev/null | while read -r notes_file; do
     SESSION_ID=$(echo "$notes_file" | grep -oP 'ses_[a-f0-9]+' | head -1)
-    
+
     # Check if notes contain learnings markers
     if grep -qiE "(learning|discovered|pattern|reusable|always|never|fix:|bug:)" "$notes_file" 2>/dev/null; then
         LEARNINGS_FOUND=$((LEARNINGS_FOUND + 1))
+
+        # Check if already promoted (marker at end of file)
+        if grep -q "^<!-- PROMOTED -->$" "$notes_file" 2>/dev/null; then
+            continue
+        fi
+
         if [[ "$DRY_RUN" == true ]]; then
             log_stat "Would extract from: $SESSION_ID"
+        elif [[ "$AUTO_PROMOTE" == true ]]; then
+            # Extract learnings (lines with markers)
+            LEARNINGS=$(grep -iE "(learning|discovered|pattern|reusable|always|never|fix:|bug:)" "$notes_file" 2>/dev/null | head -10)
+
+            if [[ -n "$LEARNINGS" ]]; then
+                # Use first project MEMORY.md found
+                MEMORY_FILE=$(find "$PROJECTS_DIR" -name "MEMORY.md" -type f 2>/dev/null | head -1)
+
+                if [[ -n "$MEMORY_FILE" ]]; then
+                    # Find or create "Discovered durable knowledge" section
+                    if grep -q "## Discovered durable knowledge" "$MEMORY_FILE"; then
+                        # Append to existing section (before next ## header)
+                        sed -i "/^## Discovered durable knowledge/,/^## /{/^## /i\\
+- Auto-promoted from session $SESSION_ID ($(date +%Y-%m-%d)):\\
+$(echo "$LEARNINGS" | sed 's/^/- /' | head -5)
+}" "$MEMORY_FILE"
+                    else
+                        # Add new section
+                        echo "" >> "$MEMORY_FILE"
+                        echo "## Discovered durable knowledge" >> "$MEMORY_FILE"
+                        echo "_Auto-promoted from session notes._" >> "$MEMORY_FILE"
+                        echo "" >> "$MEMORY_FILE"
+                        echo "- Auto-promoted from session $SESSION_ID ($(date +%Y-%m-%d)):" >> "$MEMORY_FILE"
+                        echo "$LEARNINGS" | sed 's/^/- /' | head -5 >> "$MEMORY_FILE"
+                    fi
+
+                    # Mark as promoted
+                    echo "" >> "$notes_file"
+                    echo "<!-- PROMOTED -->" >> "$notes_file"
+                    PROMOTED=$((PROMOTED + 1))
+                    log_success "Promoted learnings from: $SESSION_ID"
+                fi
+            fi
         else
-            log_info "Durable learnings in: $SESSION_ID"
+            log_info "Durable learnings in: $SESSION_ID (use --promote to auto-promote)"
         fi
     fi
 done
 
 if [[ $LEARNINGS_FOUND -eq 0 ]]; then
     log_success "No new durable learnings found"
+elif [[ $PROMOTED -gt 0 ]]; then
+    log_success "Promoted $PROMOTED learning(s) to MEMORY.md"
 fi
 echo ""
 
@@ -165,7 +213,12 @@ else
 fi
 echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
 echo ""
-echo "Next steps:"
-echo "  - Review archived sessions: ls $ARCHIVE_DIR"
-echo "  - Promote learnings: Edit $PROJECTS_DIR/*/MEMORY.md"
-echo "  - Run with --dry-run first to preview changes"
+echo "Usage:"
+echo "  bash harness/memory-persist.sh --dry-run           # Preview changes"
+echo "  bash harness/memory-persist.sh                     # Archive old sessions"
+echo "  bash harness/memory-persist.sh --promote           # Auto-promote learnings"
+echo "  bash harness/memory-persist.sh --days 7 --promote  # Custom retention + promote"
+echo ""
+echo "Review:"
+echo "  - Archived sessions: ls $ARCHIVE_DIR 2>/dev/null || echo 'No archived sessions'"
+echo "  - Project MEMORY.md: cat $PROJECTS_DIR/*/MEMORY.md | head -50"
