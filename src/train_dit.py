@@ -162,6 +162,11 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
+    # Config file (optional YAML)
+    parser.add_argument(
+        "--config", type=str, default=None, help="Path to YAML config file"
+    )
+
     # Data & output
     parser.add_argument(
         "--data-dir", type=str, required=True, help="Path to dataset root"
@@ -278,7 +283,23 @@ def parse_args() -> argparse.Namespace:
     # Performance
     parser.add_argument("--num-workers", type=int, default=4, help="DataLoader workers")
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    # Load config from YAML if provided
+    if args.config:
+        import yaml
+
+        with open(args.config) as f:
+            config = yaml.safe_load(f)
+
+        # Apply config values as defaults (CLI args still override)
+        for section in config.values():
+            if isinstance(section, dict):
+                for key, value in section.items():
+                    if getattr(args, key.replace("-", "_"), None) is None:
+                        setattr(args, key.replace("-", "_"), value)
+
+    return args
 
 
 def set_seed(seed: int) -> None:
@@ -347,12 +368,17 @@ def save_checkpoint(
         },
     }
 
-    torch.save(checkpoint, path)
+    # Atomic write: write to temp file then rename (prevents corruption on crash)
+    tmp_path = str(path) + ".tmp"
+    torch.save(checkpoint, tmp_path)
+    os.replace(tmp_path, str(path))
     logger.info(f"Saved checkpoint at step {step:,} (loss={loss:.6e}) to {path}")
 
     if is_best:
         best_path = path.parent / f"best_{path.name}"
-        torch.save(checkpoint, best_path)
+        tmp_best_path = str(best_path) + ".tmp"
+        torch.save(checkpoint, tmp_best_path)
+        os.replace(tmp_best_path, str(best_path))
         logger.info(f"Saved best model to {best_path}")
 
 
@@ -531,6 +557,7 @@ def train_dit_on_gpu(
     log_interval: int = 100,
     save_interval: int = 500,
     early_stopping_patience: int = 15,
+    early_stopping_min_delta: float = 0.001,
     sample_interval: int = 2_000,
     log_file: str | None = None,
     ema_beta: float = 0.9999,
@@ -680,6 +707,7 @@ def train_dit_on_gpu(
             save_interval=save_interval,
             sample_interval=sample_interval,
             early_stopping_patience=early_stopping_patience,
+            early_stopping_min_delta=early_stopping_min_delta,
             log_file=log_file,
             ema_beta=ema_beta,
             seed=seed,
@@ -797,6 +825,7 @@ def train_dit_local(
     save_interval: int = 10_000,
     sample_interval: int = 5_000,
     early_stopping_patience: int = 10,
+    early_stopping_min_delta: float = 0.001,
     log_file: str | None = None,
     ema_beta: float = 0.9999,
     seed: int = 42,
@@ -827,13 +856,14 @@ def train_dit_local(
         seed: Random seed.
         logger: Optional logger instance.
         resume: Optional checkpoint to resume from.
+        early_stopping_min_delta: Minimum loss improvement to count as progress.
         augmentation_level: Level of data augmentation.
 
     Returns:
         Final training loss.
     """
     # Import DiT modules (works for both local and Modal after path setup)
-    from dit import count_parameters, tinydit_128
+    from dit import count_parameters, tinydit_128, tinydit_256
     from flow_matching import (
         EMA,
         FlowMatchingLoss,
@@ -863,7 +893,12 @@ def train_dit_local(
 
     # Create model
     num_classes = 13  # 12 cat breeds + other
-    model = tinydit_128(num_classes=num_classes).to(device)
+    if image_size == 128:
+        model = tinydit_128(num_classes=num_classes).to(device)
+    elif image_size == 256:
+        model = tinydit_256(num_classes=num_classes).to(device)
+    else:
+        raise ValueError(f"Unsupported image_size: {image_size}. Use 128 or 256.")
 
     logger.info(
         f"Model: TinyDiT | Image size: {image_size} | "
@@ -887,7 +922,7 @@ def train_dit_local(
 
     # Optimizer and loss
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=1e-4, betas=(0.9, 0.95))
-    loss_fn = FlowMatchingLoss(prediction_type="velocity")
+    loss_fn = FlowMatchingLoss()
 
     # LR scheduler with warmup and cosine annealing using LambdaLR (ADR-032)
     def lr_lambda(current_step):
@@ -1094,19 +1129,15 @@ def train_dit_local(
                             logger=logger,
                             is_best=(avg_loss < best_loss),
                         )
-                        if avg_loss < best_loss:
+                        if avg_loss < best_loss - early_stopping_min_delta:
                             best_loss = avg_loss
                             patience_counter = 0
                             logger.info(f"New best loss: {best_loss:.6e}")
                         else:
-                            improvement = best_loss - avg_loss
-                            if improvement > 0.001:
-                                patience_counter = 0
-                            else:
-                                patience_counter += 1
-                                logger.info(
-                                    f"Loss plateau detected ({patience_counter}/{early_stopping_patience} evaluations)"
-                                )
+                            patience_counter += 1
+                            logger.info(
+                                f"Loss plateau detected ({patience_counter}/{early_stopping_patience} evaluations)"
+                            )
 
                         # Adaptive early stopping check (self-learning)
                         if patience_counter >= early_stopping_patience:
@@ -1141,6 +1172,7 @@ def train_dit_local(
                     # Generate samples
                     if step % sample_interval == 0:
                         logger.info(f"Generating samples at step {step:,}...")
+                        model.eval()
                         sample_breeds = torch.arange(min(8, num_classes), device=device)
                         generated = sample(
                             model,
@@ -1151,6 +1183,7 @@ def train_dit_local(
                             cfg_scale=1.5,
                             progress=False,
                         )
+                        model.train()
                         # Save samples (optional, requires PIL)
                         try:
                             from PIL import Image
@@ -1259,6 +1292,7 @@ def main(
     warmup_steps: int = 2_000,
     save_interval: int = 500,
     early_stopping_patience: int = 15,
+    early_stopping_min_delta: float = 0.001,
     augmentation_level: str = "full",
     resume: str | None = None,
 ):
@@ -1316,6 +1350,7 @@ if __name__ == "__main__":
             save_interval=args.save_interval,
             sample_interval=args.sample_interval,
             early_stopping_patience=args.early_stopping_patience,
+            early_stopping_min_delta=args.early_stopping_min_delta,
             log_file=args.log_file,
             ema_beta=args.ema_beta,
             resume=args.resume,

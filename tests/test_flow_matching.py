@@ -157,26 +157,21 @@ class TestFlowMatchingLoss:
     """Tests for FlowMatchingLoss."""
 
     def test_loss_is_nonzero_for_different_tensors(self) -> None:
-        loss_fn = FlowMatchingLoss(prediction_type="velocity")
+        loss_fn = FlowMatchingLoss()
         pred = torch.randn(2, 3, 128, 128)
         target = torch.randn(2, 3, 128, 128)
         assert loss_fn(pred, target).item() > 0
 
     def test_loss_is_zero_for_identical_tensors(self) -> None:
-        loss_fn = FlowMatchingLoss(prediction_type="velocity")
+        loss_fn = FlowMatchingLoss()
         x = torch.randn(2, 3, 128, 128)
         assert loss_fn(x, x).item() == pytest.approx(0.0)
 
     def test_loss_is_scalar(self) -> None:
-        loss_fn = FlowMatchingLoss(prediction_type="velocity")
+        loss_fn = FlowMatchingLoss()
         pred = torch.randn(2, 3, 128, 128)
         target = torch.randn(2, 3, 128, 128)
         assert loss_fn(pred, target).ndim == 0
-
-    def test_invalid_prediction_type_raises(self) -> None:
-        loss_fn = FlowMatchingLoss(prediction_type="invalid")
-        with pytest.raises(ValueError, match="Unknown prediction type"):
-            loss_fn(torch.randn(2), torch.randn(2))
 
 
 # ---------------------------------------------------------------------------

@@ -23,14 +23,9 @@ from tqdm import tqdm
 class FlowMatchingLoss(nn.Module):
     """Flow matching loss for velocity prediction."""
 
-    def __init__(self, prediction_type: str = "velocity") -> None:
-        """Initialize flow matching loss.
-
-        Args:
-            prediction_type: Type of prediction ("velocity" or "noise")
-        """
+    def __init__(self) -> None:
+        """Initialize flow matching loss."""
         super().__init__()
-        self.prediction_type = prediction_type
 
     def forward(
         self,
@@ -40,19 +35,13 @@ class FlowMatchingLoss(nn.Module):
         """Compute flow matching loss.
 
         Args:
-            pred: Model prediction (velocity or noise)
+            pred: Model prediction (velocity)
             target: Target velocity (x1 - x0)
 
         Returns:
             Scalar loss
         """
-        if self.prediction_type == "velocity":
-            return F.mse_loss(pred, target)
-        elif self.prediction_type == "noise":
-            # Convert to noise prediction
-            return F.mse_loss(pred, target)
-        else:
-            raise ValueError(f"Unknown prediction type: {self.prediction_type}")
+        return F.mse_loss(pred, target)
 
 
 def sample_t(
