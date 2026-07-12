@@ -165,21 +165,25 @@ find "$SESSIONS_DIR" -name "notes.md" -type f -size +100c 2>/dev/null | while re
                 MEMORY_FILE=$(find "$PROJECTS_DIR" -name "MEMORY.md" -type f 2>/dev/null | head -1)
 
                 if [[ -n "$MEMORY_FILE" ]]; then
+                    # Build the new learning entry
+                    ENTRY="- Auto-promoted from session $SESSION_ID ($(date +%Y-%m-%d)):"
+                    LEARNING_LINES=$(echo "$LEARNINGS" | sed 's/^/- /' | head -5)
+
                     # Find or create "Discovered durable knowledge" section
                     if grep -q "## Discovered durable knowledge" "$MEMORY_FILE"; then
-                        # Append to existing section (before next ## header)
-                        sed -i "/^## Discovered durable knowledge/,/^## /{/^## /i\\
-- Auto-promoted from session $SESSION_ID ($(date +%Y-%m-%d)):\\
-$(echo "$LEARNINGS" | sed 's/^/- /' | head -5)
-}" "$MEMORY_FILE"
+                        # Insert after the section header line using awk
+                        awk -v entry="$ENTRY" -v learnings="$LEARNING_LINES" '
+                            /^## Discovered durable knowledge/ { print; print ""; print entry; print learnings; print ""; next }
+                            { print }
+                        ' "$MEMORY_FILE" > "${MEMORY_FILE}.tmp" && mv "${MEMORY_FILE}.tmp" "$MEMORY_FILE"
                     else
-                        # Add new section
+                        # Add new section at end
                         echo "" >> "$MEMORY_FILE"
                         echo "## Discovered durable knowledge" >> "$MEMORY_FILE"
                         echo "_Auto-promoted from session notes._" >> "$MEMORY_FILE"
                         echo "" >> "$MEMORY_FILE"
-                        echo "- Auto-promoted from session $SESSION_ID ($(date +%Y-%m-%d)):" >> "$MEMORY_FILE"
-                        echo "$LEARNINGS" | sed 's/^/- /' | head -5 >> "$MEMORY_FILE"
+                        echo "$ENTRY" >> "$MEMORY_FILE"
+                        echo "$LEARNING_LINES" >> "$MEMORY_FILE"
                     fi
 
                     # Mark as promoted
