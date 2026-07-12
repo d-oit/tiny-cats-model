@@ -72,7 +72,7 @@ if [ "$1" == "--local" ]; then
         --batch-size 256 \
         --gradient-accumulation-steps 2 \
         --lr 5e-5 \
-        --warmup-steps 15000 \
+        --warmup-steps 500 \
         --augmentation-level full
     
     echo ""
@@ -102,7 +102,7 @@ elif [ "$1" == "--medium" ]; then
         --batch-size 256 \
         --gradient-accumulation-steps 2 \
         --lr 5e-5 \
-        --warmup-steps 15000 \
+        --warmup-steps 2000 \
         --augmentation-level full
         
 else
