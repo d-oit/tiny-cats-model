@@ -81,6 +81,37 @@ jobs:
       - name: Run tests with coverage
         run: |
           pytest tests/ -v --cov=. --cov-report=xml --cov-report=term-missing
+          # test_gpu_pool.py is discovered automatically by pytest tests/
+
+      - name: GPU pool fallback chain simulation
+        run: |
+          python scripts/test_fallback_chain.py
+          # Exits non-zero if any fallback chain simulation fails
+
+      - name: Benchmark estimate drift check
+        run: |
+          # Run calibration and verify estimates haven't drifted too far
+          python -c "
+          import json, subprocess, sys
+          proc = subprocess.run(
+              [sys.executable, 'scripts/benchmark_estimates.py', '--json'],
+              capture_output=True, text=True
+          )
+          if proc.returncode != 0:
+              print('benchmark_estimates.py failed:')
+              print(proc.stderr)
+              sys.exit(1)
+          report = json.loads(proc.stdout)
+          num = report.get('num_benchmarks', 0)
+          err = abs(report.get('mean_error_pct', 0))
+          print(f'Benchmarks: {num}, mean error: {report.get(\"mean_error_pct\", 0):+.1f}%')
+          if err > 75:
+              print(f'⚠️  Estimate drift is high ({err:.1f}%). Consider tuning T4_STEPS_PER_SECOND.')
+              print(f'    Run: python scripts/benchmark_estimates.py --tune')
+              # Warn but don't fail CI — benchmarks are still sparse
+          else:
+              print(f'✅ Estimate drift acceptable ({err:.1f}% ≤ 75%)')
+          "
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
