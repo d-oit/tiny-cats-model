@@ -45,7 +45,8 @@ check_prerequisites() {
         echo "   Run: bash data/download.sh"
         errors=$((errors + 1))
     else
-        local image_count=$(find data/cats -type f \( -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" \) | wc -l)
+        local image_count
+        image_count=$(find data/cats -type f \( -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" \) | wc -l)
         echo "✅ Dataset found: $image_count images"
     fi
     

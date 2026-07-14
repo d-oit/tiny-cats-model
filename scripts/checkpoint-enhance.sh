@@ -13,10 +13,9 @@
 
 set -euo pipefail
 
-# Colors
+# Colors (NC = no-color reset, used by all log_* functions)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
@@ -81,6 +80,7 @@ fi
 # Generate diff summary section
 DIFF_SECTION=""
 # Extract file paths from §6 of checkpoint
+# shellcheck disable=SC2016  # Single quotes are intentional — this is a grep regex, not a shell expansion.
 FILES_IN_CHECKPOINT=$(grep -oP '`[^`]+\.(py|ts|tsx|js|jsx|yaml|yml|sh|md)`' "$CHECKPOINT" | tr -d '`' | sort -u | head -20)
 
 if [[ -n "$FILES_IN_CHECKPOINT" ]]; then
