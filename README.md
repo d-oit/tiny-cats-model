@@ -101,16 +101,60 @@ python src/train.py data/cats --no-pretrained
 ```bash
 export MODAL_TOKEN_ID=your_token_id
 export MODAL_TOKEN_SECRET=your_token_secret
+
+# Classifier training
 modal run src/train.py
+
+# DiT generator training (optimized)
+modal run src/train_dit.py --steps 100000 --batch-size 512
 ```
 
 > **Security**: Never commit secrets. Use environment variables or GitHub Secrets.
 
+## Free GPU Pool Training
+
+Train across multiple free GPU providers with automatic checkpoint sync via HuggingFace Hub:
+
+| Provider | Free Tier | GPU Types | Max Session |
+|----------|-----------|-----------|-------------|
+| Modal | $30/mo credits | T4, L4 | 24h |
+| Lightning AI | 22h/day free | T4, L4, L40S | Unlimited |
+| Google Colab | Free GPU runtime | T4, V100 | 12h |
+| Kaggle | 30h/week free | P100, T4 | 9h |
+| HF Spaces | 16h/day GPU | T4-small | Unlimited |
+
+```bash
+# Check which provider you're on
+python -c "from src.gpu_pool import detect_provider; print(detect_provider())"
+
+# Estimate cost across all providers
+python -c "from src.gpu_pool import estimate_cost; print(estimate_cost(50000))"
+
+# Train on current provider with Hub sync
+python scripts/train_lightning.py --steps 20000 --hub-resume
+
+# Manual pool run via GitHub Actions
+gh workflow run train-pool.yml -f provider=all -f steps=20000
+```
+
+See `src/gpu_pool.py` for the full provider abstraction and `agents-docs/training.md` for detailed setup guides.
+
 ## Development
 
 ```bash
-# Run tests
+# Run all tests (unit, GPU pool, train chain)
 pytest tests/ -v
+
+# Specific test suites
+pytest tests/test_gpu_pool.py -v       # GPU pool abstraction
+pytest tests/test_train_chain.py -v    # Train chain & fallback
+
+# Fallback chain simulation (38 checks)
+python scripts/test_fallback_chain.py
+
+# GPU hour estimation & calibration
+python scripts/benchmark_estimates.py
+python scripts/benchmark_estimates.py --steps 50000
 
 # Lint code (auto-fix)
 ruff check . --fix

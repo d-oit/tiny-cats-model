@@ -1,19 +1,13 @@
-# Modal GPU Training
+# Training Guides
 
-## Authentication (Modal 1.0+)
+## Modal GPU Training (Class-based with @modal.enter())
 
-Modal 1.0+ uses `modal token new` not `modal token set`:
+Training scripts now use the `@app.cls` + `@modal.enter()` pattern (ADR-025, ADR-057):
+- Container init (CUDA warm-up, path setup) runs ONCE per container via `@modal.enter()`
+- Training runs via `@modal.method()` without re-initializing on each call
+- `scaledown_window=300` keeps containers warm for 5 min between runs
 
-```bash
-# Configure token (Modal 1.0+)
-modal token new
-
-# Verify
-modal token info
-modal token list
-```
-
-## Running Training
+### Running Training
 
 ### Classifier (train.py)
 ```bash
@@ -89,6 +83,35 @@ python src/train_dit.py data/cats --steps 100 --batch-size 8
 | L40S | Non-spot DiT training | High ($1.95/hr) |
 | A100 | Large models | High ($2.10/hr) |
 
+## Free GPU Pool Training
+
+Train across multiple free GPU providers with automatic checkpoint sync:
+
+```bash
+# Check provider status and cost estimates
+python -c "from gpu_pool import estimate_cost; print(estimate_cost(100000))"
+
+# Train on current provider with Hub checkpoint sync
+python -c "from gpu_pool import train_with_fallback; train_with_fallback(steps=50000)"
+
+# Print fallback chain
+python -c "from gpu_pool import train_chain; train_chain(steps=20000)"
+```
+
+Provider scripts with Hub sync:
+```bash
+python scripts/train_lightning.py --steps 20000 --hub-resume  # Lightning AI
+python scripts/train_colab.py --steps 20000 --resume           # Google Colab
+python scripts/train_kaggle.py --steps 20000 --hub-resume      # Kaggle
+python scripts/train_hf_spaces.py --steps 20000 --hub-resume   # HF Spaces
+```
+
+Pool CI workflow:
+```bash
+gh workflow run train-pool.yml -f steps=20000 -f batch_size=256
+gh workflow run train-pool.yml -f providers="modal,lightning"
+```
+
 ## Verification
 
 ```bash
@@ -111,8 +134,27 @@ python src/export_dit_onnx.py --verify --test
 | CUDA error | Use `--device cpu` |
 | Import errors | Check files in Modal container |
 
+## Testing
+
+```bash
+# Train chain and fallback integration tests
+pytest tests/test_train_chain.py -v
+
+# Fallback chain end-to-end simulation
+python scripts/test_fallback_chain.py
+
+# GPU hour estimate calibration and drift check
+python scripts/benchmark_estimates.py
+python scripts/benchmark_estimates.py --tune
+
+# CI runs the drift check automatically (warns if error > 75%)
+```
+
 ## References
 
+- [GPU Pool Abstraction](../src/gpu_pool.py) — multi-provider training with HF Hub checkpoint sync
+- [Train Chain Tests](../tests/test_train_chain.py)
 - [Model Training Skill](../.agents/skills/model-training/SKILL.md)
-- [ADR-042: Modal Training Enhancement](../plans/ADR-042-modal-training-enhancement.md)
-- [ADR-041: Authentication Error Handling](../plans/ADR-041-authentication-error-handling-2026.md)
+- [ADR-057: Modal CLI Verification & Best Practices](../plans/ADR-057-modal-cli-verification-and-best-practices-2026.md)
+- [ADR-025: Cold Start Optimization](../plans/ADR-025-modal-cold-start-optimization.md)
+- [ADR-058: GPU Selection & Cost Optimization](../plans/ADR-058-dit-l40s-non-spot-and-save-interval.md)

@@ -127,16 +127,17 @@ bash scripts/quality-gate.sh
 ```
 
 This runs the **same checks** as GitHub Actions CI:
-- Black format (88 chars)
-- isort imports (88 chars)
-- Ruff lint (E,F,W,I codes)
-- Flake8 lint (reads `.flake8`)
-- Mypy type check
-- Pytest tests
+- `ruff format --check` (88 chars)
+- `ruff check` (lint + import sorting)
+- `mypy` type check
+- `pytest` tests
+- `actionlint` workflow validation
+- `yamllint` YAML validation
+- Agent skill verification
 
 **Configuration**:
-- `.flake8` - Flake8 config (single source of truth)
-- `pyproject.toml` - Black, isort, mypy config
+- `ruff.toml` — format + lint config (single source of truth)
+- `pyproject.toml` — mypy and project metadata
 
 ### Pre-commit Hook (Optional)
 

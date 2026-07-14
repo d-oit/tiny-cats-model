@@ -9,22 +9,32 @@ This skill covers interacting with GitHub Actions for this repository.
 
 ## Workflow Location
 
-`.github/workflows/train.yml` and `.github/workflows/ci.yml`
+`.github/workflows/ci.yml` (main CI) and `.github/workflows/train-pool.yml` (GPU pool training)
 
 ## What the Workflows Do
 
 | Job | Description |
 |-----|-------------|
-| `lint` | Runs `ruff`, `black --check`, `flake8` |
-| `test` | Runs `pytest tests/` after lint passes |
+| `lint` | Runs `ruff format --check` and `ruff check` |
+| `test` | Runs `pytest tests/`, fallback chain simulation, benchmark drift check |
 | `type-check` | Runs `mypy` for type checking |
-| `model-import-check` | Verifies model and dataset modules |
+| `build-frontend` | Builds frontend if lint/test/type pass |
+| `guardrail-deps` | Forbids bad dependency versions |
+
+### GPU Pool Workflow (`train-pool.yml`)
+
+| Job | Description |
+|-----|-------------|
+| `train-modal` | Modal GPU training with HF Hub checkpoint sync |
+| `train-pool-runner` | CPU fallback training on pool runner |
+| `pool-summary` | Prints pool status, cost estimates, and result summary |
 
 ## Trigger Conditions
 
 - Runs on every `push` to `main`
 - Runs on every `pull_request` targeting `main`
 - Concurrency: cancels in-progress runs on new pushes
+- `train-pool.yml`: workflow_dispatch (manual) or schedule (every 6h)
 
 ## Checking CI Status (gh CLI)
 
@@ -48,11 +58,12 @@ gh run rerun <run-id> --failed
 ## Manually Triggering
 
 ```bash
-# Trigger workflow_dispatch
-gh workflow run train.yml
+# Trigger CI workflow
+gh workflow run ci.yml
 
-# Trigger with inputs
-gh workflow run train.yml -f epochs=20
+# Trigger GPU pool training
+gh workflow run train-pool.yml -f steps=20000 -f batch_size=256
+gh workflow run train-pool.yml -f provider=all -f steps=50000
 ```
 
 ## Adding Secrets (gh CLI)
@@ -72,7 +83,7 @@ Or via GitHub UI: **Settings** → **Secrets and variables** → **Actions**
 
 | Issue | Fix |
 |-------|-----|
-| Lint fails | Run `ruff check . --fix` and `black .` locally |
+| Lint fails | Run `ruff check . --fix` and `ruff format .` locally |
 | Tests fail | Run `pytest tests/ -v` locally |
 | Import error | Check dependencies in `requirements.txt` |
 | Timeout | Reduce epochs or use `gpu-t4` in `modal.yml` |

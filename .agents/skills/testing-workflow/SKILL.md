@@ -19,27 +19,26 @@ This skill verifies the repository's CI pipeline, tests, and training integratio
 Run in this exact order:
 
 ```bash
-# 1. Lint check
-ruff check .
-flake8 . --max-line-length=88 --extend-ignore=E203,W503
+# 1. Format check
+ruff format --check .
 
-# 2. Format check
-black --check .
+# 2. Lint check
+ruff check .
 
 # 3. Type check
 mypy . --ignore-missing-imports
 
-# 4. Unit tests
+# 4. Unit tests (includes GPU pool, train chain, fallback)
 pytest tests/ -v --tb=short
 
-# 5. Module import sanity check
-python -c "import sys; sys.path.insert(0, 'src'); from model import cats_model; m = cats_model(pretrained=False); print('Model OK')"
+# 5. Fallback chain simulation (38 checks)
+python scripts/test_fallback_chain.py
 ```
 
-Alternatively, use the verify script:
+Alternatively, use the quality gate:
 
 ```bash
-bash .agents/skills/testing-workflow/verify.sh
+bash scripts/quality-gate.sh
 ```
 
 ## Expected Output
@@ -56,4 +55,6 @@ bash .agents/skills/testing-workflow/verify.sh
 
 ## Integration with CI
 
-Same commands run automatically in `.github/workflows/train.yml` on every push and PR.
+Same commands run automatically in `.github/workflows/ci.yml` on every push and PR.
+The CI pipeline also includes a benchmark estimate drift check and
+a GPU pool fallback chain simulation step.

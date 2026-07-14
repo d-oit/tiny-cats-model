@@ -71,16 +71,15 @@ pytest tests/ -v --cov=src --cov-report=term-missing
 ```bash
 # Lint
 ruff check .
-flake8 . --max-line-length=88
 
 # Auto-fix lint issues
 ruff check . --fix
 
 # Format code
-black .
+ruff format .
 
 # Check formatting without modifying
-black --check .
+ruff format --check .
 ```
 
 ## Modal GPU Training (Modal 1.0+)
@@ -89,11 +88,14 @@ black --check .
 # Set credentials globally (Modal 1.0+ uses 'token new')
 modal token new
 
-# Run training on GPU
-modal run src/train.py
-
-# Run with custom options
+# Classifier training on GPU
 modal run src/train.py --epochs 20 --batch-size 64
+
+# DiT generator training on GPU
+modal run src/train_dit.py --steps 100000 --batch-size 512
+
+# Local CPU testing (debug)
+python src/train_dit.py --data-dir data/cats --steps 100 --batch-size 8
 ```
 
 ### Modal best practices
@@ -111,16 +113,27 @@ modal run src/train.py --epochs 20 --batch-size 64
 - When triggering from GitHub Actions, prefer **reusing a running run** over
   cancelling/re-triggering — every re-trigger pays container cold-start + image-pull cost.
 
+## GPU Pool Training
+
+```bash
+# Check which free GPU provider you're on
+python -c "from gpu_pool import detect_provider; print(detect_provider())"
+
+# Estimate cost across all providers
+python -c "from gpu_pool import estimate_cost; print(estimate_cost(50000))"
+
+# Train with automatic fallback chain
+python -c "from gpu_pool import train_chain; train_chain(steps=20000)"
+
+# Provider-specific scripts with Hub sync
+python scripts/train_lightning.py --steps 20000 --hub-resume
+python scripts/train_kaggle.py --steps 20000 --hub-resume
+```
+
 ## Full Verification
 
 ```bash
-# Run complete CI check suite
-bash .agents/skills/testing-workflow/verify.sh
-
-# Or use the quality gate
-bash .agents/skills/git-workflow/quality-gate.sh
-
-# Or use the new scripts
+# Run the quality gate (lint + format + typecheck + test + verify)
 bash scripts/quality-gate.sh
 ```
 
@@ -130,9 +143,12 @@ bash scripts/quality-gate.sh
 |------|---------|
 | Install | `pip install -r requirements.txt` |
 | Dataset | `bash data/download.sh` |
-| Train | `python src/train.py data/cats` |
+| Train (classifier) | `python src/train.py data/cats` |
+| Train (DiT) | `python src/train_dit.py --data-dir data/cats --steps 100000` |
 | Evaluate | `python src/eval.py` |
 | Tests | `pytest tests/ -v` |
-| Lint | `ruff check . && flake8 .` |
-| Format | `black .` |
-| CI verify | `bash .agents/skills/testing-workflow/verify.sh` |
+| Fallback sim | `python scripts/test_fallback_chain.py` |
+| Benchmark | `python scripts/benchmark_estimates.py` |
+| Lint | `ruff check .` |
+| Format | `ruff format .` |
+| CI verify | `bash scripts/quality-gate.sh` |

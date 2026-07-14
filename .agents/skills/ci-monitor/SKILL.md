@@ -46,13 +46,13 @@ gh run view <run-id> --json jobs --jq '.jobs[] | select(.conclusion == "failure"
 
 | Failure Pattern | Specialist Agent | Skill |
 |-----------------|------------------|-------|
-| `flake8`, `ruff`, `black` errors | code-quality | `@skill code-quality` |
+| `ruff format`, `ruff check` errors | code-quality | `@skill code-quality` |
 | `pytest` failures | testing-workflow | `@skill testing-workflow` |
 | `mypy` type errors | code-quality | `@skill code-quality` |
-| `npm`, `tsc`, frontend build | frontend (if exists) | Create skill |
+| `actionlint`, `yamllint` errors | gh-actions | `@skill gh-actions` |
 | `modal`, training, GPU | model-training | `@skill model-training` |
 | Workflow config, runner issues | gh-actions | `@skill gh-actions` |
-| Secrets, tokens, credentials | security | `@skill security` |
+| Secrets, tokens, credentials | security/auth-manager | `@skill security` |
 
 ### 4. Spawn Specialist Agent
 
@@ -123,12 +123,12 @@ gh run watch
 # 3. CI fails - check what failed
 gh run view 123456 --log-failed
 
-# Output shows: flake8 E501 errors in src/model.py
+# Output shows: ruff E501 errors in src/model.py
 
 # 4. Spawn specialist
 @task
-**Description**: Fix flake8 E501 errors
-**Prompt**: CI run 123456 failed with flake8 E501 errors in src/model.py. Fix using @skill code-quality.
+**Description**: Fix ruff E501 errors
+**Prompt**: CI run 123456 failed with ruff E501 errors in src/model.py. Fix using @skill code-quality.
 **Subagent**: general-purpose
 
 # 5. Agent fixes and pushes
