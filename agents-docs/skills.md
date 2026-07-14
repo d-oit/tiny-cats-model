@@ -4,15 +4,24 @@ Load skills using the `@skill` command when the task matches:
 
 | Skill | When to Use | Triggers |
 |-------|-------------|----------|
+| `agent-browser` | Browser automation, E2E session interactions | "open URL", "click", "screenshot", "scrape", "browser test" |
+| `agents-md` | AGENTS.md / agents-docs/ structure | "update AGENTS.md", "agents-docs", "skill reference" |
+| `analysis-swarm` | Multi-perspective code analysis | "decision", "trade-off", "blind spot", "compare options" |
+| `auth-manager` | Token validation, credential troubleshooting | "auth failed", "token", "credential", "Modal auth" |
+| `checkpoint-enhancer` | Enrich checkpoints with git context | "enhance checkpoint", "add git context" |
 | `ci-monitor` | CI monitoring, failure coordination | "CI failed", "GitHub Actions", "monitor", "orchestrate" |
 | `cli-usage` | Training, evaluation, dataset | "train", "evaluate", "download data" |
-| `testing-workflow` | Running tests, verification | "test", "verify", "CI" |
 | `code-quality` | Linting, formatting | "lint", "format", "style" |
+| `dogfood` | Exploratory QA / bug hunting | "QA", "find bugs", "dogfood", "test app" |
 | `gh-actions` | CI/CD, workflows | "CI", "GitHub Actions", "workflow" |
 | `git-workflow` | Branches, commits, PRs | "commit", "branch", "PR", "quality gate", "pre-commit" |
 | `goap` | Planning, ADR, project goals | "plan", "GOAP", "ADR", "action item", "priority" |
-| `security` | Secrets, credentials | "secret", "token", "credential" |
 | `model-training` | GPU training, Modal | "GPU", "Modal", "hyperparameter" |
+| `security` | Secrets, credentials | "secret", "token", "credential" |
+| `skill-creator` | Author new skills | "create skill", "new skill template" |
+| `skill-evaluator` | Evaluate / validate a skill | "evaluate skill", "skill check", "skill benchmark" |
+| `testing-workflow` | Running tests, verification | "test", "verify", "CI" |
+| `token-reducer` | Truncate noisy CI/lint/test output | "too long", "truncate", "context overflow" |
 | `web-search-researcher` | Modern information, docs | "2026", "best practices", "latest", "current" |
 
 ## Specialist Agent Selection
@@ -25,7 +34,8 @@ Load skills using the `@skill` command when the task matches:
 | Type error | `@skill code-quality` |
 | CI/workflow config | `@skill gh-actions` |
 | Model/training | `@skill model-training` |
-| Security | `@skill security` |
+| Security / auth | `@skill security` or `@skill auth-manager` |
+| QA a web app | `@skill dogfood` or `@skill agent-browser` |
 
 ## CI Monitor Workflow (2026)
 
