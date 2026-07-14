@@ -617,6 +617,86 @@ bash scripts/train_dit_high_accuracy.sh --local  # 4000 steps, ~5-10 min
 | A04: Create PR #40 | ✅ Complete | 22.5 | git-workflow | 2026-03-04 | PR created and CI running |
 | A05: Merge PR | 🔄 PENDING | 22.5 | git-workflow | - | Waiting for CI checks |
 
+### Phase 23: Free GPU Pool Infrastructure (ADR-055, ADR-056, ADR-057, ADR-058)
+
+**Goal:** Train across multiple free GPU providers (Modal $30/mo, Lightning 22h/day, Colab T4 12h, Kaggle P100 30h/week, HF Spaces T4-small 16h/day) with a single Python API + automatic HuggingFace Hub checkpoint sync. ADR-055/056/057/058 document the analysis, missing-task implementation, Modal 1.0+ best-practice verification (`@app.cls` + `@modal.enter()` + `scaledown_window=300` + `Retries(max_retries=10)`), and the L40S non-spot / `save_interval` cost-robustness trade-off.
+
+**Status:** ✅ Implementation complete on `main`. 67 unit/integration pytests pass. Fallback-chain simulation (38 checks) green. Benchmark-drift check (`scripts/benchmark_estimates.py --json`) wired into `ci.yml`. Remaining items require external auth.
+
+#### Phase 23.1: Provider Abstraction
+- [x] Create `src/gpu_pool.py` (provider detection, cost estimation, fallback-chain builder, Hub sync)
+- [x] Public API: `detect_provider()`, `detect_provider_and_log()`, `estimate_cost()`, `estimate_gpu_hours()`, `train_chain()`, `train_with_fallback()`, `iterate_fallback_chain()`
+- [x] Single-script = single-provider model; cross-provider runs bridged via Hub sync, NOT in-process iteration
+- [x] Provider-specific entry-point scripts (manual operator workflow):
+  - [x] `scripts/train_lightning.py` — Lightning AI Studio (22h/day free)
+  - [x] `scripts/train_colab.py` — Google Colab free GPU runtime
+  - [x] `scripts/train_kaggle.py` — Kaggle 30h/week
+  - [x] `scripts/train_hf_spaces.py` — HuggingFace Spaces T4-small (16h/day)
+
+#### Phase 23.2: Hub Checkpoint Sync (ADR-021, ADR-034)
+- [x] Per-run checkpoint upload to `d4oit/tiny-cats-model` Hub repo
+- [x] Auto-resume from latest Hub checkpoint on script start (`--hub-resume` / `--resume`)
+- [x] Modal → Lightning → Colab → Kaggle → HF-Spaces continuity via shared Hub state
+
+#### Phase 23.3: CI Integration (ADR-049)
+- [x] Add `train-pool.yml` workflow (workflow_dispatch + 6h schedule)
+- [x] Add `tests/test_gpu_pool.py` (unit tests for provider detection, cost, fallback)
+- [x] Add `tests/test_train_chain.py` (integration tests for `train_chain()`, `train_with_fallback()`)
+- [x] Add `scripts/test_fallback_chain.py` end-to-end simulation (38 checks, exit non-zero on failure)
+- [x] Wire `scripts/benchmark_estimates.py --json` drift check into `ci.yml` (warn > 75%)
+
+#### Phase 23.4: Quality Gate
+- [x] `ruff check .` + `ruff format --check .` clean on all new Python
+- [x] `mypy . --ignore-missing-imports` clean on new modules
+- [x] `shellcheck` exit 0 on all new + existing `*.sh` (memory-share.sh, checkpoint-enhance.sh, train_dit_high_accuracy.sh)
+- [x] `yamllint` clean on `plans/`, `configs/`, new `train-pool.yml`
+- [x] `actionlint` clean on `.github/workflows/*.yml`
+- [x] Module refactor: `src/train.py` + `src/train_dit.py` migrated to `@app.cls`/`@modal.enter()` pattern (ADR-025, ADR-057)
+
+#### Phase 23.5: Calibration Discipline
+- [x] `KNOWN_BENCHMARKS` distinguishes real vs derived entries via `"DERIVED:"` source prefix
+- [x] Mean error + `--tune` recommendation computed from REAL entries only
+- [x] Module constant `MIN_REAL_BENCHMARKS_FOR_TUNE: int = 3` extracted for future tuning
+- [x] `calibrate_steps_per_second()` rewrote to single-pass loop (no duplicate comparisons)
+
+#### Phase 23.6: Docs & ADR
+- [x] ADR-055: Codebase implementation analysis -> revealed 5 provider scripts missing
+- [x] ADR-056: Missing tasks implementation -> provider entry-point scripts + pool abstraction
+- [x] ADR-057: Modal CLI verification & best practices 2026 (`@app.cls`, `@modal.enter`, `scaledown_window`)
+- [x] ADR-058: L40S non-spot + `save_interval` cost/robustness trade-off
+- [x] `AGENTS.md` updated (added pool CI commands, removed stale `flake8`/`black` references)
+- [x] `README.md` updated ("Free GPU Pool Training" section with per-provider comparison table)
+- [x] `agents-docs/training.md` restructured (covers Modal class-pattern + free GPU pool)
+- [x] `.agents/skills/model-training/SKILL.md` updated (class-container pattern + pool training section)
+- [x] `.agents/skills/cli-usage/SKILL.md` updated (Modal 1.0+ commands + pool entry points)
+- [x] `.agents/skills/testing-workflow/SKILL.md` updated (added fallback-chain sim step)
+- [x] `.agents/skills/code-quality/SKILL.md` merged ruff format/lint (single source of truth)
+- [x] `.agents/skills/ci-monitor/SKILL.md` updated failure-pattern table (ruff replaces flake8)
+- [x] `.agents/skills/gh-actions/SKILL.md` updated for `train-pool.yml` workflow
+
+#### GOAP Action Status for Phase 23
+| Action | Status | Phase | Skill | Completed At | Notes |
+|--------|--------|-------|-------|--------------|-------|
+| A01: gpu_pool.py abstraction | ✅ Complete | 23.1 | model-training | 2026-03-04 | 5 providers + Hub sync |
+| A02: provider entry-point scripts | ✅ Complete | 23.1 | model-training | 2026-03-04 | 4 (Lightning/Colab/Kaggle/HF) |
+| A03: hub auto-sync | ✅ Complete | 23.2 | model-training | 2026-03-04 | `--hub-resume` / `--resume` |
+| A04: train-pool.yml workflow | ✅ Complete | 23.3 | gh-actions | 2026-03-04 | dispatch + 6h schedule |
+| A05: gpu_pool tests | ✅ Complete | 23.3 | testing-workflow | 2026-03-04 | 67 tests passing |
+| A06: fallback-chain simulation | ✅ Complete | 23.3 | testing-workflow | 2026-03-04 | `scripts/test_fallback_chain.py` 38/38 |
+| A07: benchmark drift check | ✅ Complete | 23.3 | testing-workflow | 2026-03-04 | wired into `ci.yml` |
+| A08: train.py/train_dit.py @app.cls | ✅ Complete | 23.4 | model-training | 2026-03-04 | @modal.enter() once-per-container |
+| A09: real/derived benchmark split | ✅ Complete | 23.5 | testing-workflow | 2026-03-04 | single-loop calibration |
+| A10: ADRs 055-058 | ✅ Complete | 23.6 | goap | 2026-03-04 | Analysis + missing tasks + Modal best practices + L40S |
+| A11: skill + docs sync | ✅ Complete | 23.6 | agents-md | 2026-03-04 | 5 skills + 3 docs updated |
+
+**Progress:** 11/11 in-repo actions complete (100%)
+
+#### Remaining (external-auth gated)
+- [ ] **A12:** Capture real T4 wall-clock measurement to fill 100k T4 placeholder in `KNOWN_BENCHMARKS` (Modal auth + GPU run)
+- [ ] **A13:** Run actual Lightning/Colab/Kaggle/HF-Spaces training jobs (each provider's auth)
+- [ ] **A14:** Push branch + open PR for the 14-commit series (`gh auth`)
+- [ ] **A15:** Set `HF_TOKEN` GitHub Secret to enable Phase 9/17 automated upload (`gh secret set`)
+
 ### Phase 22: Authentication Utilities (ADR-045)
 
 **Goal:** Implement robust authentication validation and retry utilities (GOAP-AUTH-PLAN A01-A04).
