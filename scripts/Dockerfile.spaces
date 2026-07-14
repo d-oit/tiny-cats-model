@@ -1,0 +1,33 @@
+# Dockerfile for HuggingFace Spaces GPU training
+# Used with: sdk: docker / gpu: t4
+# Build: docker build -t tiny-cats-train -f scripts/Dockerfile.spaces .
+# Run: docker run --gpus all -e HF_TOKEN=$HF_TOKEN tiny-cats-train
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget tar curl git && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    torchvision==0.20.1 \
+    pillow==11.0.0 \
+    tqdm==4.67.1 \
+    huggingface_hub \
+    onnx==1.17.0 \
+    onnxruntime==1.20.0
+
+# Copy training source files
+COPY src/ /app/src/
+COPY data/download.py /app/data/download.py
+COPY data/download.sh /app/data/download.sh
+COPY scripts/train_hf_spaces.py /app/scripts/train_hf_spaces.py
+
+ENV HF_XET_HIGH_PERFORMANCE=1
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+ENV PYTHONPATH=/app/src:$PYTHONPATH
+
+# Run training by default (override with HF_TOKEN in env)
+CMD python /app/scripts/train_hf_spaces.py --steps 20000 --batch-size 256 --hub-resume
