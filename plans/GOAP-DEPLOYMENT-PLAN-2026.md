@@ -1,8 +1,15 @@
 # GOAP Production Deployment Plan 2026
 
 **Generated:** 2026-02-25
-**Branch:** `feature/production-deployment-2026`
+**Last Updated:** 2026-03-04
+**Branch:** `feature/production-deployment-2026` (merged; current work is on `main`)
 **Related ADR:** ADR-029
+
+> **Status (2026-03-04):** This plan for the 2026-02-25 production deployment has been executed and is now historical. The 15 actions were completed; the resulting factory landed on `main` (see Phase 10 of `GOAP.md`). Subsequent work continues via:
+> - **Phase 17/18/22** of `GOAP.md` (High-Accuracy Training, Auth, Deployment Pipeline)
+> - **Phase 23** of `GOAP.md` (Free GPU Pool Infrastructure, ADR-055/056/057/058) — current focus
+>
+> For the most current ACTION STATUS TABLE, see the live `GOAP.md` rather than this historical document.
 
 ---
 

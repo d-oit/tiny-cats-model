@@ -1,8 +1,9 @@
 # GOAP: Authentication Error Handling Plan
 
 **Created:** 2026-02-28
+**Last Updated:** 2026-03-04
 **Related ADR:** ADR-041 (Authentication Error Handling and Token Validation)
-**Status:** Proposed
+**Status:** Implemented (foundations) — high-level tracking lives in `GOAP.md` Phase 22 (Auth Utilities) and ADR-045
 
 ## Goal
 
@@ -33,7 +34,8 @@ Implement comprehensive authentication error handling with token validation, ret
 
 **Skill:** `model-training` + `code-quality`
 **Dependencies:** None
-**Completed At:** -
+**Completed At:** 2026-03-02
+**Status:** ✅ Complete — `src/auth_utils.py` (453 lines) with `TokenStatus` enum, `TokenValidationResult` dataclass, and `AuthValidator` class. See GOAP.md Phase 22 for high-level tracking.
 
 #### A02: Create `src/retry_utils.py`
 - [ ] Implement `RetryConfig` class
@@ -46,7 +48,8 @@ Implement comprehensive authentication error handling with token validation, ret
 
 **Skill:** `model-training` + `code-quality`
 **Dependencies:** A01
-**Completed At:** -
+**Completed At:** 2026-03-02
+**Status:** ✅ Complete — `src/retry_utils.py` (642 lines) with `RetryConfig` dataclass, exponential backoff with jitter, and `upload_with_retry` helper. See GOAP.md Phase 22 for high-level tracking.
 
 #### A03: Create Unit Tests for Auth Utilities
 - [ ] Create `tests/test_auth_utils.py`
@@ -59,7 +62,8 @@ Implement comprehensive authentication error handling with token validation, ret
 
 **Skill:** `testing-workflow`
 **Dependencies:** A01
-**Completed At:** -
+**Completed At:** 2026-03-02
+**Status:** ✅ Complete — `tests/test_auth_utils.py` with 56 test cases (missing token, invalid format, valid-token mocked paths).
 
 #### A04: Create Unit Tests for Retry Utilities
 - [ ] Create `tests/test_retry_utils.py`
@@ -71,7 +75,8 @@ Implement comprehensive authentication error handling with token validation, ret
 
 **Skill:** `testing-workflow`
 **Dependencies:** A02
-**Completed At:** -
+**Completed At:** 2026-03-02
+**Status:** ✅ Complete — `tests/test_retry_utils.py` with 35 test cases (success, retry, max-attempts-exceeded).
 
 ### Phase 2: Upload Script Enhancement (P1 - 2 hours)
 
@@ -258,10 +263,10 @@ Implement comprehensive authentication error handling with token validation, ret
 
 | Action | Status | Phase | Skill | Priority | Completed At |
 |--------|--------|-------|-------|----------|--------------|
-| A01: Create auth_utils.py | ⏳ PENDING | 1 | model-training | P0 | - |
-| A02: Create retry_utils.py | ⏳ PENDING | 1 | model-training | P0 | - |
-| A03: Test auth utilities | ⏳ PENDING | 1 | testing-workflow | P0 | - |
-| A04: Test retry utilities | ⏳ PENDING | 1 | testing-workflow | P0 | - |
+| A01: Create auth_utils.py | ✅ Complete | 1 | model-training | P0 | 2026-03-02 |
+| A02: Create retry_utils.py | ✅ Complete | 1 | model-training | P0 | 2026-03-02 |
+| A03: Test auth utilities | ✅ Complete | 1 | testing-workflow | P0 | 2026-03-02 |
+| A04: Test retry utilities | ✅ Complete | 1 | testing-workflow | P0 | 2026-03-02 |
 | A05: Update upload script | ⏳ PENDING | 2 | model-training | P1 | - |
 | A06: Add retry to upload | ⏳ PENDING | 2 | model-training | P1 | - |
 | A07: Add logging to upload | ⏳ PENDING | 2 | model-training | P1 | - |
@@ -279,7 +284,9 @@ Implement comprehensive authentication error handling with token validation, ret
 | A19: Create troubleshooting guide | ⏳ PENDING | 5 | agents-md | P2 | - |
 | A20: Update ADR-039 | ⏳ PENDING | 5 | agents-md | P2 | - |
 
-**Progress:** 0/20 actions complete (0%)
+**Progress:** 4/20 actions complete (20% — Phase 1 foundational utilities + tests; remaining actions integrated or tracked via Phase 22 of `GOAP.md`)
+
+> **Note:** A05+ (upload enhancement, training integration, CI pre-flight, docs) are tracked in aggregate under `GOAP.md` Phase 22 because the actual implementation shipped in a single coherent set of commits rather than per-action. The `auth_utils.py` module is the foundation; downstream integration is verified by Phase 22's "1,571 lines of code, 91 tests" impact metric.
 
 ## Dependency Graph
 
