@@ -8,20 +8,24 @@ Providers:
 - Google Colab (free T4 GPU, daily limit)
 - Kaggle (free T4/P100 GPU, 30h/week)
 - HuggingFace Spaces (free T4 GPU, limited)
-- Tinker (managed LoRA API — LLM fine-tuning only, excluded for custom models)
-
-Architecture:
+- Tinker (managed LoRA API — LLM fine-tuning only, excluded for custom models)Architecture (cross-provider view — see below for execution model):
     ┌──────────────────────────────────────────────────────┐
     │                    GPU Pool                           │
     │  ┌──────────┐  ┌──────────┐  ┌──────────┐           │
-    │  │  Modal   │→ │Lightning │→ │  Colab   │→ ...      │
-    │  │ (T4/L4)  │  │  (T4)    │  │  (T4)    │           │
+    │  │  Modal   │  │Lightning │  │  Colab   │           │
+    │  │ (T4/L4)  │  │  (T4)    │  │  (T4)    │   ...     │
     │  └──────────┘  └──────────┘  └──────────┘           │
-    │        ↓               ↓              ↓              │
+    │       └──────────────┴─────────────┴────┘            │
+    │                ↓                                     │
     │  ┌──────────────────────────────────────────┐       │
-    │  │       HuggingFace Hub (checkpoint sync)   │       │
+    │  │    HuggingFace Hub (checkpoint sync)     │       │
     │  └──────────────────────────────────────────┘       │
     └──────────────────────────────────────────────────────┘
+
+Execution model: a single script invocation trains on ONE provider
+(``detect_provider()``). To walk this chain, run the script separately
+on each provider; checkpoints sync via Hub between runs.
+``train_chain()`` prints the chain order for the operator.
 
 Usage:
     from gpu_pool import detect_provider, get_provider_config, train_with_fallback
@@ -162,8 +166,12 @@ PROVIDER_CONFIGS: dict[Provider, ProviderConfig] = {
 
 
 # Fallback chain priority (most capable/cost-effective first).
-# Iterated by train_with_fallback() and available for callers who need
-# multi-provider orchestration via iterate_fallback_chain().
+# Cross-provider orchestration across this chain is handled by
+# ``train_chain()`` (prints the chain for operator use). Iterate via
+# ``iterate_fallback_chain()`` for programmatic multi-provider use.
+# NOTE: a single script invocation trains on ONE detected provider
+# (see ``train_with_fallback()``) — cross-provider runs are bridged
+# through HuggingFace Hub checkpoint sync.
 FALLBACK_CHAIN: list[Provider] = [
     Provider.MODAL,
     Provider.LIGHTNING,
@@ -187,11 +195,13 @@ def iterate_fallback_chain(
         Ordered list of providers to try.
 
     Example:
-        # Try Lightning, then Colab, then Kaggle, etc.
-        for p in iterate_fallback_chain(Provider.LIGHTNING):
-            result = try_training_on(p)
-            if result.success:
-                break
+        # Operator walks the chain by running this script on each provider
+        # separately (Hub checkpoint sync bridges runs between scripts):
+        #   # On Lightning machine
+        #   python scripts/train_lightning.py --steps 20000 --hub-repo ...
+        #   # Then on Colab machine — auto-resumes from the Hub checkpoint
+        #   python scripts/train_colab.py --steps 20000 --hub-resume
+        providers = iterate_fallback_chain(Provider.LIGHTNING)
     """
     if start_from is None or start_from not in FALLBACK_CHAIN:
         return list(FALLBACK_CHAIN)
