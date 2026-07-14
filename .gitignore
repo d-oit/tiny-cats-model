@@ -147,3 +147,9 @@ package-lock.json
 train_fail_log.txt
 *.onnx
 *.onnx.data
+
+# =============================================================================
+# Tooling / cache dirs (developer-local, not part of source)
+# =============================================================================
+.mimocode/
+.cron-lock
