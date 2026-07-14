@@ -13,8 +13,7 @@
 
 set -euo pipefail
 
-# Colors
-RED='\033[0;31m'
+# Colors (NC = no-color reset, used by all log_* functions)
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
@@ -28,7 +27,6 @@ log_found() { echo -e "${CYAN}  $1${NC}"; }
 
 MEMORY_BASE="${HOME}/.local/share/mimocode/memory"
 PROJECTS_DIR="$MEMORY_BASE/projects"
-GLOBAL_DIR="$MEMORY_BASE/global"
 
 # Current project (tiny-cats-model)
 CURRENT_PROJECT="ad632b7b-0b2a-4ed3-9ff0-cffc2ba8058b"
@@ -221,14 +219,16 @@ if [[ "$ACTION" == "copy" ]]; then
         
         # Append to destination MEMORY.md
         DST_MEMORY="$DST_DIR/MEMORY.md"
-        
+
         if [[ -f "$DST_MEMORY" ]]; then
-            echo "" >> "$DST_MEMORY"
-            echo "## Cross-project patterns (from $SRC_PROJECT)" >> "$DST_MEMORY"
-            echo "_Auto-copied on $(date +%Y-%m-%d)_" >> "$DST_MEMORY"
-            echo "" >> "$DST_MEMORY"
-            echo "$PATTERNS" >> "$DST_MEMORY"
-            
+            {
+                echo ""
+                echo "## Cross-project patterns (from $SRC_PROJECT)"
+                echo "_Auto-copied on $(date +%Y-%m-%d)_"
+                echo ""
+                echo "$PATTERNS"
+            } >> "$DST_MEMORY"
+
             log_success "Patterns copied to $DST_PROJECT/MEMORY.md"
         fi
     else
