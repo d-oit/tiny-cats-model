@@ -1,0 +1,239 @@
+# .github/workflows/train-pool.yml
+# Multi-provider GPU pool training with HF Hub checkpoint sync.
+#
+# Triggers: workflow_dispatch (manual) or scheduled.
+# This workflow orchestrates training across free GPU providers
+# using the gpu_pool.py abstraction. Each provider run syncs
+# checkpoints via HuggingFace Hub so the next provider resumes
+# where the previous one left off.
+#
+# Usage:
+#   gh workflow run train-pool.yml
+#   gh workflow run train-pool.yml -f steps=50000 -f batch_size=256
+#   gh workflow run train-pool.yml -f providers="modal,lightning, kaggle"
+#
+# See: src/gpu_pool.py, scripts/train_*.py
+
+name: Train (GPU Pool)
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Provider(s) to use (modal, lightning, colab, kaggle, hf_spaces, all)"
+        required: false
+        default: "modal"
+        type: string
+      steps:
+        description: "Training steps per provider run"
+        required: false
+        default: "20000"
+        type: string
+      batch_size:
+        description: "Batch size"
+        required: false
+        default: "256"
+        type: string
+      lr:
+        description: "Learning rate"
+        required: false
+        default: "5e-5"
+        type: string
+      hub_resume:
+        description: "Pull checkpoint from HF Hub before training"
+        required: false
+        default: true
+        type: boolean
+      push_to_hub:
+        description: "Push checkpoint to HF Hub after training"
+        required: false
+        default: true
+        type: boolean
+  schedule:
+    # Run pool training every 6 hours to maximize free GPU usage.
+    # On schedule, defaults to modal provider (first in chain).
+    - cron: "0 */6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  # ────────────────────────────────────────────────────────
+  # Modal GPU training (first in fallback chain)
+  # ────────────────────────────────────────────────────────
+  train-modal:
+    name: Train on Modal
+    runs-on: ubuntu-latest
+    environment: modal-training
+    timeout-minutes: 120
+    if: |
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.provider == 'modal' || inputs.provider == 'all')) ||
+      github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install modal
+          pip install -r requirements.txt
+
+      - name: Train on Modal GPU
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          HUBSYNC=""
+          if [ "${{ github.event.inputs.hub_resume }}" = "true" ]; then
+            HUBSYNC="--hub-resume"
+          fi
+          if [ "${{ github.event.inputs.push_to_hub }}" != "true" ]; then
+            HUBSYNC="$HUBSYNC --no-hub-push"
+          fi
+          modal run src/train_dit.py \
+            --data-dir /data/cats \
+            --steps ${{ github.event.inputs.steps || '20000' }} \
+            --batch-size ${{ github.event.inputs.batch_size || '256' }} \
+            --lr ${{ github.event.inputs.lr || '5e-5' }} \
+            --save-interval 500 \
+            ${HUBSYNC:+"$HUBSYNC"} 2>&1 | tee modal-training.log
+
+      - name: Upload training log
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: modal-training-log
+          path: modal-training.log
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────
+  # Kubernetes runner (simulates Lightning/Colab/Kaggle)
+  # ────────────────────────────────────────────────────────
+  train-pool-runner:
+    name: Train on Pool Runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    if: |
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.provider != 'modal' || inputs.provider == 'all')) ||
+      github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install huggingface_hub pillow tqdm
+          pip install -r requirements.txt
+
+      - name: Print pool status
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, 'src')
+          from gpu_pool import detect_provider, estimate_cost
+          provider = detect_provider()
+          print(f'Detected provider: {provider.value}')
+          costs = estimate_cost(20000)
+          for name, info in sorted(costs.items()):
+              print(f'  {info[\"provider\"]}: {info[\"gpu_hours\"]}h, \${info[\"estimated_cost\"]}')
+          "
+
+      - name: Pull checkpoint and train (CPU fallback)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          RESUME=""
+          NOPUSH=""
+          if [ "${{ github.event.inputs.hub_resume }}" = "true" ]; then
+            RESUME="--hub-resume"
+          fi
+          if [ "${{ github.event.inputs.push_to_hub }}" != "true" ]; then
+            NOPUSH="--no-hub-push"
+          fi
+          python scripts/train_lightning.py \
+            --steps ${{ github.event.inputs.steps || '5000' }} \
+            --batch-size ${{ github.event.inputs.batch_size || '128' }} \
+            --lr ${{ github.event.inputs.lr || '5e-5' }} \
+            --save-interval 200 \
+            ${RESUME:+"$RESUME"} ${NOPUSH:+"$NOPUSH"} \
+            --checkpoint-dir checkpoints/pool \
+            --data-dir data/cats \
+            2>&1 | tee pool-training.log
+
+      - name: Upload training log
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pool-training-log
+          path: pool-training.log
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────
+  # Pool status summary
+  # ────────────────────────────────────────────────────────
+  pool-summary:
+    name: Pool Summary
+    runs-on: ubuntu-latest
+    needs: [train-modal, train-pool-runner]
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Print pool summary
+        run: |
+          # shellcheck disable=SC2140  # Python -c block uses escaped quotes
+          python -c "
+          import sys; sys.path.insert(0, 'src')
+          from gpu_pool import (
+              FALLBACK_CHAIN, detect_provider, estimate_cost,
+              get_provider_config,
+          )
+          print('=' * 60)
+          print('GPU POOL TRAINING COMPLETE')
+          print('=' * 60)
+          chain = ' → '.join(p.value for p in FALLBACK_CHAIN)
+          print(f'Fallback chain: {chain}')
+          print()
+          print('Cost estimates (20k steps):')
+          costs = estimate_cost(20000)
+          for name, info in sorted(costs.items()):
+              flag = '✅ FREE' if info['within_free_tier'] else '⚠️  PAID'
+              print(f'  {info[\"provider\"]:20s} | {info[\"gpu_hours\"]:6.1f}h | \${info[\"estimated_cost\"]:7.2f} | {flag}')
+          print()
+          print('Checkpoints synced via HuggingFace Hub:')
+          print('  https://huggingface.co/d4oit/tiny-cats-model/tree/main/checkpoints/pool')
+          print()
+          # shellcheck disable=SC2140  # GHA expression, not shell quoting
+          status = "${{ needs.train-modal.result == 'success' || needs.train-pool-runner.result == 'success' }}"
+          if status == 'true':
+              print('✅ At least one provider completed training successfully')
+          else:
+              print('⚠️  No provider completed training (check logs)')
+          "
