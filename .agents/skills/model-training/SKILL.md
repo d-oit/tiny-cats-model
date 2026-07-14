@@ -82,21 +82,38 @@ modal run src/train_dit.py --help
 
 ## Modal Best Practices
 
+### Container Pattern: @app.cls + @modal.enter() (ADR-025, ADR-057)
+
+Training scripts now use the class-based pattern with `@modal.enter()` for
+one-time container initialization (CUDA warm-up, heavy imports) that runs
+once per container instead of once per function invocation:
+
+```python
+@app.cls(
+    image=image, volumes={...}, gpu=["T4", "L4"],
+    timeout=86400,
+    retries=modal.Retries(max_retries=10, initial_delay=0.0),
+    scaledown_window=300,  # ADR-057: keep container warm 5 min
+)
+class DiTTrainer:
+    @modal.enter()
+    def enter(self):
+        """One-time init: paths, CUDA warm-up, heavy imports."""
+        sys.path.insert(0, "/app")
+        os.chdir("/app")
+        # warm up CUDA...
+
+    @modal.method()
+    def train(self, ...):
+        # Training logic — container already initialized
+        ...
+```
+
 ### Error Handling & Logging
 - **Pre-flight checks**: Auth validation before training starts
 - **Structured logging**: Console + file with timestamps
 - **Volume commits**: Explicit commits after successful operations
 - **Cleanup**: Old checkpoints auto-cleaned (keep last 5)
-
-### Cleanup Pattern
-```python
-# Cleanup old checkpoints (train.py)
-from volume_utils import cleanup_old_checkpoints
-cleanup_old_checkpoints(volume_outputs, "/outputs/checkpoints/classifier", keep_last_n=5)
-
-# Memory cleanup (both scripts)
-cleanup_memory()  # gc.collect() + torch.cuda.empty_cache()
-```
 
 ### GPU Selection
 | GPU | Best For | Cost |
@@ -107,33 +124,65 @@ cleanup_memory()  # gc.collect() + torch.cuda.empty_cache()
 | L40S | Non-spot DiT training | High ($1.95/hr) |
 | A100 | Large models | High ($2.10/hr) |
 
-### Retry Configuration
-```python
-retries=modal.Retries(
-    max_retries=3,
-    backoff_coefficient=2.0,
-    initial_delay=10.0,
-    max_delay=60.0,
-)
-# BEST PRACTICE: also use single_use_containers=True to reset in-memory
-# state on every retry (e.g. EMA shadow params, optimizer momentum).
+### Free GPU Pool Training
+
+Multi-provider training with HF Hub checkpoint sync.
+See `src/gpu_pool.py` for the full abstraction.
+
+```bash
+# Check provider and cost estimates
+python -c "from gpu_pool import detect_provider_and_log, estimate_cost; detect_provider_and_log(); print(estimate_cost(50000))"
+
+# Train with fallback chain
+python -c "from gpu_pool import train_with_fallback; train_with_fallback(steps=50000)"
+
+# Print the fallback chain order
+python -c "from gpu_pool import train_chain; train_chain(steps=20000)"
 ```
 
-### Cold Start (Modal best practice)
+Provider-specific scripts with Hub checkpoint sync:
+```bash
+python scripts/train_lightning.py --steps 20000 --hub-resume   # Lightning AI
+python scripts/train_colab.py --steps 20000 --resume            # Colab
+python scripts/train_kaggle.py --steps 20000 --hub-resume       # Kaggle
+python scripts/train_hf_spaces.py --steps 20000 --hub-resume    # HF Spaces
+```
 
-- **Move heavy init out of the function body** — use `@modal.enter()` per ADR-025 so it
-  runs once per container, not once per call. Currently `src/train*.py` use a free-standing
-  `_initialize_container()` called inside the function — that works but doesn't benefit
-  from container-snapshot caching.
-- **Warm up CUDA in `@enter`** — first CUDA allocation triggers driver init (~1-3 s);
-  do it once.
-- **`scaledown_window=300`** on `@app.function(gpu=...)` keeps the container alive for
-  5 min after a run, so subsequent re-runs skip cold start.
-- **`single_use_containers=True`** forces a fresh container on every retry; safe for
-  training (PyTorch + EMA + optimizer state can have subtle bugs after a crash).
+Pool CI workflow:
+```bash
+gh workflow run train-pool.yml -f steps=20000 -f provider=modal
+```
 
-See `plans/ADR-057-modal-cli-verification-and-best-practices-2026.md` for the live
-verification + full audit.
+**Testing the GPU pool:**
+```bash
+# Unit tests for gpu_pool.py (provider detection, cost estimation, fallback chain)
+pytest tests/test_gpu_pool.py -v
+
+# Integration tests for train_chain() and train_with_fallback()
+pytest tests/test_train_chain.py -v
+
+# End-to-end fallback chain simulation (38 checks)
+python scripts/test_fallback_chain.py
+```
+
+**GPU hour estimation and calibration:**
+```bash
+# Full calibration report
+python scripts/benchmark_estimates.py
+
+# Print tuned T4_STEPS_PER_SECOND constant
+python scripts/benchmark_estimates.py --tune
+
+# Estimate cost for specific step count
+python scripts/benchmark_estimates.py --steps 50000
+
+# JSON output for CI drift check
+python scripts/benchmark_estimates.py --json
+```
+
+The tunable `T4_STEPS_PER_SECOND` constant in `src/gpu_pool.py` controls
+the baseline speed used by `estimate_gpu_hours()`. Calibrate it against
+real training runs with the benchmark script.
 
 ## Hyperparameters
 
@@ -235,15 +284,18 @@ data/cats/
 ## Modal Configuration
 
 ```python
-# GPU selection in train.py/train_dit.py
-@app.function(gpu=["T4", "L4"])  # Cost-optimized: T4 ($0.59/hr) with L4 fallback ($0.80/hr)
-
-# Timeout for long training
-@app.function(timeout=86400)  # 24 hours max
-
-# Volumes for persistent storage
-volumes={
-    "/outputs": modal.Volume.from_name("dit-outputs"),
-    "/data": modal.Volume.from_name("dit-dataset"),
-}
+# Class-based pattern (ADR-025, ADR-057) — see src/train_dit.py, src/train.py
+@app.cls(
+    image=image,
+    volumes={"/outputs": volume_outputs, "/data": volume_data},
+    gpu=["T4", "L4"],  # Cost-optimized: T4 ($0.59/hr), L4 fallback ($0.80/hr)
+    timeout=86400,  # 24 hours max
+    retries=modal.Retries(max_retries=10, initial_delay=0.0),
+    scaledown_window=300,  # Keep container warm 5 min for retries
+)
+class DiTTrainer:
+    @modal.enter()
+    def enter(self): ...  # One-time init
+    @modal.method()
+    def train(self, ...): ...  # Training logic
 ```

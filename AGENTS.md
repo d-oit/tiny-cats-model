@@ -72,53 +72,6 @@ gh secret list
 > for the full diagnosis and mitigation options (`@modal.enter`, `single_use_containers=True`,
 > larger `save_interval`, GH-Action container reuse).
 
-## Training
-
-### Modal GPU Training
-
-```bash
-# Classifier (resnet18)
-modal run src/train.py data/cats --epochs 20 --batch-size 64
-
-# DiT Generator (optimized - 100k with early stopping)
-modal run src/train_dit.py data/cats --steps 100000 --batch-size 512
-
-# Custom configuration
-modal run src/train_dit.py data/cats --steps 50000 --batch-size 512 --lr 5e-5 --warmup-steps 2000
-```
-
-### Training Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--steps` | 100,000 | Max training steps (early stopping may stop earlier) |
-| `--batch-size` | 512 | Batch size (increased for better gradients) |
-| `--lr` | 5e-5 | Learning rate |
-| `--warmup-steps` | 2,000 | LR warmup (shorter = faster convergence) |
-| `--augmentation-level` | full | basic/medium/full |
-
-### Early Stopping
-
-Training automatically stops when loss plateaus for 3 consecutive evaluations (every 10k steps). This typically occurs at 50k-80k steps, saving 60-80% cost.
-
-## GitHub Actions
-
-```bash
-# Trigger training (optimized defaults)
-gh workflow run train.yml
-
-# Custom configuration
-gh workflow run train.yml -f steps=50000 -f batch_size=512
-
-# Monitor runs
-gh run list
-gh run view <run-id>
-gh run watch
-
-# Check secrets
-gh secret list
-```
-
 ## Authentication
 
 ### Modal (1.0+)
@@ -147,8 +100,26 @@ Generate token: https://huggingface.co/settings/tokens (write permission)
 ## Testing
 
 ```bash
+# All tests (unit + GPU pool + train chain simulation)
 pytest tests/ -v
+
+# GPU pool abstraction tests
+pytest tests/test_gpu_pool.py -v
+
+# Train chain & fallback integration tests
+pytest tests/test_train_chain.py -v
+
+# Fallback chain simulation (standalone)
+python scripts/test_fallback_chain.py
+
+# GPU hour estimation calibration
+python scripts/benchmark_estimates.py
+python scripts/benchmark_estimates.py --tune
+
+# E2E (Playwright)
 npx playwright test
+
+# Full verification
 bash scripts/quality-gate.sh
 ```
 

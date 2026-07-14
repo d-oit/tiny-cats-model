@@ -1,13 +1,13 @@
 ---
 name: code-quality
-description: Use for linting, formatting, and type checking with ruff, black, flake8, mypy.
+description: Use for linting, formatting, and type checking with ruff and mypy.
 ---
 
 # Skill: code-quality
 
-This skill covers all code quality tools for Python projects.
+This skill covers all code quality tools for this project.
 
-## Linting (ruff)
+## Linting & Formatting (ruff)
 
 ```bash
 # Check for issues
@@ -21,35 +21,12 @@ ruff check . --fix --select F,E
 
 # Show rule explanations
 ruff rule E501
-```
 
-## Formatting (black)
-
-```bash
 # Format code
-black .
+ruff format .
 
 # Check without modifying
-black --check .
-
-# Set line length
-black --line-length=88 .
-
-# Exclude directories
-black --exclude "tests/" .
-```
-
-## Additional Linting (flake8)
-
-```bash
-# Run flake8
-flake8 . --max-line-length=88
-
-# Ignore specific rules
-flake8 . --extend-ignore=E203,W503
-
-# Exclude files
-flake8 . --exclude=__pycache__,.git
+ruff format --check .
 ```
 
 ## Type Checking (mypy)
@@ -68,48 +45,37 @@ mypy . --exclude tests/
 mypy . --strict
 ```
 
-## Import Sorting (isort)
-
-```bash
-# Check import order
-isort --check-only .
-
-# Fix imports
-isort .
-```
-
 ## Full Quality Check
 
 ```bash
 # Run all checks in order
-ruff check . --fix
-black .
-flake8 . --max-line-length=88
+ruff format --check .
+ruff check .
 mypy . --ignore-missing-imports
-isort --check-only .
+
+# Or use the quality gate (includes all checks + pytest + skill verification)
+bash scripts/quality-gate.sh
 ```
 
 ## Common Issues
 
 | Issue | Fix |
 |-------|-----|
-| E501 line too long | Wrap lines or use `black .` |
+| E501 line too long | `ruff format .` |
 | F401 imported but unused | `ruff check . --fix` |
 | F811 redefinition | Remove duplicate imports |
-| I001 isort order | `isort .` |
+| I001 import order | `ruff check . --fix` |
 | mypy: no type hints | Add type hints to functions |
 
 ## Configuration Files
 
-- `pyproject.toml` - ruff, black, isort settings
-- `.ruff.toml` - ruff-specific config
-- `mypy.ini` - mypy configuration
-- `.flake8` - flake8 settings
+- `ruff.toml` — ruff format + lint config
+- `pyproject.toml` — mypy and project metadata
 
 ## Best Practices
 
-1. **Run locally before push** - Always verify locally
-2. **Use pre-commit hooks** - Add to `.pre-commit-config.yaml`
-3. **Fix incrementally** - Don't ignore warnings
-4. **Type hints encouraged** - Improves IDE support
-5. **Line length 88** - Black default, matches PEP 8
+1. **Run locally before push** — Always verify locally
+2. **Use quality gate** — `bash scripts/quality-gate.sh` runs everything
+3. **Fix incrementally** — Don't ignore warnings
+4. **Type hints required** — All functions must have type hints
+5. **Line length 88** — Ruff default, matches PEP 8
