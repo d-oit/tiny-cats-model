@@ -33,7 +33,10 @@ from gpu_pool import (
 # ─────────────────────────────────────────────────────────────
 
 # Each entry: (steps, batch_size, image_size, gpu_type, actual_hours, source)
-# actual_hours is the wall-clock time reported in training logs/ADRs
+# actual_hours is the wall-clock time reported in training logs/ADRs.
+# Convention: source strings prefixed with "DERIVED:" are scaled/synthetic
+# (e.g., A10G→T4 via known speed factors) and never count toward the
+# `--tune` real-benchmark threshold.
 KNOWN_BENCHMARKS: list[dict[str, Any]] = [
     {
         "steps": 400_000,
@@ -69,7 +72,7 @@ KNOWN_BENCHMARKS: list[dict[str, Any]] = [
         "image_size": 128,
         "gpu_type": "T4",
         "actual_hours": 105,  # 42h(A10G) * 2.5 = 105h on T4
-        "source": "Scaled from TRAINING_400K_LOG.md (A10G->T4, factor 2.5x)",
+        "source": "DERIVED: scaled from TRAINING_400K_LOG.md (A10G->T4, 2.5x)",
     },
 ]
 
@@ -115,27 +118,29 @@ def calibrate_steps_per_second(
         report["baseline_steps_per_sec"] = T4_STEPS_PER_SECOND
         report["recommended_baseline"] = T4_STEPS_PER_SECOND
 
-    errors: list[float] = []
+    # Single-pass over KNOWN_BENCHMARKS. Source-string heuristic
+    # (`source.startswith("DERIVED:")`) classifies synthesized entries
+    # so they don't pollute the real-benchmark count toward the tune
+    # threshold (≥3 REAL entries required for a recommendation).
+    real_errors: list[float] = []
+    derived_errors: list[float] = []
 
     for bench in KNOWN_BENCHMARKS:
         if bench["actual_hours"] is None:
             continue
 
-        # Estimate using current function
         estimated = estimate_gpu_hours(
             bench["steps"],
             batch_size=bench["batch_size"],
             image_size=bench["image_size"],
         )
-
-        # Adjust for GPU type
         gpu_factor = GPU_SPEED_FACTORS.get(bench["gpu_type"].split("/")[0], 1.0)
         estimated_adjusted = estimated / gpu_factor
-
         actual = bench["actual_hours"]
         error_pct = ((estimated_adjusted - actual) / actual) * 100
 
-        errors.append(error_pct)
+        is_derived = bench.get("source", "").startswith("DERIVED:")
+        (derived_errors if is_derived else real_errors).append(error_pct)
 
         report["comparisons"].append(
             {
@@ -145,22 +150,28 @@ def calibrate_steps_per_second(
                 "actual_hours": actual,
                 "error_pct": round(error_pct, 1),
                 "gpu_factor": gpu_factor,
+                "is_derived": is_derived,
             }
         )
 
-    if errors:
-        report["mean_error_pct"] = round(sum(errors) / len(errors), 1)
-        # Tune baseline: positive error = over-estimating → speed up
-        # negative error = under-estimating → slow down
-        report["recommended_baseline"] = round(
-            baseline_steps_per_sec * (1 + report["mean_error_pct"] / 100), 2
+    if real_errors or derived_errors:
+        # Mean over REAL only — derived entries are too correlated to their
+        # parent benchmark to count as independent samples.
+        real_mean = (
+            round(sum(real_errors) / len(real_errors), 1) if real_errors else 0.0
         )
-        report["num_benchmarks"] = len(errors)
-        if len(errors) < 3:
+        report["mean_error_pct"] = real_mean
+        report["recommended_baseline"] = round(
+            baseline_steps_per_sec * (1 + real_mean / 100), 2
+        )
+        report["num_benchmarks"] = len(real_errors)
+        report["num_derived"] = len(derived_errors)
+        if len(real_errors) < 3:
             report["warning"] = (
-                f"Only {len(errors)} benchmark(s) available — "
-                "calibration is suggestive, not definitive. "
-                "Add more real training runs to KNOWN_BENCHMARKS."
+                f"Only {len(real_errors)} REAL benchmark(s) available "
+                f"(plus {len(derived_errors)} DERIVED) — calibration is "
+                "suggestive, not definitive. Add more real T4 wall-clock "
+                "measurements to KNOWN_BENCHMARKS."
             )
 
     return report
@@ -191,14 +202,21 @@ def print_calibration_report(report: dict[str, Any]) -> None:
         print()
 
     if report["comparisons"]:
-        print(f"Mean error: {report['mean_error_pct']:+.1f}%")
-        print(f"Benchmarks used: {report.get('num_benchmarks', 0)}")
+        print(f"Mean error (real only): {report['mean_error_pct']:+.1f}%")
+        real_n = report.get("num_benchmarks", 0)
+        deriv_n = report.get("num_derived", 0)
+        print(
+            f"Benchmarks used: {real_n} real, {deriv_n} derived "
+            f"(derived entries are suggestions, not independent measurements)"
+        )
         if report.get("warning"):
             print(f"⚠️  {report['warning']}")
-        if abs(report["mean_error_pct"]) > 20:
+        if abs(report["mean_error_pct"]) > 20 and real_n >= 3:
             print(
                 f"⚠️  Recommendation: tune baseline to {report['recommended_baseline']} steps/s"
             )
+        elif real_n < 3:
+            print("⚠️  Not enough real benchmarks (≥3) to recommend a tune")
         else:
             print("✅ Baseline is within acceptable range (≤20% error)")
 
@@ -245,29 +263,29 @@ def print_estimate_table(
 def print_tuned_constants() -> None:
     """Print recommended tuned constants for estimate_gpu_hours().
 
-    Gating: actionable tune recommendations require ``num_benchmarks >= 3``
-    in ``KNOWN_BENCHMARKS``. Below that threshold (the current state — only
-    one real wall-clock entry plus a mathematically derived twin) the current
-    baseline is preserved and the reason is printed clearly so operators
-    don't blindly apply a 4x slowdown derived from circular data.
+    Gating: actionable tune recommendations require ``num_real >= 3`` in
+    ``KNOWN_BENCHMARKS``. Derived entries (computed via speed-factor
+    scaling from another entry) are tracked separately and never count
+    toward the threshold — they double-count their parent's information.
     """
     report = calibrate_steps_per_second()
-    num = report.get("num_benchmarks", 0)
+    num_real = report.get("num_benchmarks", 0)
+    num_derived = report.get("num_derived", 0)
     print()
     print("# Calibration status for src/gpu_pool.py:estimate_gpu_hours()")
-    print(f"# Benchmarks used: {num}")
-    print(f"# Mean error: {report['mean_error_pct']:+.1f}%")
+    print(f"# Real benchmarks: {num_real}    Derived: {num_derived}")
+    print(f"# Mean error (real only): {report['mean_error_pct']:+.1f}%")
 
     current = T4_STEPS_PER_SECOND
 
-    # Gate: require 3+ real (non-derived) benchmarks before recommending a change.
-    # Otherwise the dataset is dominated by inter-GPU scaling guesses.
-    if num < 3:
+    # Gate: require 3+ REAL (non-derived) benchmarks before recommending.
+    if num_real < 3:
         print()
-        print(f"# NOT recommending a tune with only {num} benchmark(s).")
+        print(f"# NOT recommending a tune with only {num_real} REAL benchmark(s).")
         print("# Calibration requires >= 3 real T4 wall-clock measurements.")
-        print("# The current 400k A10G entry is itself a midpoint estimate,")
-        print("# and the 400k T4 entry is derived from it (not measured).")
+        print(
+            f"# The {num_derived} derived entry(ies) are suggestive but not independent."
+        )
         print(f"# Keeping STEPS_PER_SECOND_T4 = {current} (do not auto-apply).")
         print()
         return
