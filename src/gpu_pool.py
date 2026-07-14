@@ -318,7 +318,7 @@ def detect_provider() -> Provider:
     except ImportError:
         pass
 
-    return Provider.LOCAL
+    return Provider.UNKNOWN
 
 
 def detect_provider_and_log() -> Provider:
@@ -417,8 +417,11 @@ def push_checkpoint_to_hub(
         # Ensure repo exists
         try:
             create_repo(hub_repo, exist_ok=True, repo_type="model", token=token)
-        except Exception:
-            logger.warning(f"Could not create/verify repo: {hub_repo}")
+        except Exception as e:
+            # create_repo failure will cascade into upload failure with a
+            # confusing error message — fail fast and surface the root cause.
+            logger.error(f"Could not create/verify repo {hub_repo}: {e}")
+            return False
 
         # Determine remote path
         if checkpoint_name is None:
@@ -481,6 +484,10 @@ def pull_checkpoint_from_hub(
 
         remote_path = f"checkpoints/pool/{checkpoint_name}"
 
+        # Ensure output_dir exists — hf_hub_download() requires it.
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
         local_path = hf_hub_download(
             repo_id=hub_repo,
             filename=remote_path,
@@ -526,12 +533,22 @@ def train_with_fallback(
     hub_token: str | None = None,
     **train_kwargs: Any,
 ) -> PoolTrainingResult:
-    """Train TinyDiT with automatic provider fallback chain.
+    """Train TinyDiT on the current provider with Hub-based checkpoint resume.
 
-    Attempts training on each provider in the fallback chain, syncing
-    checkpoints via HuggingFace Hub between attempts. When one provider
-    fails (timeout, preemption, no GPU), resumes on the next provider
-    from the latest checkpoint.
+    NOTE: The function name is historical. ``train_with_fallback`` runs the
+    training ONCE on ``detect_provider()``'s reported provider. Cross-provider
+    FALLBACK involves running this script separately on each provider (see
+    ``train_chain()`` for the orchestration order); checkpoints are bridged
+    via HuggingFace Hub. ``iterate_fallback_chain()`` is exposed for callers
+    that want to programmatically walk the chain.
+
+    Within a single run, the function:
+      1. Pulls the latest checkpoint from Hub (resume if present).
+      2. Runs ``train_dit_local()`` end-to-end on the current provider.
+      3. Pushes the resulting EMA checkpoint back to Hub.
+
+    If a different provider is needed after a failure, re-run this script
+    on that machine — Hub will resume from the latest checkpoint automatically.
 
     Args:
         data_dir: Dataset directory (auto-detected per provider).
@@ -694,12 +711,12 @@ def _setup_data_for_provider(provider: Provider, data_dir: str) -> None:
                 logger.info(f"Dataset downloaded to {data_dir}")
                 return
             else:
-                logger.warning(f"Download failed: {result.stderr}")
+                logger.error(f"Dataset download failed: {result.stderr}")
         else:
-            logger.warning(f"Download script not found: {download_script}")
+            logger.error(f"Download script not found: {download_script}")
 
     except Exception as e:
-        logger.warning(f"Data setup failed: {e}")
+        logger.error(f"Data setup failed: {e}")
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -789,7 +806,11 @@ def setup_lightning_environment() -> bool:
 # ──────────────────────────────────────────────────────────────────────
 
 # Tunable baseline: steps/second on T4 GPU at batch=512, 128x128.
-# Calibrate via: python scripts/benchmark_estimates.py --tune
+# Sourced from a real T4 run (see AGENTS.md: "Speed: 2.2 steps/s per loop
+# iteration"). The benchmark_estimates.py --tune output should NOT be
+# auto-applied — the dataset is too sparse (one real entry, plus a
+# derived 2.5x-scaled twin). Calibration requires >=3 independent real
+# T4 wall-clock measurements before a tune recommendation is trustworthy.
 T4_STEPS_PER_SECOND: float = 2.2
 
 
