@@ -436,32 +436,7 @@ image = (
 )
 
 
-def _initialize_container():
-    """Initialize container environment for faster training start (ADR-025).
-
-    Note: sys.path set to /app to match file locations from add_local_file
-    (ADR-022, ADR-030). Files are placed at /app/ not /app/src/.
-    """
-    import torch
-
-    # Setup paths - files are at /app/ via add_local_file (ADR-022, ADR-030)
-    sys.path.insert(0, "/app")
-    os.chdir("/app")
-
-    # Pre-import heavy modules
-    import torchvision  # noqa: F401
-
-    # Warm up CUDA
-    if torch.cuda.is_available():
-        _ = torch.zeros(1).cuda()
-        dummy_input = torch.randn(1, 3, 32, 32).cuda()
-        dummy_conv = torch.nn.Conv2d(3, 16, 3).cuda()
-        _ = dummy_conv(dummy_input)
-        del dummy_input, dummy_conv
-        torch.cuda.empty_cache()
-
-
-@app.function(
+@app.cls(
     image=image,
     volumes={
         "/outputs": volume_outputs,
@@ -469,211 +444,233 @@ def _initialize_container():
     },
     gpu="T4",
     timeout=3600,
-    # Retry configuration (ADR-023: automatic recovery from transient failures)
     retries=modal.Retries(
         max_retries=3,
         backoff_coefficient=2.0,
         initial_delay=10.0,
-        max_delay=60.0,  # Max allowed: 60 seconds
+        max_delay=60.0,
     ),
+    scaledown_window=300,  # ADR-057: keep container warm 5 min for retries
 )
-def train_on_gpu(
-    data_dir: str = "/data/cats",
-    epochs: int = 10,
-    batch_size: int = 32,
-    lr: float = 1e-4,
-    backbone: str = "resnet18",
-    output: str | None = None,
-    num_workers: int = 0,
-    pretrained: bool = True,
-    mixed_precision: bool = True,
-    gradient_clip: float = 1.0,
-    warmup_epochs: int = 2,
-) -> dict[str, Any]:
-    """Modal function for GPU training with error handling.
+class ClassifierTrainer:
+    """Modal container class for classifier GPU training (ADR-025, ADR-057).
 
-    Args:
-        data_dir: Path to dataset directory.
-        epochs: Number of epochs.
-        batch_size: Batch size.
-        lr: Learning rate.
-        backbone: Model backbone.
-        output: Output checkpoint path (auto-generated if None).
-        num_workers: DataLoader workers.
-        pretrained: Use pretrained weights.
-        mixed_precision: Enable AMP training.
-        gradient_clip: Gradient clipping value.
-        warmup_epochs: LR warmup epochs.
-
-    Returns:
-        Dictionary with training status and output path.
-
-    Raises:
-        AuthenticationError: If Modal authentication fails
+    Uses @modal.enter() for one-time container initialization instead of
+    calling _initialize_container() inside the function body.
     """
-    # Setup logging first for auth validation
-    preflight_logger = setup_auth_logging(level=logging.INFO)
 
-    # Validate Modal authentication before starting training
-    preflight_logger.info("=" * 60)
-    preflight_logger.info("MODAL TRAINING - PRE-FLIGHT CHECKS")
-    preflight_logger.info("=" * 60)
+    @modal.enter()
+    def enter(self):
+        """One-time container init: paths, heavy imports, CUDA warm-up (ADR-025)."""
+        sys.path.insert(0, "/app")
+        os.chdir("/app")
 
-    try:
-        require_modal_auth()
-        preflight_logger.info("✅ Modal authentication validated")
-    except AuthenticationError as e:
-        preflight_logger.error(f"❌ {e.message}")
-        preflight_logger.error("")
-        preflight_logger.error("To fix this:")
-        preflight_logger.error(
-            "  1. Run 'modal token new' to authenticate (Modal 1.0+)"
-        )
-        preflight_logger.error("  2. Verify with: modal token info")
-        preflight_logger.error(
-            "  3. For GitHub Actions, ensure MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are set"
-        )
-        preflight_logger.error("")
-        preflight_logger.error("See: https://modal.com/docs/reference/cli/token")
-        preflight_logger.error(
-            "See AGENTS.md or agents-docs/auth-troubleshooting.md for help"
-        )
-        raise
+        # Pre-import heavy modules
+        # Warm up CUDA
+        import torch
+        import torchvision  # noqa: F401
 
-    # Initialize container (ADR-025: cold start optimization)
-    _initialize_container()
+        if torch.cuda.is_available():
+            _ = torch.zeros(1).cuda()
+            dummy_input = torch.randn(1, 3, 32, 32).cuda()
+            dummy_conv = torch.nn.Conv2d(3, 16, 3).cuda()
+            _ = dummy_conv(dummy_input)
+            del dummy_input, dummy_conv
+            torch.cuda.empty_cache()
 
-    # Use a stable (non-dated) checkpoint directory so Modal retries and
-    # manually re-triggered runs can find and resume prior progress.
-    # Dated directories meant every retry silently restarted from epoch 0.
-    checkpoint_dir = "/outputs/checkpoints/classifier/current"
-    Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+    @modal.method()
+    def train(
+        self,
+        data_dir: str = "/data/cats",
+        epochs: int = 10,
+        batch_size: int = 32,
+        lr: float = 1e-4,
+        backbone: str = "resnet18",
+        output: str | None = None,
+        num_workers: int = 0,
+        pretrained: bool = True,
+        mixed_precision: bool = True,
+        gradient_clip: float = 1.0,
+        warmup_epochs: int = 2,
+    ) -> dict[str, Any]:
+        """Run classifier training (was train_on_gpu, now ClassifierTrainer.train).
 
-    # Stable output path enables resume across retries
-    output = output or f"{checkpoint_dir}/cats_model.pt"
-    log_file = f"{checkpoint_dir}/training.log"
+        Container is already initialized by @modal.enter() — no
+        explicit _initialize_container() call needed.
 
-    # Setup logging
-    logger = setup_logging(log_file)
-    logger.info("Starting Modal GPU training")
-    logger.info(
-        f"Configuration: data_dir={data_dir}, epochs={epochs}, batch_size={batch_size}"
-    )
+        Returns:
+            Dictionary with training status and output path.
 
-    try:
-        # Check dataset cache (ADR-024: dataset caching in volume)
-        if not Path(data_dir).exists() or not list(Path(data_dir).iterdir()):
-            logger.info("Dataset not found, downloading...")
-            Path("/data").mkdir(parents=True, exist_ok=True)
+        Raises:
+            AuthenticationError: If Modal authentication fails
+        """
+        # Setup logging first for auth validation
+        preflight_logger = setup_auth_logging(level=logging.INFO)
 
-            result = subprocess.run(
-                ["python", "data/download.py"],
-                cwd="/app",
-                env={**os.environ, "DATA_DIR": "/data", "CATS_DIR": "/data/cats"},
-                capture_output=True,
-                text=True,
-                timeout=600,
+        # Validate Modal authentication before starting training
+        preflight_logger.info("=" * 60)
+        preflight_logger.info("MODAL TRAINING - PRE-FLIGHT CHECKS")
+        preflight_logger.info("=" * 60)
+
+        try:
+            require_modal_auth()
+            preflight_logger.info("✅ Modal authentication validated")
+        except AuthenticationError as e:
+            preflight_logger.error(f"❌ {e.message}")
+            preflight_logger.error("")
+            preflight_logger.error("To fix this:")
+            preflight_logger.error(
+                "  1. Run 'modal token new' to authenticate (Modal 1.0+)"
             )
+            preflight_logger.error("  2. Verify with: modal token info")
+            preflight_logger.error(
+                "  3. For GitHub Actions, ensure MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are set"
+            )
+            preflight_logger.error("")
+            preflight_logger.error("See: https://modal.com/docs/reference/cli/token")
+            preflight_logger.error(
+                "See AGENTS.md or agents-docs/auth-troubleshooting.md for help"
+            )
+            raise
 
-            if result.returncode != 0:
-                logger.warning(f"Python download failed: {result.stderr}")
-                logger.info("Trying bash download script...")
-                subprocess.run(
-                    ["bash", "data/download.sh"],
+        # Container is already initialized by @modal.enter()
+
+        # Use a stable (non-dated) checkpoint directory so Modal retries and
+        # manually re-triggered runs can find and resume prior progress.
+        checkpoint_dir = "/outputs/checkpoints/classifier/current"
+        Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+
+        # Stable output path enables resume across retries
+        output = output or f"{checkpoint_dir}/cats_model.pt"
+        log_file = f"{checkpoint_dir}/training.log"
+
+        # Setup logging
+        logger = setup_logging(log_file)
+        logger.info("Starting Modal GPU training")
+        logger.info(
+            f"Configuration: data_dir={data_dir}, epochs={epochs}, batch_size={batch_size}"
+        )
+
+        try:
+            # Check dataset cache (ADR-024: dataset caching in volume)
+            if not Path(data_dir).exists() or not list(Path(data_dir).iterdir()):
+                logger.info("Dataset not found, downloading...")
+                Path("/data").mkdir(parents=True, exist_ok=True)
+
+                result = subprocess.run(
+                    ["python", "data/download.py"],
                     cwd="/app",
                     env={**os.environ, "DATA_DIR": "/data", "CATS_DIR": "/data/cats"},
-                    check=True,
                     capture_output=True,
                     text=True,
+                    timeout=600,
                 )
 
-            logger.info("Dataset downloaded successfully")
+                if result.returncode != 0:
+                    logger.warning(f"Python download failed: {result.stderr}")
+                    logger.info("Trying bash download script...")
+                    subprocess.run(
+                        ["bash", "data/download.sh"],
+                        cwd="/app",
+                        env={
+                            **os.environ,
+                            "DATA_DIR": "/data",
+                            "CATS_DIR": "/data/cats",
+                        },
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
 
-        # Train with error handling
-        val_acc = train(
-            data_dir=data_dir,
-            epochs=epochs,
-            batch_size=batch_size,
-            lr=lr,
-            backbone=backbone,
-            output=output,
-            num_workers=num_workers,
-            pretrained=pretrained,
-            mixed_precision=mixed_precision,
-            gradient_clip=gradient_clip,
-            warmup_epochs=warmup_epochs,
-            log_file=log_file,
-            logger=logger,
-        )
+                logger.info("Dataset downloaded successfully")
 
-        # Export to ONNX and Quantize (Issue #63)
-        logger.info("Exporting to ONNX...")
-        try:
-            from export_onnx import export_onnx
-            from optimize_onnx import optimize_onnx
-
-            onnx_path = "/outputs/cats_classifier.onnx"
-            quant_dir = "/outputs"
-
-            export_onnx(checkpoint_path=output, output_path=onnx_path)
-            logger.info(f"✅ Exported to {onnx_path}")
-
-            logger.info("Quantizing ONNX model...")
-            optimize_onnx(
-                model_path=onnx_path,
-                output_dir=quant_dir,
-                method="dynamic",
-                model_type="classifier",
+            # Train with error handling
+            val_acc = train(
+                data_dir=data_dir,
+                epochs=epochs,
+                batch_size=batch_size,
+                lr=lr,
+                backbone=backbone,
+                output=output,
+                num_workers=num_workers,
+                pretrained=pretrained,
+                mixed_precision=mixed_precision,
+                gradient_clip=gradient_clip,
+                warmup_epochs=warmup_epochs,
+                log_file=log_file,
+                logger=logger,
             )
-            logger.info(f"✅ Quantized model saved to {quant_dir}/cats_quantized.onnx")
 
-            # Copy best .pt to root for easier CI download
-            import shutil
+            # Export to ONNX and Quantize (Issue #63)
+            logger.info("Exporting to ONNX...")
+            try:
+                from export_onnx import export_onnx
+                from optimize_onnx import optimize_onnx
 
-            shutil.copy2(output, "/outputs/best_cats_model.pt")
-            logger.info("✅ Copied best model to /outputs/best_cats_model.pt")
+                onnx_path = "/outputs/cats_classifier.onnx"
+                quant_dir = "/outputs"
+
+                export_onnx(checkpoint_path=output, output_path=onnx_path)
+                logger.info(f"✅ Exported to {onnx_path}")
+
+                logger.info("Quantizing ONNX model...")
+                optimize_onnx(
+                    model_path=onnx_path,
+                    output_dir=quant_dir,
+                    method="dynamic",
+                    model_type="classifier",
+                )
+                logger.info(
+                    f"✅ Quantized model saved to {quant_dir}/cats_quantized.onnx"
+                )
+
+                # Copy best .pt to root for easier CI download
+                import shutil
+
+                shutil.copy2(output, "/outputs/best_cats_model.pt")
+                logger.info("✅ Copied best model to /outputs/best_cats_model.pt")
+
+            except Exception as e:
+                logger.warning(f"ONNX export/quantization failed: {e}")
+
+            # Commit volume after successful training (ADR-024: explicit commits)
+            volume_outputs.commit()
+            logger.info("Checkpoint committed to volume")
+
+            # Cleanup old checkpoints (keep last 5)
+            try:
+                from volume_utils import cleanup_old_checkpoints
+
+                cleanup_old_checkpoints(
+                    volume_outputs, "/outputs/checkpoints/classifier", keep_last_n=5
+                )
+            except Exception as e:
+                logger.warning(f"Cleanup failed: {e}")
+
+            logger.info("Training completed successfully")
+            return {"status": "completed", "output": output, "val_acc": val_acc}
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Dataset download failed: {e}")
+            logger.error(f"stdout: {e.stdout}, stderr: {e.stderr}")
+            volume_outputs.commit()
+            raise TrainingError(f"Dataset download failed: {e}") from e
+
+        except RuntimeError as e:
+            logger.error(f"Runtime error during training: {e}")
+            log_gpu_memory(logger, "Before cleanup | ")
+            cleanup_memory()
+            volume_outputs.commit()
+            raise TrainingError(f"Training failed: {e}") from e
 
         except Exception as e:
-            logger.warning(f"ONNX export/quantization failed: {e}")
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            volume_outputs.commit()
+            raise TrainingError(f"Training failed with unexpected error: {e}") from e
 
-        # Commit volume after successful training (ADR-024: explicit commits)
-        volume_outputs.commit()
-        logger.info("Checkpoint committed to volume")
-
-        # Cleanup old checkpoints (keep last 5)
-        try:
-            from volume_utils import cleanup_old_checkpoints
-
-            cleanup_old_checkpoints(
-                volume_outputs, "/outputs/checkpoints/classifier", keep_last_n=5
-            )
-        except Exception as e:
-            logger.warning(f"Cleanup failed: {e}")
-
-        logger.info("Training completed successfully")
-        return {"status": "completed", "output": output, "val_acc": val_acc}
-
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Dataset download failed: {e}")
-        logger.error(f"stdout: {e.stdout}, stderr: {e.stderr}")
-        volume_outputs.commit()
-        raise TrainingError(f"Dataset download failed: {e}") from e
-
-    except RuntimeError as e:
-        logger.error(f"Runtime error during training: {e}")
-        log_gpu_memory(logger, "Before cleanup | ")
-        cleanup_memory()
-        volume_outputs.commit()
-        raise TrainingError(f"Training failed: {e}") from e
-
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        volume_outputs.commit()
-        raise TrainingError(f"Training failed with unexpected error: {e}") from e
-
-    finally:
-        cleanup_memory()
-        logger.info("Final memory cleanup completed")
+        finally:
+            cleanup_memory()
+            logger.info("Final memory cleanup completed")
 
 
 @app.local_entrypoint()
@@ -696,7 +693,8 @@ def main(
         modal run src/train.py data/cats --epochs 20 --batch-size 64
         modal run src/train.py --epochs 20 --batch-size 64 --backbone resnet34
     """
-    result = train_on_gpu.remote(
+    trainer = ClassifierTrainer()
+    result = trainer.train.remote(
         data_dir=data_dir,
         epochs=epochs,
         batch_size=batch_size,
