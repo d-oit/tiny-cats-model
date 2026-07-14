@@ -273,9 +273,7 @@ def print_tuned_constants() -> None:
         return
 
     print()
-    print(
-        f"# Recommended: STEPS_PER_SECOND_T4 = {report['recommended_baseline']}"
-    )
+    print(f"# Recommended: STEPS_PER_SECOND_T4 = {report['recommended_baseline']}")
     print()
     print("# GPU speed factors (multiply STEPS_PER_SECOND_T4 by these):")
     for gpu, factor in sorted(GPU_SPEED_FACTORS.items()):
