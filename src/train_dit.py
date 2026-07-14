@@ -112,8 +112,9 @@ except ImportError:
 # Add project root to path (for local development)
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Note: Modal imports are done inside train_dit_on_gpu function after container init
-# This avoids ModuleNotFoundError when running on Modal (ADR-030, ADR-042)
+# Note: Modal imports (DiT modules) are done inside train_dit_local and
+# DiTTrainer.train() — container init is handled by @modal.enter() (ADR-025).
+# This avoids ModuleNotFoundError when running on Modal (ADR-030, ADR-042).
 
 # Type hints only (not imported at runtime) - ADR-042
 from typing import TYPE_CHECKING
@@ -502,32 +503,7 @@ image = (
 )
 
 
-def _initialize_dit_container():
-    """Initialize container environment for faster DiT training start (ADR-025).
-
-    Note: sys.path set to /app to match file locations from add_local_file
-    (ADR-022, ADR-030). Files are placed at /app/ not /app/src/.
-    """
-    import torch
-
-    # Setup paths - files are at /app/ via add_local_file (ADR-022, ADR-030)
-    sys.path.insert(0, "/app")
-    os.chdir("/app")
-
-    # Pre-import heavy modules
-    import torchvision  # noqa: F401
-
-    # Warm up CUDA
-    if torch.cuda.is_available():
-        _ = torch.zeros(1).cuda()
-        dummy_input = torch.randn(1, 3, 32, 32).cuda()
-        dummy_conv = torch.nn.Conv2d(3, 16, 3).cuda()
-        _ = dummy_conv(dummy_input)
-        del dummy_input, dummy_conv
-        torch.cuda.empty_cache()
-
-
-@app.function(
+@app.cls(
     image=image,
     volumes={
         "/outputs": volume_outputs,
@@ -535,236 +511,249 @@ def _initialize_dit_container():
     },
     gpu=["T4", "L4"],  # T4 ($0.59/hr) for $7 budget; L4 ($0.80/hr) fallback
     timeout=86400,  # 24 hours max for long training runs
-    # Retry configuration (Modal best practice: immediate retry for preemptions)
     retries=modal.Retries(
         max_retries=10,
         initial_delay=0.0,  # Immediate retry on preemption
     ),
+    scaledown_window=300,  # ADR-057: keep container warm 5 min for retries
 )
-def train_dit_on_gpu(
-    data_dir: str = "/data/cats",
-    steps: int = 100_000,
-    batch_size: int = 128,
-    lr: float = 5e-5,
-    image_size: int = 128,
-    output: str | None = None,
-    ema_output: str | None = None,
-    num_workers: int = 0,
-    mixed_precision: bool = True,
-    gradient_clip: float = 1.0,
-    gradient_accumulation_steps: int = 1,
-    warmup_steps: int = 2_000,
-    log_interval: int = 100,
-    save_interval: int = 500,
-    early_stopping_patience: int = 15,
-    early_stopping_min_delta: float = 0.001,
-    sample_interval: int = 2_000,
-    log_file: str | None = None,
-    ema_beta: float = 0.9999,
-    seed: int = 42,
-    augmentation_level: str = "full",
-    resume_checkpoint: str | None = None,
-) -> dict[str, Any]:
-    """Modal function for DiT GPU training.
+class DiTTrainer:
+    """Modal container class for DiT GPU training (ADR-025, ADR-057).
 
-    Args:
-        data_dir: Dataset directory.
-        steps: Total training steps.
-        batch_size: Batch size.
-        lr: Learning rate.
-        image_size: Image size.
-        output: Output checkpoint path (auto-generated if None).
-        ema_output: EMA checkpoint path (auto-generated if None).
-        num_workers: DataLoader workers.
-        mixed_precision: Enable AMP.
-        gradient_clip: Gradient clipping.
-        gradient_accumulation_steps: Number of steps for gradient accumulation.
-        warmup_steps: LR warmup.
-        log_interval: Logging frequency.
-        save_interval: Checkpoint frequency.
-        sample_interval: Sampling frequency.
-        log_file: Log file path (auto-generated if None).
-        ema_beta: EMA decay.
-        seed: Random seed.
-        augmentation_level: Level of data augmentation ("basic", "medium", "full").
-        resume_checkpoint: Explicit path to resume from (overrides auto-detection).
-            Auto-detection kicks in when this is None and a checkpoint already
-            exists at ``output``.
-
-    Returns:
-        Training status dict.
-
-    Raises:
-        AuthenticationError: If Modal authentication fails
+    Uses @modal.enter() for one-time container initialization instead of
+    calling _initialize_dit_container() inside the function body. This
+    means CUDA warm-up and heavy imports run once per container, not
+    per function invocation — cutting cold start latency.
     """
-    # Setup logging first
-    logger = setup_auth_logging(level=logging.INFO)
 
-    # Validate Modal authentication before starting training
-    logger.info("=" * 60)
-    logger.info("MODAL TRAINING - PRE-FLIGHT CHECKS")
-    logger.info("=" * 60)
+    @modal.enter()
+    def enter(self):
+        """One-time container init: paths, heavy imports, CUDA warm-up.
 
-    try:
-        require_modal_auth()
-        logger.info("✅ Modal authentication validated")
-    except AuthenticationError as e:
-        logger.error(f"❌ {e.message}")
-        logger.error("")
-        logger.error("To fix this:")
-        logger.error("  1. Run 'modal token new' to authenticate (Modal 1.0+)")
-        logger.error("  2. Verify with: modal token info")
-        logger.error(
-            "  3. For GitHub Actions, ensure MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are set"
-        )
-        logger.error("")
-        logger.error("See: https://modal.com/docs/reference/cli/token")
-        logger.error("See AGENTS.md or agents-docs/auth-troubleshooting.md for help")
-        raise
+        Runs when the Modal container starts (not on each function call),
+        eliminating the per-invocation cold-start penalty (ADR-025).
+        """
+        # Setup paths - files are at /app/ via add_local_file (ADR-022, ADR-030)
+        sys.path.insert(0, "/app")
+        os.chdir("/app")
 
-    # Initialize container (ADR-025)
-    _initialize_dit_container()
+        # Pre-import heavy modules
+        import torch
+        import torchvision  # noqa: F401
 
-    # Import DiT modules after container initialization (ADR-042)
-    # This ensures sys.path is set correctly in Modal container
+        # Warm up CUDA
 
-    # Use a stable (non-dated) checkpoint directory so Modal retries and
-    # manually re-triggered runs can find and resume prior progress.
-    # A dated directory meant every retry silently restarted from step 0.
-    checkpoint_dir = "/outputs/checkpoints/dit/current"
-    Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
-    samples_dir = f"{checkpoint_dir}/samples"
-    Path(samples_dir).mkdir(parents=True, exist_ok=True)
+        if torch.cuda.is_available():
+            _ = torch.zeros(1).cuda()
+            dummy_input = torch.randn(1, 3, 32, 32).cuda()
+            dummy_conv = torch.nn.Conv2d(3, 16, 3).cuda()
+            _ = dummy_conv(dummy_input)
+            del dummy_input, dummy_conv
+            torch.cuda.empty_cache()
 
-    # Stable output paths enable resume across retries
-    output = output or f"{checkpoint_dir}/dit_model.pt"
-    ema_output = ema_output or f"{checkpoint_dir}/dit_model_ema.pt"
-    log_file = log_file or f"{checkpoint_dir}/dit_training.log"
+    @modal.method()
+    def train(
+        self,
+        data_dir: str = "/data/cats",
+        steps: int = 100_000,
+        batch_size: int = 128,
+        lr: float = 5e-5,
+        image_size: int = 128,
+        output: str | None = None,
+        ema_output: str | None = None,
+        num_workers: int = 0,
+        mixed_precision: bool = True,
+        gradient_clip: float = 1.0,
+        gradient_accumulation_steps: int = 1,
+        warmup_steps: int = 2_000,
+        log_interval: int = 100,
+        save_interval: int = 500,
+        early_stopping_patience: int = 15,
+        early_stopping_min_delta: float = 0.001,
+        sample_interval: int = 2_000,
+        log_file: str | None = None,
+        ema_beta: float = 0.9999,
+        seed: int = 42,
+        augmentation_level: str = "full",
+        resume_checkpoint: str | None = None,
+    ) -> dict[str, Any]:
+        """Run DiT training (was train_dit_on_gpu, now DiTTrainer.train).
 
-    # Auto-resume: if a checkpoint already exists (e.g. from a prior Modal retry),
-    # pass it through to train_dit_local so training continues from that step.
-    # resume_checkpoint overrides auto-detection when set explicitly.
-    #
-    # Only resume when the file *looks* like a valid torch checkpoint zip -
-    # otherwise a stale, partially-written `dit_model.pt` from a previous
-    # preempt would silently restart training at step 0 instead of raising
-    # (or worse, raise and abort the run). load_checkpoint() itself also has
-    # a defensive try/except as belt-and-braces (ADR-058).
-    resume: str | None = resume_checkpoint
-    if resume is None and Path(output).exists() and zipfile.is_zipfile(output):
-        resume = output
-        logger.info(f"Found existing checkpoint; will resume from: {output}")
-    elif resume is None and Path(output).exists():
-        logger.warning(
-            f"Ignoring non-zip file at {output} (likely a stale partial "
-            "checkpoint from a previously preempted run); starting fresh. "
-            "load_checkpoint() will quarantine the file if it is unreadable."
-        )
-    elif resume is not None:
-        logger.info(f"Using explicit resume checkpoint: {resume}")
+        Container is already initialized by @modal.enter() — no
+        explicit _initialize_dit_container() call needed.
 
-    # Setup training-specific logging (after auth validation)
-    logger = setup_logging(log_file)
-    logger.info("Starting TinyDiT Modal GPU training")
-    logger.info(
-        f"Configuration: steps={steps:,}, batch_size={batch_size}, "
-        f"image_size={image_size}, lr={lr}"
-    )
+        Returns:
+            Training status dict.
 
-    try:
-        # Check dataset cache (ADR-024: dataset caching in volume)
-        if not Path(data_dir).exists() or not list(Path(data_dir).iterdir()):
-            logger.info("Dataset not found, downloading...")
-            import subprocess
+        Raises:
+            AuthenticationError: If Modal authentication fails
+        """
+        # Setup logging first
+        logger = setup_auth_logging(level=logging.INFO)
 
-            result = subprocess.run(
-                ["python", "data/download.py"],
-                cwd="/app",
-                env={**os.environ, "DATA_DIR": "/data", "CATS_DIR": "/data/cats"},
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
-            if result.returncode != 0:
-                logger.warning(f"Download failed: {result.stderr}")
-            logger.info("Dataset ready")
+        # Validate Modal authentication before starting training
+        logger.info("=" * 60)
+        logger.info("MODAL TRAINING - PRE-FLIGHT CHECKS")
+        logger.info("=" * 60)
 
-        # Train
-        final_loss = train_dit_local(
-            data_dir=data_dir,
-            steps=steps,
-            batch_size=batch_size,
-            lr=lr,
-            image_size=image_size,
-            output=output,
-            ema_output=ema_output,
-            num_workers=num_workers,
-            mixed_precision=mixed_precision,
-            gradient_clip=gradient_clip,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            warmup_steps=warmup_steps,
-            log_interval=log_interval,
-            save_interval=save_interval,
-            sample_interval=sample_interval,
-            early_stopping_patience=early_stopping_patience,
-            early_stopping_min_delta=early_stopping_min_delta,
-            log_file=log_file,
-            ema_beta=ema_beta,
-            seed=seed,
-            logger=logger,
-            resume=resume,
-            augmentation_level=augmentation_level,
-        )
-
-        # Export to ONNX and Quantize (Issue #63)
-        logger.info("Exporting to ONNX...")
         try:
-            from export_dit_onnx import export_generator_onnx, load_model
-            from optimize_onnx import optimize_onnx
-
-            onnx_path = "/outputs/generator.onnx"
-            quant_dir = "/outputs"
-
-            # Load best model for export
-            model_to_export = load_model(output, image_size=image_size)
-            export_generator_onnx(model_to_export, output_path=onnx_path)
-            logger.info(f"✅ Exported to {onnx_path}")
-
-            logger.info("Quantizing ONNX model...")
-            optimize_onnx(
-                model_path=onnx_path,
-                output_dir=quant_dir,
-                method="dynamic",
-                model_type="generator",
+            require_modal_auth()
+            logger.info("✅ Modal authentication validated")
+        except AuthenticationError as e:
+            logger.error(f"❌ {e.message}")
+            logger.error("")
+            logger.error("To fix this:")
+            logger.error("  1. Run 'modal token new' to authenticate (Modal 1.0+)")
+            logger.error("  2. Verify with: modal token info")
+            logger.error(
+                "  3. For GitHub Actions, ensure MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are set"
             )
-            logger.info(
-                f"✅ Quantized model saved to {quant_dir}/generator_quantized.onnx"
+            logger.error("")
+            logger.error("See: https://modal.com/docs/reference/cli/token")
+            logger.error(
+                "See AGENTS.md or agents-docs/auth-troubleshooting.md for help"
+            )
+            raise
+
+        # Container is already initialized by @modal.enter()
+
+        # Use a stable (non-dated) checkpoint directory so Modal retries and
+        # manually re-triggered runs can find and resume prior progress.
+        # A dated directory meant every retry silently restarted from step 0.
+        checkpoint_dir = "/outputs/checkpoints/dit/current"
+        Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+        samples_dir = f"{checkpoint_dir}/samples"
+        Path(samples_dir).mkdir(parents=True, exist_ok=True)
+
+        # Stable output paths enable resume across retries
+        output = output or f"{checkpoint_dir}/dit_model.pt"
+        ema_output = ema_output or f"{checkpoint_dir}/dit_model_ema.pt"
+        log_file = log_file or f"{checkpoint_dir}/dit_training.log"
+
+        # Auto-resume: if a checkpoint already exists (e.g. from a prior Modal retry),
+        # pass it through to train_dit_local so training continues from that step.
+        # resume_checkpoint overrides auto-detection when set explicitly.
+        #
+        # Only resume when the file *looks* like a valid torch checkpoint zip -
+        # otherwise a stale, partially-written `dit_model.pt` from a previous
+        # preempt would silently restart training at step 0 instead of raising
+        # (or worse, raise and abort the run). load_checkpoint() itself also has
+        # a defensive try/except as belt-and-braces (ADR-058).
+        resume: str | None = resume_checkpoint
+        if resume is None and Path(output).exists() and zipfile.is_zipfile(output):
+            resume = output
+            logger.info(f"Found existing checkpoint; will resume from: {output}")
+        elif resume is None and Path(output).exists():
+            logger.warning(
+                f"Ignoring non-zip file at {output} (likely a stale partial "
+                "checkpoint from a previously preempted run); starting fresh. "
+                "load_checkpoint() will quarantine the file if it is unreadable."
+            )
+        elif resume is not None:
+            logger.info(f"Using explicit resume checkpoint: {resume}")
+
+        # Setup training-specific logging (after auth validation)
+        logger = setup_logging(log_file)
+        logger.info("Starting TinyDiT Modal GPU training")
+        logger.info(
+            f"Configuration: steps={steps:,}, batch_size={batch_size}, "
+            f"image_size={image_size}, lr={lr}"
+        )
+
+        try:
+            # Check dataset cache (ADR-024: dataset caching in volume)
+            if not Path(data_dir).exists() or not list(Path(data_dir).iterdir()):
+                logger.info("Dataset not found, downloading...")
+                import subprocess
+
+                result = subprocess.run(
+                    ["python", "data/download.py"],
+                    cwd="/app",
+                    env={**os.environ, "DATA_DIR": "/data", "CATS_DIR": "/data/cats"},
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
+                if result.returncode != 0:
+                    logger.warning(f"Download failed: {result.stderr}")
+                logger.info("Dataset ready")
+
+            # Train
+            final_loss = train_dit_local(
+                data_dir=data_dir,
+                steps=steps,
+                batch_size=batch_size,
+                lr=lr,
+                image_size=image_size,
+                output=output,
+                ema_output=ema_output,
+                num_workers=num_workers,
+                mixed_precision=mixed_precision,
+                gradient_clip=gradient_clip,
+                gradient_accumulation_steps=gradient_accumulation_steps,
+                warmup_steps=warmup_steps,
+                log_interval=log_interval,
+                save_interval=save_interval,
+                sample_interval=sample_interval,
+                early_stopping_patience=early_stopping_patience,
+                early_stopping_min_delta=early_stopping_min_delta,
+                log_file=log_file,
+                ema_beta=ema_beta,
+                seed=seed,
+                logger=logger,
+                resume=resume,
+                augmentation_level=augmentation_level,
             )
 
-            # Copy best .pt to root for easier CI download
-            import shutil
+            # Export to ONNX and Quantize (Issue #63)
+            logger.info("Exporting to ONNX...")
+            try:
+                from export_dit_onnx import export_generator_onnx, load_model
+                from optimize_onnx import optimize_onnx
 
-            shutil.copy2(output, "/outputs/tinydit_final.pt")
-            logger.info("✅ Copied best model to /outputs/tinydit_final.pt")
+                onnx_path = "/outputs/generator.onnx"
+                quant_dir = "/outputs"
+
+                # Load best model for export
+                model_to_export = load_model(output, image_size=image_size)
+                export_generator_onnx(model_to_export, output_path=onnx_path)
+                logger.info(f"✅ Exported to {onnx_path}")
+
+                logger.info("Quantizing ONNX model...")
+                optimize_onnx(
+                    model_path=onnx_path,
+                    output_dir=quant_dir,
+                    method="dynamic",
+                    model_type="generator",
+                )
+                logger.info(
+                    f"✅ Quantized model saved to {quant_dir}/generator_quantized.onnx"
+                )
+
+                # Copy best .pt to root for easier CI download
+                import shutil
+
+                shutil.copy2(output, "/outputs/tinydit_final.pt")
+                logger.info("✅ Copied best model to /outputs/tinydit_final.pt")
+
+            except Exception as e:
+                logger.warning(f"ONNX export/quantization failed: {e}")
+
+            # Commit volume after successful training (ADR-024: explicit commits)
+            volume_outputs.commit()
+            logger.info("Checkpoint committed to volume")
+
+            logger.info("Training completed successfully")
+            return {"status": "completed", "output": output, "final_loss": final_loss}
 
         except Exception as e:
-            logger.warning(f"ONNX export/quantization failed: {e}")
+            logger.error(f"Training failed: {e}", exc_info=True)
+            # Commit partial state on error
+            volume_outputs.commit()
+            raise TrainingError(f"Training failed: {e}") from e
 
-        # Commit volume after successful training (ADR-024: explicit commits)
-        volume_outputs.commit()
-        logger.info("Checkpoint committed to volume")
-
-        logger.info("Training completed successfully")
-        return {"status": "completed", "output": output, "final_loss": final_loss}
-
-    except Exception as e:
-        logger.error(f"Training failed: {e}", exc_info=True)
-        # Commit partial state on error
-        volume_outputs.commit()
-        raise TrainingError(f"Training failed: {e}") from e
-
-    finally:
-        cleanup_memory()
+        finally:
+            cleanup_memory()
 
 
 def create_dataloader(
@@ -1296,20 +1285,16 @@ def main(
     augmentation_level: str = "full",
     resume: str | None = None,
 ):
-    """Local entrypoint for Modal CLI.
-
-    Note: Modal parses CLI args from this signature, so every CLI flag the
-    .github/workflows/train.yml forwards (save_interval, gradient_clip, ...)
-    must appear here. Adding it on the train() side without adding it here
-    makes `modal run` reject the flag with "No such option".
+    """Local entrypoint for Modal CLI (ADR-025: @modal.enter() class pattern).
 
     Usage:
-        modal run src/train_dit.py data/cats --steps 100000
+        modal run src/train_dit.py --steps 100000
         modal run src/train_dit.py --steps 100000 --batch-size 512 --lr 5e-5
         modal run src/train_dit.py --save-interval 1000
         modal run src/train_dit.py --resume /outputs/checkpoints/dit/current/dit_model.pt
     """
-    result = train_dit_on_gpu.remote(
+    trainer = DiTTrainer()
+    result = trainer.train.remote(
         data_dir=data_dir,
         steps=steps,
         batch_size=batch_size,
