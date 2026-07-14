@@ -87,6 +87,12 @@ GPU_SPEED_FACTORS: dict[str, float] = {
     "CPU": 0.02,  # 50x slower
 }
 
+# Minimum number of REAL (non-derived) benchmarks in KNOWN_BENCHMARKS
+# required to recommend a tune. Derived entries (synthesized via
+# speed-factor scaling from another entry) don't count toward this
+# threshold because they double-count their parent's information.
+MIN_REAL_BENCHMARKS_FOR_TUNE: int = 3
+
 
 # ─────────────────────────────────────────────────────────────
 # Calibration
@@ -98,12 +104,30 @@ def calibrate_steps_per_second(
 ) -> dict[str, Any]:
     """Calibrate and report estimation accuracy against known benchmarks.
 
+    Iterates KNOWN_BENCHMARKS once, classifying each entry with a non-None
+    ``actual_hours`` as REAL or DERIVED via the source-string heuristic
+    (``source.startswith("DERIVED:")``). Mean error / recommended baseline
+    are computed from REAL entries only — derived entries are too correlated
+    to their parent benchmark to count as independent samples.
+
     Args:
         baseline_steps_per_sec: Current baseline for T4.
             Defaults to T4_STEPS_PER_SECOND from gpu_pool.
 
     Returns:
-        Calibration report dict.
+        Calibration report dict with keys:
+          - baseline_steps_per_sec (float)
+          - recommended_baseline (float)
+          - mean_error_pct (float): mean of REAL entries' error
+          - num_benchmarks (int): count of REAL entries with actual_hours
+            (note: this used to count ALL entries, but as of the
+            real/derived split it counts REAL only — derived entries are
+            in num_derived)
+          - num_derived (int): count of DERIVED entries with actual_hours
+          - comparisons (list[dict]): per-benchmark detail records. Each
+            has a boolean ``is_derived`` field so downstream consumers
+            can filter/recompute as needed.
+          - warning (str | None): present when real exports < MIN_REAL_BENCHMARKS_FOR_TUNE.
     """
     report: dict[str, Any] = {
         "baseline_steps_per_sec": baseline_steps_per_sec,
@@ -166,7 +190,7 @@ def calibrate_steps_per_second(
         )
         report["num_benchmarks"] = len(real_errors)
         report["num_derived"] = len(derived_errors)
-        if len(real_errors) < 3:
+        if len(real_errors) < MIN_REAL_BENCHMARKS_FOR_TUNE:
             report["warning"] = (
                 f"Only {len(real_errors)} REAL benchmark(s) available "
                 f"(plus {len(derived_errors)} DERIVED) — calibration is "
@@ -211,12 +235,18 @@ def print_calibration_report(report: dict[str, Any]) -> None:
         )
         if report.get("warning"):
             print(f"⚠️  {report['warning']}")
-        if abs(report["mean_error_pct"]) > 20 and real_n >= 3:
+        if (
+            abs(report["mean_error_pct"]) > 20
+            and real_n >= MIN_REAL_BENCHMARKS_FOR_TUNE
+        ):
             print(
                 f"⚠️  Recommendation: tune baseline to {report['recommended_baseline']} steps/s"
             )
-        elif real_n < 3:
-            print("⚠️  Not enough real benchmarks (≥3) to recommend a tune")
+        elif real_n < MIN_REAL_BENCHMARKS_FOR_TUNE:
+            print(
+                f"⚠️  Not enough real benchmarks (≥{MIN_REAL_BENCHMARKS_FOR_TUNE}) "
+                "to recommend a tune"
+            )
         else:
             print("✅ Baseline is within acceptable range (≤20% error)")
 
@@ -279,10 +309,13 @@ def print_tuned_constants() -> None:
     current = T4_STEPS_PER_SECOND
 
     # Gate: require 3+ REAL (non-derived) benchmarks before recommending.
-    if num_real < 3:
+    if num_real < MIN_REAL_BENCHMARKS_FOR_TUNE:
         print()
         print(f"# NOT recommending a tune with only {num_real} REAL benchmark(s).")
-        print("# Calibration requires >= 3 real T4 wall-clock measurements.")
+        print(
+            f"# Calibration requires >= {MIN_REAL_BENCHMARKS_FOR_TUNE} real "
+            "T4 wall-clock measurements."
+        )
         print(
             f"# The {num_derived} derived entry(ies) are suggestive but not independent."
         )
