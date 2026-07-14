@@ -190,7 +190,7 @@ modal token info
 
 **Solution (Modal 1.0+):**
 ```bash
-# Re-authenticate
+# Re-authenticate (Modal 1.0+: `token new`, NOT `token set`)
 modal token new
 
 # Follow prompts:
@@ -231,8 +231,8 @@ pip install modal
 # Verify installation
 modal --version
 
-# Authenticate
-modal token set
+# Authenticate (Modal 1.0+ uses `token new`, not `token set`)
+modal token new
 ```
 
 ---
@@ -439,9 +439,9 @@ Training interrupted
    ```bash
    modal token new
    ```
-3. Resume from checkpoint:
+3. Resume from checkpoint (use --data-dir after ADR-048/050):
    ```bash
-   modal run src/train_dit.py data/cats --resume checkpoints/dit_step_50000.pt
+   modal run src/train_dit.py --data-dir data/cats --resume checkpoints/dit_step_50000.pt
    ```
 
 ---

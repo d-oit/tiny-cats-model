@@ -21,9 +21,10 @@ This runs the **same checks** as GitHub Actions CI:
 
 ## Workflows
 
-- **Files**: `.github/workflows/ci.yml`, `train.yml`, `deploy.yml`
-- **Trigger**: push + PR to `main` + `workflow_dispatch`
-- **Jobs**: lint → test → type-check → build-frontend
+- **Files**: `.github/workflows/ci.yml`, `train.yml`, `deploy.yml`, `train-pool.yml`, `upload-hub.yml`
+- **Trigger**: push + PR to `main` + `workflow_dispatch` (ci, train, train-pool)
+- **Jobs (ci.yml)**: lint → test (incl. GPU pool + train chain + benchmark drift) → type-check → build-frontend
+- **Job (train-pool.yml)**: `train-modal` (Modal GPU + Hub sync) | `train-pool-runner` (CPU fallback) | `pool-summary` (cost + status)
 - **Never merge if CI fails**
 
 ## GitHub CLI Commands
@@ -38,6 +39,8 @@ gh run rerun <run-id> --failed
 
 # Trigger workflow
 gh workflow run train.yml
+gh workflow run train-pool.yml -f steps=20000 -f batch_size=256
+gh workflow run train-pool.yml -f provider=all -f steps=50000
 ```
 
 ## Complete CI/CD Fix Workflow
