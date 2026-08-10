@@ -44,7 +44,7 @@ jobs:
       - name: Install lint dependencies
         run: |
           pip install --upgrade pip
-          pip install ruff
+          pip install ruff==0.15.9
 
       - name: Run ruff format check
         run: ruff format --check .
