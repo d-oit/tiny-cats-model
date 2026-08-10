@@ -224,10 +224,15 @@ jobs:
           python-version: "3.11"
 
       - name: Print pool summary
+        env:
+          # GitHub renders booleans in ${{ }} as bare true/false, which would
+          # break when interpolated into Python source. Pass the string via a
+          # step env var instead; read it with os.environ below.
+          PROVIDERS_SUCCEEDED: ${{ needs.train-modal.result == 'success' || needs.train-pool-runner.result == 'success' }}
         run: |
           # shellcheck disable=SC2140  # Python -c block uses escaped quotes
           python -c "
-          import sys; sys.path.insert(0, 'src')
+          import os, sys; sys.path.insert(0, 'src')
           from gpu_pool import (
               FALLBACK_CHAIN, detect_provider, estimate_cost,
               get_provider_config,
@@ -248,8 +253,8 @@ jobs:
           print('  https://huggingface.co/d4oit/tiny-cats-model/tree/main/checkpoints/pool')
           print()
           # shellcheck disable=SC2140  # GHA expression, not shell quoting
-          status = "${{ needs.train-modal.result == 'success' || needs.train-pool-runner.result == 'success' }}"
-          if status in ('true', 'True'):
+          status = os.environ.get('PROVIDERS_SUCCEEDED', 'false')
+          if status.lower() == 'true':
               print('✅ At least one provider completed training successfully')
           else:
               print('⚠️  No provider completed training (check logs)')
