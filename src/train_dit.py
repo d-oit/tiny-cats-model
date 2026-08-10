@@ -487,11 +487,13 @@ image = (
         "tqdm==4.67.1",
         "onnx==1.17.0",
         "onnxruntime==1.20.0",
+        "huggingface_hub",
     )
     .add_local_file("src/train_dit.py", "/app/train_dit.py")
     .add_local_file("src/dit.py", "/app/dit.py")
     .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
     .add_local_file("src/dataset.py", "/app/dataset.py")
+    .add_local_file("src/gpu_pool.py", "/app/gpu_pool.py")
     .add_local_file("src/export_dit_onnx.py", "/app/export_dit_onnx.py")
     .add_local_file("src/optimize_onnx.py", "/app/optimize_onnx.py")
     .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
@@ -576,6 +578,8 @@ class DiTTrainer:
         seed: int = 42,
         augmentation_level: str = "full",
         resume_checkpoint: str | None = None,
+        hub_resume: bool = False,
+        no_hub_push: bool = False,
     ) -> dict[str, Any]:
         """Run DiT training (was train_dit_on_gpu, now DiTTrainer.train).
 
@@ -651,6 +655,29 @@ class DiTTrainer:
             )
         elif resume is not None:
             logger.info(f"Using explicit resume checkpoint: {resume}")
+
+        # GPU pool cross-provider resume (train-pool.yml --hub-resume / ADR-055).
+        # Pull the last EMA checkpoint from HuggingFace Hub so a prior provider's
+        # progress carries over. Degrades gracefully (logs + continues fresh) if
+        # huggingface_hub is unavailable or no HF_TOKEN is set in the container.
+        hub_repo = "d4oit/tiny-cats-model"
+        if hub_resume and resume is None:
+            logger.info(f"GPU pool: pulling checkpoint from Hub ({hub_repo})...")
+            try:
+                from gpu_pool import pull_checkpoint_from_hub
+
+                pulled = pull_checkpoint_from_hub(
+                    hub_repo=hub_repo,
+                    checkpoint_name="dit_model_ema.pt",
+                    output_dir=checkpoint_dir,
+                )
+                if pulled:
+                    resume = str(pulled)
+                    logger.info(f"GPU pool: resuming from Hub checkpoint: {resume}")
+                else:
+                    logger.info("GPU pool: no Hub checkpoint found — starting fresh")
+            except Exception as e:  # graceful degradation
+                logger.warning(f"GPU pool: hub pull skipped ({e})")
 
         # Setup training-specific logging (after auth validation)
         logger = setup_logging(log_file)
@@ -742,6 +769,26 @@ class DiTTrainer:
             # Commit volume after successful training (ADR-024: explicit commits)
             volume_outputs.commit()
             logger.info("Checkpoint committed to volume")
+
+            # GPU pool: push checkpoints to Hub for cross-provider resume
+            # (train-pool.yml --no-hub-push disables; degrades gracefully).
+            if not no_hub_push:
+                logger.info("GPU pool: pushing checkpoints to HuggingFace Hub...")
+                try:
+                    from gpu_pool import push_checkpoint_to_hub
+
+                    for ckpt_name, ckpt_path in [
+                        ("dit_model.pt", output),
+                        ("dit_model_ema.pt", ema_output),
+                    ]:
+                        if Path(ckpt_path).exists():
+                            push_checkpoint_to_hub(
+                                checkpoint_path=ckpt_path,
+                                hub_repo=hub_repo,
+                                checkpoint_name=ckpt_name,
+                            )
+                except Exception as e:  # graceful degradation
+                    logger.warning(f"GPU pool: hub push skipped ({e})")
 
             logger.info("Training completed successfully")
             return {"status": "completed", "output": output, "final_loss": final_loss}
@@ -1284,6 +1331,8 @@ def main(
     early_stopping_min_delta: float = 0.001,
     augmentation_level: str = "full",
     resume: str | None = None,
+    hub_resume: bool = False,
+    no_hub_push: bool = False,
 ):
     """Local entrypoint for Modal CLI (ADR-025: @modal.enter() class pattern).
 
@@ -1292,6 +1341,7 @@ def main(
         modal run src/train_dit.py --steps 100000 --batch-size 512 --lr 5e-5
         modal run src/train_dit.py --save-interval 1000
         modal run src/train_dit.py --resume /outputs/checkpoints/dit/current/dit_model.pt
+        modal run src/train_dit.py --steps 20000 --hub-resume --no-hub-push
     """
     trainer = DiTTrainer()
     result = trainer.train.remote(
@@ -1311,6 +1361,8 @@ def main(
         early_stopping_patience=early_stopping_patience,
         augmentation_level=augmentation_level,
         resume_checkpoint=resume,
+        hub_resume=hub_resume,
+        no_hub_push=no_hub_push,
     )
     print(f"Training completed: {result}")
 
