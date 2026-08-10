@@ -259,3 +259,29 @@ jobs:
           else:
               print('⚠️  No provider completed training (check logs)')
           "
+
+      - name: Verify Hub checkpoints
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python -c "
+          import json, os, sys, urllib.request
+          token = os.environ.get('HF_TOKEN', '')
+          repo = 'd4oit/tiny-cats-model'
+          url = f'https://huggingface.co/api/models/{repo}/tree/main/checkpoints/pool'
+          req = urllib.request.Request(url)
+          if token:
+              req.add_header('Authorization', f'Bearer {token}')
+          try:
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  items = json.load(resp)
+          except Exception as e:
+              print(f'⚠️  Could not list Hub checkpoints: {e}')
+              sys.exit(1)
+          if not items:
+              print('⚠️  No checkpoints found under checkpoints/pool')
+              sys.exit(1)
+          for it in items:
+              print(f'  {it.get(\"path\")}  ({it.get(\"size\", \"?\")}B)')
+          print(f'✅ {len(items)} checkpoint(s) present on Hub')
+          "
