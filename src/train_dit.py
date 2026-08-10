@@ -512,6 +512,7 @@ image = (
         "/data": volume_data,
     },
     gpu=["T4", "L4"],  # T4 ($0.59/hr) for $7 budget; L4 ($0.80/hr) fallback
+    secrets=[modal.Secret.from_name("huggingface-secret")],
     timeout=86400,  # 24 hours max for long training runs
     retries=modal.Retries(
         max_retries=10,

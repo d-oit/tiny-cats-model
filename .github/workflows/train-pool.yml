@@ -232,7 +232,7 @@ jobs:
           print()
           # shellcheck disable=SC2140  # GHA expression, not shell quoting
           status = "${{ needs.train-modal.result == 'success' || needs.train-pool-runner.result == 'success' }}"
-          if status == 'true':
+          if status in ('true', 'True'):
               print('✅ At least one provider completed training successfully')
           else:
               print('⚠️  No provider completed training (check logs)')
