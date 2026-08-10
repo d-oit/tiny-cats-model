@@ -100,7 +100,7 @@ jobs:
             echo "::warning::HF_TOKEN is unset; Hub checkpoint sync will degrade gracefully"
             exit 0
           fi
-          if modal secret get huggingface-secret >/dev/null 2>&1; then
+          if modal secret list 2>/dev/null | grep -qw huggingface-secret; then
             echo "Modal secret 'huggingface-secret' already exists; skipping creation"
           else
             modal secret create huggingface-secret HF_TOKEN="$HF_TOKEN" \
