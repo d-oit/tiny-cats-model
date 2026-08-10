@@ -554,6 +554,35 @@ class DiTTrainer:
             del dummy_input, dummy_conv
             torch.cuda.empty_cache()
 
+    def _push_to_hub(
+        self,
+        hub_repo: str,
+        output: str,
+        ema_output: str,
+        logger: logging.Logger,
+    ) -> None:
+        """Push current best + EMA checkpoints to HF Hub (graceful).
+
+        Used both mid-run (hub_push_interval) and at run completion so a
+        cancelled GHA slice still syncs its latest checkpoint for
+        cross-provider resume (train-pool.yml --no-hub-push disables).
+        """
+        try:
+            from gpu_pool import push_checkpoint_to_hub
+
+            for ckpt_name, ckpt_path in [
+                ("dit_model.pt", output),
+                ("dit_model_ema.pt", ema_output),
+            ]:
+                if Path(ckpt_path).exists():
+                    push_checkpoint_to_hub(
+                        checkpoint_path=ckpt_path,
+                        hub_repo=hub_repo,
+                        checkpoint_name=ckpt_name,
+                    )
+        except Exception as e:
+            logger.warning(f"GPU pool: hub push skipped ({e})")
+
     @modal.method()
     def train(
         self,
@@ -581,6 +610,7 @@ class DiTTrainer:
         resume_checkpoint: str | None = None,
         hub_resume: bool = False,
         no_hub_push: bool = False,
+        hub_push_interval: int = 0,
     ) -> dict[str, Any]:
         """Run DiT training (was train_dit_on_gpu, now DiTTrainer.train).
 
@@ -731,6 +761,9 @@ class DiTTrainer:
                 logger=logger,
                 resume=resume,
                 augmentation_level=augmentation_level,
+                no_hub_push=no_hub_push,
+                hub_push_interval=hub_push_interval,
+                hub_repo=hub_repo,
             )
 
             # Export to ONNX and Quantize (Issue #63)
@@ -775,21 +808,12 @@ class DiTTrainer:
             # (train-pool.yml --no-hub-push disables; degrades gracefully).
             if not no_hub_push:
                 logger.info("GPU pool: pushing checkpoints to HuggingFace Hub...")
-                try:
-                    from gpu_pool import push_checkpoint_to_hub
-
-                    for ckpt_name, ckpt_path in [
-                        ("dit_model.pt", output),
-                        ("dit_model_ema.pt", ema_output),
-                    ]:
-                        if Path(ckpt_path).exists():
-                            push_checkpoint_to_hub(
-                                checkpoint_path=ckpt_path,
-                                hub_repo=hub_repo,
-                                checkpoint_name=ckpt_name,
-                            )
-                except Exception as e:  # graceful degradation
-                    logger.warning(f"GPU pool: hub push skipped ({e})")
+                self._push_to_hub(
+                    hub_repo=hub_repo,
+                    output=output,
+                    ema_output=ema_output,
+                    logger=logger,
+                )
 
             logger.info("Training completed successfully")
             return {"status": "completed", "output": output, "final_loss": final_loss}
@@ -869,6 +893,9 @@ def train_dit_local(
     logger: logging.Logger | None = None,
     resume: str | None = None,
     augmentation_level: str = "full",
+    no_hub_push: bool = True,
+    hub_push_interval: int = 0,
+    hub_repo: str = "d4oit/tiny-cats-model",
 ) -> float:
     """Full TinyDiT training loop with flow matching and EMA.
 
@@ -1166,6 +1193,32 @@ def train_dit_local(
                             logger=logger,
                             is_best=(avg_loss < best_loss),
                         )
+                        # Mid-run Hub push (cadence-capped) so a cancelled
+                        # slice still syncs its latest checkpoint for
+                        # cross-provider resume (train-pool.yml).
+                        if (
+                            not no_hub_push
+                            and hub_push_interval > 0
+                            and step % hub_push_interval == 0
+                        ):
+                            logger.info(f"GPU pool: mid-run Hub push at step {step}...")
+                            try:
+                                from gpu_pool import push_checkpoint_to_hub
+
+                                push_checkpoint_to_hub(
+                                    checkpoint_path=output,
+                                    hub_repo=hub_repo,
+                                    checkpoint_name="dit_model.pt",
+                                )
+                                push_checkpoint_to_hub(
+                                    checkpoint_path=ema_output,
+                                    hub_repo=hub_repo,
+                                    checkpoint_name="dit_model_ema.pt",
+                                )
+                            except Exception as e:
+                                logger.warning(
+                                    f"GPU pool: mid-run hub push skipped ({e})"
+                                )
                         if avg_loss < best_loss - early_stopping_min_delta:
                             best_loss = avg_loss
                             patience_counter = 0
@@ -1334,6 +1387,7 @@ def main(
     resume: str | None = None,
     hub_resume: bool = False,
     no_hub_push: bool = False,
+    hub_push_interval: int = 0,
 ):
     """Local entrypoint for Modal CLI (ADR-025: @modal.enter() class pattern).
 
@@ -1364,6 +1418,7 @@ def main(
         resume_checkpoint=resume,
         hub_resume=hub_resume,
         no_hub_push=no_hub_push,
+        hub_push_interval=hub_push_interval,
     )
     print(f"Training completed: {result}")
 

@@ -49,6 +49,11 @@ on:
         required: false
         default: true
         type: boolean
+      hub_push_interval:
+        description: "Mid-run HF Hub push cadence (steps; 0 disables). Capped so cancelled slices still sync checkpoints."
+        required: false
+        default: "5000"
+        type: string
   schedule:
     # Run pool training every 6 hours to maximize free GPU usage.
     # On schedule, defaults to modal provider (first in chain).
@@ -69,7 +74,7 @@ jobs:
     name: Train on Modal
     runs-on: ubuntu-latest
     environment: modal-training
-    timeout-minutes: 120
+    timeout-minutes: 360
     if: |
       (github.event_name == 'workflow_dispatch' &&
        (inputs.provider == 'modal' || inputs.provider == 'all')) ||
@@ -126,6 +131,7 @@ jobs:
             --batch-size ${{ github.event.inputs.batch_size || '256' }} \
             --lr ${{ github.event.inputs.lr || '5e-5' }} \
             --save-interval 500 \
+            --hub-push-interval ${{ github.event.inputs.hub_push_interval || '5000' }} \
             ${HUBSYNC:+"$HUBSYNC"} 2>&1 | tee modal-training.log
 
       - name: Upload training log
@@ -142,7 +148,7 @@ jobs:
   train-pool-runner:
     name: Train on Pool Runner
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 360
     if: |
       (github.event_name == 'workflow_dispatch' &&
        (inputs.provider != 'modal' || inputs.provider == 'all')) ||
