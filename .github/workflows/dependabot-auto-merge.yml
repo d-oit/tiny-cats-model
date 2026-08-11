@@ -22,9 +22,20 @@ jobs:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
       - name: Approve and merge safe updates
+        # Auto-merge:
+        #  - direct dep minor/patch bumps,
+        #  - indirect (transitive/lockfile-only) bumps, e.g. npm group
+        #    updates that touch only package-lock.json. fetch-metadata
+        #    reports update-type=null for those, so the semver-minor/patch
+        #    condition alone never fired and such PRs sat open forever
+        #    (e.g. #130). `gh pr merge --auto` still waits for every
+        #    required check, incl. the dependency guardrail, so this is
+        #    safe. Major bumps (direct or indirect) stay manual.
         if: |
           steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
-          steps.metadata.outputs.update-type == 'version-update:semver-patch'
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          (steps.metadata.outputs.dependency-type == 'indirect' &&
+           steps.metadata.outputs.update-type != 'version-update:semver-major')
         run: |
           gh pr review --approve "$PR_URL"
           gh pr merge --auto --squash "$PR_URL"

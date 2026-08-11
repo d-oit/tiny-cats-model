@@ -27,3 +27,8 @@ updates:
     ignore:
       - dependency-name: "onnxruntime"
         versions: [">= 1.24.0"]
+      # Ruff must stay in lockstep with CI + pre-commit (all pinned 0.15.9).
+      # Dependabot bumping it independently caused #130's stale formatter
+      # failures. Bump manually and in sync across requirements.txt,
+      # pyproject.toml, .pre-commit-config.yaml, ci.yml, train.yml.
+      - dependency-name: "ruff"
