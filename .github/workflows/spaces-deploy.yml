@@ -1,30 +1,24 @@
-name: Deploy Gradio Demo to HF Spaces
+name: Deploy Static Demo Page to HF Spaces
 
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: "deploy = push app to SPACE_ID; list = show Spaces the token can see"
+        description: "deploy = build from evaluation_report.json and push; list = show Spaces the token can see"
         required: false
         default: "deploy"
         type: choice
         options: ["deploy", "list"]
       space_id:
-        description: "HF Spaces repo id"
+        description: "HF Spaces repo id (static Space, free)"
         required: false
-        default: "d-oit/tiny-cats-model-demo"
+        default: "d4oit/tiny-cats-model-demo"
         type: string
-      private:
-        description: "Create as a private Space (the model repo it loads is private)"
-        required: false
-        default: "true"
-        type: choice
-        options: ["true", "false"]
   push:
     branches:
       - main
     paths:
-      - "src/app_gradio.py"
+      - "evaluation_report.json"
 
 permissions:
   contents: read
@@ -35,7 +29,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy to HF Spaces
+    name: Deploy static page to HF Spaces
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -47,13 +41,12 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependency
-        run: pip install --quiet huggingface_hub
+      - name: Install huggingface_hub (provides the hf CLI)
+        run: pip install --quiet --upgrade huggingface_hub
 
       - name: Deploy Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           ACTION: ${{ inputs.action || 'deploy' }}
-          SPACE_ID: ${{ inputs.space_id || 'd-oit/tiny-cats-model-demo' }}
-          PRIVATE: ${{ inputs.private || 'true' }}
+          SPACE_ID: ${{ inputs.space_id || 'd4oit/tiny-cats-model-demo' }}
         run: python .github/scripts/deploy_space.py
