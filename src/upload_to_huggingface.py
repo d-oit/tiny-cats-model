@@ -176,10 +176,7 @@ It combines a ResNet-based classifier with a Diffusion Transformer (DiT) generat
     # A report is treated as generator evaluation only when it carries
     # generator metrics (scalar FID / Inception Score). A classifier report
     # (accuracy + per-class dicts) must not leak raw dicts into this table.
-    is_generator_report = evaluation_results and isinstance(
-        evaluation_results.get("fid"), (int, float)
-    )
-    if is_generator_report:
+    if evaluation_results and isinstance(evaluation_results.get("fid"), (int, float)):
         fid = evaluation_results.get("fid", "N/A")
         is_mean = evaluation_results.get("inception_score", {}).get("mean", "N/A")
         is_std = evaluation_results.get("inception_score", {}).get("std", "N/A")
