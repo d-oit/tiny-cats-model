@@ -95,6 +95,17 @@ def _per_class_prf(
     return precisions, recalls, f1s
 
 
+def _aggregate_f1(
+    f1s: list[float], support: list[int], total: int
+) -> tuple[float, float]:
+    """Return (macro F1, support-weighted F1)."""
+    macro_f1 = sum(f1s) / len(f1s) if f1s else 0.0
+    weighted_f1 = (
+        sum(support[c] * f1s[c] for c in range(len(f1s))) / total if total > 0 else 0.0
+    )
+    return macro_f1, weighted_f1
+
+
 def evaluate(
     data_dir: str = "data/cats",
     checkpoint: str = "cats_model.pt",
@@ -164,10 +175,8 @@ def evaluate(
     confusion_matrix = _confusion_stats(all_labels, all_preds, num_classes)
     precisions, recalls, f1s = _per_class_prf(confusion_matrix)
 
-    macro_f1 = sum(f1s) / len(f1s) if f1s else 0.0
-    weighted_f1 = sum(
-        per_class_total[class_names[c]] * f1s[c] for c in range(num_classes)
-    ) / max(total, 1)
+    support = [per_class_total[class_names[c]] for c in range(num_classes)]
+    macro_f1, weighted_f1 = _aggregate_f1(f1s, support, total)
 
     full_failures = [
         {
