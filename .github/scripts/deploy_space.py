@@ -50,11 +50,46 @@ Models are loaded from the `d4oit/tiny-cats-model` Hub repository.
 """
 
 
-def main() -> None:
+def _require_token() -> str:
     token = os.environ.get("HF_TOKEN")
     if not token:
         print("ERROR: HF_TOKEN not set")
         sys.exit(1)
+    return token
+
+
+def list_spaces() -> None:
+    """Print the Spaces the token can see (for discovery; no writes)."""
+    from huggingface_hub import HfApi
+
+    api = HfApi(token=_require_token())
+    me = api.whoami()
+    print(f"whoami: {me.get('name')} (type={me.get('type')})")
+    authors = ["d-oit", me.get("name", "")]
+    seen: set[str] = set()
+    for author in authors:
+        if not author or author in seen:
+            continue
+        seen.add(author)
+        print(f"== spaces under {author} ==")
+        found = False
+        for space in api.list_spaces(author=author):
+            found = True
+            rt = space.runtime or {}
+            print(
+                f"  {space.id}  private={space.private}  sdk={space.sdk}  "
+                f"stage={rt.get('stage')}"
+            )
+        if not found:
+            print("  (none)")
+
+
+def main() -> None:
+    if os.environ.get("ACTION", "deploy").lower() == "list":
+        list_spaces()
+        return
+
+    token = _require_token()
     space_id = os.environ.get("SPACE_ID", "d-oit/tiny-cats-model-demo")
     private = os.environ.get("PRIVATE", "true").lower() == "true"
 
