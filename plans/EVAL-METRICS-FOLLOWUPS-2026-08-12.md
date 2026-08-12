@@ -1,110 +1,131 @@
 # Eval Metrics Unit Tests — Followups
 
 **Date:** 2026-08-12
-**Status:** Open (accepted debt + actionable items)
+**Status:** Most implemented 2026-08-12; FU-4/FU-6 deliberately deferred
 **Related:** `src/eval.py`, `tests/test_eval.py`, `evaluation_report.json`
 
 ## Context (what is done, so this doc stands alone)
 
-`src/eval.py` metric math is now unit-tested. Delivered and verified this session:
+`src/eval.py` metric math is unit-tested and the aggregate-F1 helper is
+hardened:
 
-- **`_aggregate_f1(f1s, support, total)`** extracted (next to `_per_class_prf`); `evaluate()` delegates to it.
-- **`tests/test_eval.py`** (8 tests): `_confusion_stats`, `_per_class_prf`, `_aggregate_f1`, a published-report regression pin, and `test_evaluate_wiring_reports_correct_aggregates` — an end-to-end `evaluate()` test with dataloader/checkpoint seams patched, on deterministic synthetic data.
-- Verification: 8/8 eval tests pass; full suite 332 passed, 1 skipped, 1 xpassed; ruff check + format clean; CPU rerun of `eval.py` bit-identical to committed `evaluation_report.json` (temp file removed).
-
-The followups below are the residual items surfaced by the review; none block current functionality.
+- **`_aggregate_f1(f1s, support)`** (next to `_per_class_prf`); `evaluate()`
+  delegates to it. Total is derived from `support`; unequal `f1s`/`support`
+  lengths raise `ValueError` instead of silently dropping entries.
+- **`tests/test_eval.py`** (10 tests): `_confusion_stats`, `_per_class_prf`,
+  `_aggregate_f1` (incl. a length-mismatch guard), a report-driven regression
+  against the committed `evaluation_report.json`, an end-to-end `evaluate()`
+  wiring test on deterministic synthetic data, and a `@pytest.mark.slow`
+  real-data eval test.
+- Verification: 10/10 eval tests pass; full suite green; ruff + mypy clean;
+  prior CPU rerun of `eval.py` bit-identical to the committed report.
 
 ---
 
-## FU-1 — `_aggregate_f1` accepts contradictory input silently (actionable, needs sign-off)
+## FU-1 — `_aggregate_f1` accepts contradictory input silently
 
-**Status:** Open — latent only, unreachable in production today.
+**Status:** Implemented 2026-08-12.
 
-**What/Why:** The helper range-indexes over `len(f1s)` and trusts `total`:
+**What/Why (was):** The helper range-indexed over `len(f1s)` and trusted a
+separate `total` param — length mismatches silently dropped entries, and
+`total != sum(support)` produced garbage (weighted > 1.0).
 
-- `len(f1s) != len(support)` → silently ignores trailing support (or IndexErrors) instead of failing loud.
-- `total != sum(support)` → produces garbage, e.g. weighted F1 > 1.0, with no guard.
-- `total` is redundant: `evaluate()` is the only caller and always passes `total == sum(support)`.
+**Applied:** derivation + fail-loud:
 
-**Evidence (demonstrated against the real helper):**
-
+```python
+def _aggregate_f1(f1s: list[float], support: list[int]) -> tuple[float, float]:
+    if len(f1s) != len(support):
+        raise ValueError(f"f1s and support lengths differ ({len(f1s)} != {len(support)})")
+    total = sum(support)
+    macro_f1 = sum(f1s) / len(f1s) if f1s else 0.0
+    weighted_f1 = sum(f * s for f, s in zip(f1s, support)) / total if total > 0 else 0.0
+    return macro_f1, weighted_f1
 ```
-_aggregate_f1([0.5], [100, 200], 300)  -> (0.5, 0.1666667)   # drops support[2]
-_aggregate_f1([0.9, 0.5], [90, 10], 50) -> (0.7, 1.72)       # weighted > 1.0
-```
 
-**Resolution path (pick one):**
-- Derive `total = sum(support)` internally and drop the param → `_aggregate_f1(f1s, support)`. Deletes the whole inconsistency class. Requires changing the approved signature.
-- Or keep signature but assert `len(f1s) == len(support)` and `sum(support) == total` (defensive, fail-loud).
+`evaluate()` now calls `_aggregate_f1(f1s, support)`; `total` is derived
+identically (it always equals `sum(support)` in the only caller).
+Covered by `test_aggregate_f1_length_mismatch_raises` + the wiring test.
 
-**Trigger:** next approved change touching `src/eval.py` metric code, or any new caller of the helper. Re-verify with the same battery (tests + behavior proof) afterwards.
+## FU-2 — Test `test_aggregate_f1_empty_and_zero_total` enshrined an impossible state
 
-## FU-2 — Test `test_aggregate_f1_empty_and_zero_total` enshrines an impossible state
+**Status:** Implemented 2026-08-12.
 
-**Status:** Open — blocked on FU-1.
+**Applied:** the contradictory 3-arg case is gone (signature no longer takes
+`total`). Zero-total branch is now exercised with empty support / zero
+per-class support: `_aggregate_f1([], []) == (0.0, 0.0)` and
+`_aggregate_f1([0.8], [0]) == (0.8, 0.0)`.
 
-**What/Why:** The case `([0.8], [5], 0)` has nonempty support with `total == 0`, which `evaluate()` can never produce. It only exercises the `total > 0` guard branch in isolation.
+## FU-3 — Regression pin broke on the next retrain
 
-**Resolution path:** rework the test once FU-1 lands (e.g. assert empty-support behavior for the zero-total branch instead of a contradictory mixed state).
+**Status:** Implemented 2026-08-12 — now auto-refreshing.
 
-## FU-3 — Regression pin breaks on the next retrain
+**Applied:** `test_published_report_numbers_regression` no longer hardcodes
+floats. It loads the version-controlled `evaluation_report.json` as the golden
+source and asserts `_per_class_prf(confusion_matrix)` reproduces the report's
+per-class F1 and `_aggregate_f1(f1s, support=row-sums)` reproduces its
+macro/weighted F1. A retrain regenerating the report updates the golden
+automatically — no manual constant edits; a broken helper or broken report
+still fails. AGENTS.md notes this.
 
-**Status:** Accepted debt (documented in test docstring).
+## FU-4 — Metrics helpers testable only via a heavy import chain
 
-**What/Why:** `test_published_report_numbers_regression` hardcodes floats from the committed `evaluation_report.json` (`f1s=[0.9947753396029259, 0.9974987493746873]`, `support=[479,999]`, `total=1478` → macro/weighted pins). A future retrain regenerating the report will fail this test until the constants are updated by hand.
+**Status:** Deferred — needs plan-level approval; not in this batch.
 
-**Resolution path (pick one):**
-- Read goldens from `evaluation_report.json` at test time (no manual edits, but weaker — pins the report file instead of the numbers).
-- Or keep hardcoded and add a one-line note to the quality-gate / AGENTS.md "regenerate constants" reminder.
+**What/Why:** `from eval import ...` pulls `torch`, `dataset.py`, and `model.py`
+at import time (~9s collection for the fast metric tests).
 
-**Trigger:** next `evaluation_report.json` regeneration.
-
-## FU-4 — Metrics helpers are testable only via a heavy import chain
-
-**Status:** Open — low priority, do not do casually.
-
-**What/Why:** `from eval import ...` pulls `torch`, `dataset.py`, and `model.py` at module-import time; the 8 fast metric tests cost ~9s of collection runtime for that import. Acceptable now; grows if `eval.py`'s imports deepen.
-
-**Resolution path:** extract pure metric functions (`_confusion_stats`, `_per_class_prf`, `_aggregate_f1`) into a standalone module (e.g. `src/metrics.py`) and have `eval.py` re-export/import them. Only if/when import cost matters — this changes module layout, so it needs plan-level approval and a caller migration.
+**Resolution (when pursued):** extract pure metric functions into a standalone
+module (e.g. `src/metrics.py`), re-export from `eval.py`, migrate the tests to
+import from `metrics`. Changes module layout, so it requires an approved change
+to the eval code layout. Revisit only if `eval.py`'s imports deepen or the
+collection cost matters.
 
 ## FU-5 — Cosmetic: magic float literals in `test_per_class_prf_known_matrix`
 
-**Status:** Open — trivial.
+**Status:** Implemented 2026-08-12.
 
-**What/Why:** Asserts `0.7272727272727273` / `0.6666666666666666` with an explanatory comment; `pytest.approx([8 / 11, 2 / 3])` is self-documenting and equivalent.
-
-**Resolution:** `8 / 11` and `2 / 3` literals; no behavior change. Safe to fold into any future `test_eval.py` edit.
+**Applied:** `pytest.approx([8 / 11, 2 / 3])` replaces the decimal literals.
 
 ## FU-6 — Mutate-and-catch is manual; consider automating for `src/eval.py`
 
-**Status:** Optional.
+**Status:** Deferred (optional tooling).
 
-**What/Why:** The wiring test's value was proven by a manual mutation (temporarily swapped `support` order in `evaluate()` → test failed with `weighted_f1` 0.47619 vs expected 0.59048; restored → green). That guard is not enforced on future edits.
+**What/Why:** The wiring test's value was proven by a manual mutation
+(swapped `support` order → `weighted_f1` 0.47619 vs 0.59048 → test failed).
+That guard is not enforced on future edits.
 
-**Resolution path (optional):** add `src/eval.py` to a lightweight mutation spot-check in the quality gate (`scripts/quality-gate.sh`) or a tool if one is already adopted. Guarded mutations: support ordering, support key lookup, aggregate guards.
+**Resolution (when pursued):** a lightweight mutation spot-check in the quality
+gate (`scripts/quality-gate.sh`) over `src/eval.py` — guarded mutations:
+support ordering, support key lookup, aggregate guards. Not added to avoid
+churning the bash quality gate for marginal coverage. The FU-1 length-guard and
+report-driven regression already reduce the drift surface.
 
-## FU-7 — `evaluate()` real-data paths remain ununit-tested (integration candidate)
+## FU-7 — `evaluate()` real-data paths ununit-tested (integration)
 
-**Status:** Open — optional.
+**Status:** Implemented 2026-08-12.
 
-**What/Why:** `test_evaluate_wiring_reports_correct_aggregates` covers the metric wiring on a synthetic 2-class run with seams patched. Real-data behavior (actual `data/cats` + `checkpoints/best_cats_model_v2.pt` forward pass, `--max-failures` cap rendering, alternate backbones) is only proven by the one-time CPU verification run, not codified in CI.
+**Applied:** `test_evaluate_on_real_data_matches_committed_report`
+(`@pytest.mark.slow`) runs `evaluate()` on the real `data/cats` +
+`checkpoints/best_cats_model_v2.pt` and asserts accuracy/macro/weighted F1 and
+confusion matrix equal the committed report. Self-skips when data or the
+checkpoint are absent — CI ships neither, so the default `Test` job stays fast
+and green; run locally via `pytest tests/test_eval.py -m slow`.
 
-**Resolution path:** add a `@pytest.mark.slow` integration test that runs `evaluate()` on the real checkpoint and asserts equality with the committed report (why the plan's Verification 2 exists). Excluded from the default suite by the `-m 'not slow'` filter; run in CI's slow job.
+## FU-8 — AGENTS.md test documentation stale w.r.t. `tests/test_eval.py`
 
-**Trigger:** when eval output/report format next changes, or when a slow test lane is wanted.
+**Status:** Implemented 2026-08-12.
 
-## FU-8 — AGENTS.md test documentation is stale w.r.t. `tests/test_eval.py`
-
-**Status:** Open — docs hygiene.
-
-**What/Why:** AGENTS.md "Testing" lists test modules (test_gpu_pool, test_train_chain, ...) but not `tests/test_eval.py` or the regression-pin refresh rule from FU-3.
-
-**Resolution:** add a line to the Testing section noting `tests/test_eval.py` pins `evaluation_report.json` numbers and that constants require updating on retrain.
+**Applied:** Testing section now lists `tests/test_eval.py` (metric math +
+report regression) and the `-m slow` real-data eval, with a note that
+`evaluation_report.json` is the auto-refreshing golden source (no constant
+edits on retrain).
 
 ---
 
 ## Non-followups (recorded for completeness)
 
-- **Roast findings 1/2 (helper invariants)** → FU-1/FU-2. Not fixed in the original delivery because the signature is plan-approved; behavior is provably identical and production-unreachable.
-- **Plan contingency (CPU rerun > 10 min)** — not triggered: the rerun took 239s. No action.
-- **The wiring gap identified in review** — closed by `test_evaluate_wiring_reports_correct_aggregates`; no open work.
+- **Roast findings 1/2 (helper invariants)** → resolved as FU-1/FU-2.
+- **Plan contingency (CPU rerun > 10 min)** — not triggered: the rerun took
+  239s. No action.
+- **The wiring gap identified in review** — closed by
+  `test_evaluate_wiring_reports_correct_aggregates`; no open work.

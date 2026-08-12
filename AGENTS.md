@@ -106,6 +106,14 @@ pytest tests/ -v
 # GPU pool abstraction tests
 pytest tests/test_gpu_pool.py -v
 
+# Eval metric math (confusion matrix, P/R/F1, aggregate F1) + report regression
+# evaluation_report.json is the golden source; a retrain regenerating it
+# auto-refreshes the report-driven regression test (no constant edits).
+pytest tests/test_eval.py -v
+
+# Slow real-data eval (self-skips if data/cats or checkpoint absent)
+pytest tests/test_eval.py -m slow
+
 # Train chain & fallback integration tests
 pytest tests/test_train_chain.py -v
 
