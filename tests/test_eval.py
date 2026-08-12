@@ -38,8 +38,8 @@ def test_per_class_prf_known_matrix() -> None:
     precisions, recalls, f1s = _per_class_prf(matrix)
     assert precisions == pytest.approx([4 / 6, 3 / 4])
     assert recalls == pytest.approx([4 / 5, 3 / 5])
-    # F1 via 2PR/(P+R): 8/11 and 2/3
-    assert f1s == pytest.approx([0.7272727272727273, 0.6666666666666666])
+    # F1 = 2PR/(P+R) = 8/11 and 2/3
+    assert f1s == pytest.approx([8 / 11, 2 / 3])
 
 
 def test_per_class_prf_zero_support() -> None:
@@ -52,32 +52,43 @@ def test_per_class_prf_zero_support() -> None:
 
 def test_aggregate_f1_macro_and_weighted() -> None:
     """Macro is a plain mean; weighted uses per-class support proportions."""
-    macro_f1, weighted_f1 = _aggregate_f1(f1s=[0.9, 0.5], support=[90, 10], total=100)
+    macro_f1, weighted_f1 = _aggregate_f1(f1s=[0.9, 0.5], support=[90, 10])
     assert macro_f1 == pytest.approx(0.7)
     assert weighted_f1 == pytest.approx(0.86)
 
 
 def test_aggregate_f1_empty_and_zero_total() -> None:
-    """Empty f1 list and zero total both guard against div-by-zero."""
-    assert _aggregate_f1([], [], 0) == (0.0, 0.0)
-    assert _aggregate_f1([0.8], [5], 0) == (0.8, 0.0)
+    """Empty f1 list and zero support both guard against div-by-zero."""
+    assert _aggregate_f1([], []) == (0.0, 0.0)
+    # Zero total arises from empty support; macro F1 is still returned.
+    assert _aggregate_f1([0.8], [0]) == (0.8, 0.0)
+
+
+def test_aggregate_f1_length_mismatch_raises() -> None:
+    """Unequal f1s/support lengths fail loudly instead of silently dropping."""
+    with pytest.raises(ValueError, match="lengths differ"):
+        _aggregate_f1([0.9, 0.5], [90])
 
 
 def test_published_report_numbers_regression() -> None:
-    """Pin the macro/weighted F1 from the committed evaluation_report.json.
+    """Aggregate math reproduces the committed evaluation_report.json.
 
-    If a future retrain changes the report, update these constants.
+    The version-controlled report is the golden source, so the test never goes
+    stale on retrain: _per_class_prf(confusion_matrix) plus _aggregate_f1 over
+    per-class support (row sums) must reproduce the report's per-class F1 and
+    macro/weighted F1. A bug in either helper or a broken report breaks this.
     """
-    f1s = [0.9947753396029259, 0.9974987493746873]
-    support = [479, 999]
-    total = 1478
-    macro_f1, weighted_f1 = _aggregate_f1(f1s, support, total)
-    assert macro_f1 == pytest.approx(0.9961370444888066)
-    assert weighted_f1 == pytest.approx(0.9966161287517687)
+    report = json.loads(
+        (Path(__file__).parent.parent / "evaluation_report.json").read_text()
+    )
+    matrix = report["confusion_matrix"]
+    _, _, f1s = _per_class_prf(matrix)
+    assert dict(zip(report["class_names"], f1s)) == pytest.approx(report["f1"])
 
-    # Same F1s are produced by _per_class_prf on the same confusion matrix.
-    _, _, matrix_f1s = _per_class_prf([[476, 3], [2, 997]])
-    assert matrix_f1s == pytest.approx(f1s)
+    support = [sum(row) for row in matrix]
+    macro_f1, weighted_f1 = _aggregate_f1(f1s, support)
+    assert macro_f1 == pytest.approx(report["macro_f1"])
+    assert weighted_f1 == pytest.approx(report["weighted_f1"])
 
 
 def test_evaluate_wiring_reports_correct_aggregates(
@@ -179,3 +190,35 @@ def test_evaluate_wiring_reports_correct_aggregates(
     assert saved["accuracy"] == result["accuracy"]
     assert saved["macro_f1"] == result["macro_f1"]
     assert saved["weighted_f1"] == result["weighted_f1"]
+
+
+@pytest.mark.slow
+def test_evaluate_on_real_data_matches_committed_report(tmp_path: Path) -> None:
+    """End-to-end evaluate() on real data/checkpoint matches the report.
+
+    Codifies the one-off CPU verification as a repeatable (slow) test:
+    evaluate() against the real validation split and checkpoint must reproduce
+    the committed evaluation_report.json metrics. CI does not ship data/cats or
+    checkpoints, so the test self-skips there; run it locally with
+    `python -m pytest tests/test_eval.py -m slow`.
+    """
+    root = Path(__file__).parent.parent
+    data_dir = root / "data/cats"
+    checkpoint = root / "checkpoints/best_cats_model_v2.pt"
+    if not data_dir.is_dir() or not checkpoint.is_file():
+        pytest.skip("data/cats or checkpoint not present")
+
+    report_path = tmp_path / "eval_real.json"
+    result = evaluate(
+        data_dir=str(data_dir),
+        checkpoint=str(checkpoint),
+        batch_size=32,
+        report=str(report_path),
+    )
+    expected = json.loads(
+        (Path(__file__).parent.parent / "evaluation_report.json").read_text()
+    )
+    assert result["accuracy"] == pytest.approx(expected["accuracy"])
+    assert result["macro_f1"] == pytest.approx(expected["macro_f1"])
+    assert result["weighted_f1"] == pytest.approx(expected["weighted_f1"])
+    assert result["confusion_matrix"] == expected["confusion_matrix"]

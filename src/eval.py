@@ -95,14 +95,20 @@ def _per_class_prf(
     return precisions, recalls, f1s
 
 
-def _aggregate_f1(
-    f1s: list[float], support: list[int], total: int
-) -> tuple[float, float]:
-    """Return (macro F1, support-weighted F1)."""
+def _aggregate_f1(f1s: list[float], support: list[int]) -> tuple[float, float]:
+    """Return (macro F1, support-weighted F1).
+
+    The total is derived from ``support`` (sum of per-class counts) so callers
+    cannot pass contradictory totals. Raises ValueError on length mismatch
+    rather than silently dropping/ignoring entries.
+    """
+    if len(f1s) != len(support):
+        raise ValueError(
+            f"f1s and support lengths differ ({len(f1s)} != {len(support)})"
+        )
+    total = sum(support)
     macro_f1 = sum(f1s) / len(f1s) if f1s else 0.0
-    weighted_f1 = (
-        sum(support[c] * f1s[c] for c in range(len(f1s))) / total if total > 0 else 0.0
-    )
+    weighted_f1 = sum(f * s for f, s in zip(f1s, support)) / total if total > 0 else 0.0
     return macro_f1, weighted_f1
 
 
@@ -176,7 +182,7 @@ def evaluate(
     precisions, recalls, f1s = _per_class_prf(confusion_matrix)
 
     support = [per_class_total[class_names[c]] for c in range(num_classes)]
-    macro_f1, weighted_f1 = _aggregate_f1(f1s, support, total)
+    macro_f1, weighted_f1 = _aggregate_f1(f1s, support)
 
     full_failures = [
         {
