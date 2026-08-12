@@ -1,0 +1,52 @@
+name: Deploy Gradio Demo to HF Spaces
+
+on:
+  workflow_dispatch:
+    inputs:
+      space_id:
+        description: "HF Spaces repo id"
+        required: false
+        default: "d-oit/tiny-cats-model-demo"
+        type: string
+      private:
+        description: "Create as a private Space (the model repo it loads is private)"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+  push:
+    branches:
+      - main
+    paths:
+      - "src/app_gradio.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spaces-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy to HF Spaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependency
+        run: pip install --quiet huggingface_hub
+
+      - name: Deploy Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          SPACE_ID: ${{ inputs.space_id || 'd-oit/tiny-cats-model-demo' }}
+          PRIVATE: ${{ inputs.private || 'true' }}
+        run: python .github/scripts/deploy_space.py

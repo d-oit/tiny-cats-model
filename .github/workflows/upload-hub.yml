@@ -132,6 +132,7 @@ jobs:
             --onnx-generator generator.onnx \
             --quantized-classifier cats_quantized.onnx \
             --quantized-generator generator_quantized.onnx \
+            --evaluation-report evaluation_report.json \
             --repo-id d4oit/tiny-cats-model \
             --commit-message "${{ inputs.commit_message }}" || \
           python - <<'EOF'
