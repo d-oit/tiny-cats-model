@@ -130,6 +130,8 @@ jobs:
             --generator tinydit_final.pt \
             --onnx-classifier cats_classifier.onnx \
             --onnx-generator generator.onnx \
+            --quantized-classifier cats_quantized.onnx \
+            --quantized-generator generator_quantized.onnx \
             --repo-id d4oit/tiny-cats-model \
             --commit-message "${{ inputs.commit_message }}" || \
           python - <<'EOF'
@@ -162,6 +164,8 @@ jobs:
           EOF
 
       - name: Verify upload
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           python -c "
           from huggingface_hub import HfApi
