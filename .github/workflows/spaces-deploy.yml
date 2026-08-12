@@ -3,6 +3,12 @@ name: Deploy Gradio Demo to HF Spaces
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: "deploy = push app to SPACE_ID; list = show Spaces the token can see"
+        required: false
+        default: "deploy"
+        type: choice
+        options: ["deploy", "list"]
       space_id:
         description: "HF Spaces repo id"
         required: false
@@ -47,6 +53,7 @@ jobs:
       - name: Deploy Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          ACTION: ${{ inputs.action || 'deploy' }}
           SPACE_ID: ${{ inputs.space_id || 'd-oit/tiny-cats-model-demo' }}
           PRIVATE: ${{ inputs.private || 'true' }}
         run: python .github/scripts/deploy_space.py
