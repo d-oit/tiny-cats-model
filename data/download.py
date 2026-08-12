@@ -110,7 +110,7 @@ def main() -> None:
 
         # Copy other (dog) images as negative samples
         other_count = 0
-        max_other = 500
+        max_other = 5000
         for img_path in images_dir.glob("*.jpg"):
             # Skip cat breeds
             is_cat = any(img_path.name.startswith(breed) for breed in cat_breeds)

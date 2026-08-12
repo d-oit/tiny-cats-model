@@ -131,30 +131,35 @@ jobs:
             --onnx-classifier cats_classifier.onnx \
             --onnx-generator generator.onnx \
             --repo-id d4oit/tiny-cats-model \
-            --commit-message "${{ inputs.commit_message }}" \
-            --version "${{ inputs.version }}" || \
-          python -c "
+            --commit-message "${{ inputs.commit_message }}" || \
+          python - <<'EOF'
           from huggingface_hub import HfApi
           import os
 
           api = HfApi()
-          repo_id = 'd4oit/tiny-cats-model'
+          repo_id = "d4oit/tiny-cats-model"
 
-          # Upload available files
+          # local path -> remote path in the HF repo
           files = {
-              'cats_quantized.onnx': 'classifier/model_quantized.onnx',
-              'generator_quantized.onnx': 'generator/model_quantized.onnx',
-              'best_cats_model.pt': 'classifier/model.pt',
-              'tinydit_final.pt': 'generator/model.pt',
+              "cats_classifier.onnx": "classifier/model.onnx",
+              "cats_quantized.onnx": "classifier/model_quantized.onnx",
+              "best_cats_model.pt": "classifier/model.pt",
+              "generator.onnx": "generator/model.onnx",
+              "generator_quantized.onnx": "generator/model_quantized.onnx",
+              "tinydit_final.pt": "generator/model.pt",
           }
-
+          uploaded = 0
           for local, remote in files.items():
               if os.path.exists(local):
-                  print(f'Uploading {local} -> {remote}')
-                  api.upload_file(local, remote, repo_id)
-
-          print('Upload complete!')
-          "
+                  print(f"Uploading {local} -> {remote}")
+                  api.upload_file(
+                      path_or_fileobj=local, path_in_repo=remote, repo_id=repo_id
+                  )
+                  uploaded += 1
+          print(f"Upload complete! ({uploaded} files)")
+          if uploaded == 0:
+              raise SystemExit(1)
+          EOF
 
       - name: Verify upload
         run: |

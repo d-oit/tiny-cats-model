@@ -230,25 +230,27 @@ jobs:
             --samples-dir samples/evaluation \
             --repo-id d4oit/tiny-cats-model \
             --commit-message "Upload full model package from GitHub Actions" || \
-          python -c "
+          python - <<'EOF'
           from huggingface_hub import HfApi
+
           api = HfApi()
-          # Fallback: upload individual files
+          repo_id = 'd4oit/tiny-cats-model'
+          # Fallback: upload individual files that are present.
           import os
-          if os.path.exists('cats_classifier.onnx'):
-            api.upload_file('cats_classifier.onnx', 'classifier/model.onnx', 'd4oit/tiny-cats-model')
-          if os.path.exists('cats_quantized.onnx'):
-            api.upload_file('cats_quantized.onnx', 'classifier/model_quantized.onnx', 'd4oit/tiny-cats-model')
-          if os.path.exists('best_cats_model.pt'):
-            api.upload_file('best_cats_model.pt', 'classifier/model.pt', 'd4oit/tiny-cats-model')
-          if os.path.exists('generator.onnx'):
-            api.upload_file('generator.onnx', 'generator/model.onnx', 'd4oit/tiny-cats-model')
-          if os.path.exists('generator_quantized.onnx'):
-            api.upload_file('generator_quantized.onnx', 'generator/model_quantized.onnx', 'd4oit/tiny-cats-model')
-          if os.path.exists('tinydit_final.pt'):
-            api.upload_file('tinydit_final.pt', 'generator/model.pt', 'd4oit/tiny-cats-model')
+          for local, remote in [
+              ('cats_classifier.onnx', 'classifier/model.onnx'),
+              ('cats_quantized.onnx', 'classifier/model_quantized.onnx'),
+              ('best_cats_model.pt', 'classifier/model.pt'),
+              ('generator.onnx', 'generator/model.onnx'),
+              ('generator_quantized.onnx', 'generator/model_quantized.onnx'),
+              ('tinydit_final.pt', 'generator/model.pt'),
+          ]:
+              if os.path.exists(local):
+                  api.upload_file(
+                      path_or_fileobj=local, path_in_repo=remote, repo_id=repo_id
+                  )
           print('Files uploaded successfully')
-          "
+          EOF
 
   train-dit:
     name: Train DiT (Modal)

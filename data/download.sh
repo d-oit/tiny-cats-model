@@ -55,10 +55,14 @@ for breed in "${CAT_BREEDS[@]}"; do
     find "${TMP_DIR}/images" -name "${breed}_*.jpg" -exec cp {} "${CATS_DIR}/cat/" \;
 done
 
-echo "==> Copying a sample of other (dog) images to ${CATS_DIR}/other/"
-find "${TMP_DIR}/images" -name "*.jpg" | grep -v -E "$(IFS='|'; echo "${CAT_BREEDS[*]}")" \
-    | head -n 500 \
-    | xargs -I{} cp {} "${CATS_DIR}/other/"
+echo "==> Copying other (dog) images to ${CATS_DIR}/other/"
+# Copy all non-cat images. Use `while read` instead of `head | xargs` so the
+# pipe never closes early (which triggered SIGPIPE aborts under pipefail).
+find "${TMP_DIR}/images" -name "*.jpg" \
+    | grep -v -E "$(IFS='|'; echo "${CAT_BREEDS[*]}")" \
+    | while IFS= read -r f; do
+        cp "$f" "${CATS_DIR}/other/"
+      done
 
 CAT_COUNT=$(find "${CATS_DIR}/cat" -name '*.jpg' | wc -l)
 OTHER_COUNT=$(find "${CATS_DIR}/other" -name '*.jpg' | wc -l)

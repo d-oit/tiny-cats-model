@@ -1,16 +1,70 @@
 {
-  "metadata": {
-    "step": 0,
-    "loss": 0.0,
-    "timestamp": "unknown",
-    "config": {
-      "image_size": 128,
-      "num_classes": 13,
-      "patch_size": 16,
-      "embed_dim": 384,
-      "depth": 12,
-      "num_heads": 6
+  "timestamp": "2026-08-12T10:51:31.480493+00:00",
+  "checkpoint": "checkpoints/best_cats_model_v2.pt",
+  "data_dir": "data/cats",
+  "device": "cpu",
+  "accuracy": 0.996617050067659,
+  "correct": 1473,
+  "total": 1478,
+  "class_names": [
+    "cat",
+    "other"
+  ],
+  "precision": {
+    "cat": 0.99581589958159,
+    "other": 0.997
+  },
+  "recall": {
+    "cat": 0.9937369519832986,
+    "other": 0.997997997997998
+  },
+  "f1": {
+    "cat": 0.9947753396029259,
+    "other": 0.9974987493746873
+  },
+  "macro_f1": 0.9961370444888066,
+  "weighted_f1": 0.9966161287517687,
+  "confusion_matrix": [
+    [
+      476,
+      3
+    ],
+    [
+      2,
+      997
+    ]
+  ],
+  "num_failures": 5,
+  "failure_cases": [
+    {
+      "image": "data/cats/other/shiba_inu_177.jpg",
+      "true": "other",
+      "predicted": "cat",
+      "confidence": 0.6481073498725891
     },
-    "num_samples_generated": 13
-  }
+    {
+      "image": "data/cats/cat/Sphynx_45.jpg",
+      "true": "cat",
+      "predicted": "other",
+      "confidence": 0.6544919013977051
+    },
+    {
+      "image": "data/cats/other/beagle_137.jpg",
+      "true": "other",
+      "predicted": "cat",
+      "confidence": 0.7254727482795715
+    },
+    {
+      "image": "data/cats/cat/Abyssinian_20.jpg",
+      "true": "cat",
+      "predicted": "other",
+      "confidence": 0.9647343158721924
+    },
+    {
+      "image": "data/cats/cat/Bengal_20.jpg",
+      "true": "cat",
+      "predicted": "other",
+      "confidence": 0.9374046325683594
+    }
+  ]
 }
