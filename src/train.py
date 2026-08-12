@@ -584,6 +584,22 @@ class ClassifierTrainer:
 
                 logger.info("Dataset downloaded successfully")
 
+            # Copy the dataset from the mounted Volume to container-local disk
+            # so training is not bottlenecked by network-backed volume I/O
+            # (with num_workers=0 the original loop was ~10s/batch on the
+            # volume; locally it becomes a few-second compute-bound epoch).
+            if data_dir == "/data/cats":
+                import shutil
+
+                local_data_dir = "/tmp/cats"
+                if not Path(local_data_dir).exists() or not list(
+                    Path(local_data_dir).iterdir()
+                ):
+                    logger.info("Copying dataset from volume to local disk...")
+                    shutil.copytree(data_dir, local_data_dir)
+                data_dir = local_data_dir
+                logger.info(f"Training on local dataset at {data_dir}")
+
             # Train with error handling
             val_acc = train(
                 data_dir=data_dir,
@@ -805,7 +821,20 @@ def train(
     )
 
     optimizer = Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    loss_fn = nn.CrossEntropyLoss()
+
+    # Class-balanced cross entropy: weight each class by inverse frequency so
+    # the minority class (other/dogs) is not starved by the cat-heavy data.
+    train_subset = train_loader.dataset  # type: ignore[attr-defined]
+    full_targets = train_subset.dataset.targets  # type: ignore[attr-defined]
+    support = [0] * num_classes
+    for sample_idx in train_subset.indices:
+        support[full_targets[sample_idx]] += 1
+    class_weights = torch.tensor(
+        [len(train_subset.indices) / (num_classes * max(c, 1)) for c in support],
+        dtype=torch.float32,
+    ).to(device)
+    loss_fn = nn.CrossEntropyLoss(weight=class_weights)
+    logger.info(f"Class-balanced loss weights: {class_weights.tolist()}")
 
     # LR scheduler with warmup and cosine annealing using LambdaLR (ADR-032)
     def lr_lambda(current_epoch):

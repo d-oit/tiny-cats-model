@@ -31,6 +31,11 @@ BREED_NAMES = [
     "Other",
 ]
 
+# ImageNet stats used to train the classifier (src/dataset.py) and to export
+# the ONNX graph (src/export_onnx.py, 224x224 input).
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+
 # Cache for model sessions
 sessions: dict[str, ort.InferenceSession] = {}
 
@@ -57,8 +62,39 @@ def get_session(model_type):
         return None
 
 
+def _preprocess_classifier(image: np.ndarray, size: int) -> np.ndarray:
+    """Preprocess a raw image for the classifier ONNX graph.
+
+    Matches the training-time validation transform: resize to 256, center-crop
+    to 224, ImageNet-normalize (for non-224 models we fall back to a plain
+    resize to the graph's expected input size).
+    """
+    img = Image.fromarray(image).convert("RGB")
+    if size == 224:
+        img = img.resize((256, 256))
+        left = (256 - 224) // 2
+        top = (256 - 224) // 2
+        img = img.crop((left, top, left + 224, top + 224))
+    else:
+        img = img.resize((size, size))
+    img_np = np.array(img).astype(np.float32) / 255.0
+    # Use float32 operands so numpy weak-scalar promotion never upcasts to
+    # float64 (ONNX graphs declare float32 inputs).
+    img_np = (
+        (img_np - np.array(IMAGENET_MEAN, dtype=np.float32))
+        / np.array(IMAGENET_STD, dtype=np.float32)
+    ).astype(np.float32)
+    return img_np.transpose(2, 0, 1)[np.newaxis, ...]
+
+
 def classify_cat(image):
-    """Classify cat breed from image."""
+    """Classify an image with the published classifier model.
+
+    The published classifier ONNX is binary (cat vs other, 2 outputs). Older
+    exports were 13-way breed classifiers; both are supported here so the app
+    does not hard-depend on the current head size. Returns a {label: prob} dict
+    for the Gradio Label widget, or an error string.
+    """
     if image is None:
         return None
 
@@ -66,22 +102,30 @@ def classify_cat(image):
     if session is None:
         return "Error: Could not load classifier model."
 
-    # Preprocess
-    img = Image.fromarray(image).convert("RGB")
-    img = img.resize((128, 128))
-    img_np = np.array(img).astype(np.float32) / 255.0
-    img_np = (img_np - 0.5) / 0.5  # Normalize to [-1, 1]
-    img_np = img_np.transpose(2, 0, 1)[np.newaxis, ...]
+    # Read the graph's expected input resolution (batch dim may be dynamic).
+    input_shape = session.get_inputs()[0].shape
+    size = int(input_shape[2]) if len(input_shape) >= 3 and input_shape[2] else 224
 
-    # Inference
+    img_np = _preprocess_classifier(image, size)
+
     input_name = session.get_inputs()[0].name
     outputs = session.run(None, {input_name: img_np})
     logits = outputs[0][0]
+    n_out = int(logits.shape[0]) if hasattr(logits, "shape") else len(logits)
 
-    # Postprocess
     probs = torch.nn.functional.softmax(torch.from_numpy(logits), dim=0).numpy()
-    results = {BREED_NAMES[i]: float(probs[i]) for i in range(len(BREED_NAMES))}
-    return results
+
+    if n_out == 2:
+        # Binary cat-vs-other: ImageFolder class order is ['cat', 'other'].
+        return {"Cat": float(probs[0]), "Other (dog / not a cat)": float(probs[1])}
+
+    if n_out == len(BREED_NAMES):
+        return {BREED_NAMES[i]: float(probs[i]) for i in range(n_out)}
+
+    return (
+        f"Error: classifier produced {n_out} outputs; "
+        f"expected 2 or {len(BREED_NAMES)}. Model and app drift."
+    )
 
 
 def generate_cat(breed_name, cfg_scale=1.5, steps=50):
