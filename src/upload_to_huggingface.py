@@ -145,13 +145,20 @@ It combines a ResNet-based classifier with a Diffusion Transformer (DiT) generat
 """
 
     if classifier_results:
+
+        def _pct(value: Any) -> Any:
+            """Format a 0..1 ratio as a percentage; pass strings through."""
+            return f"{value:.2%}" if isinstance(value, (int, float)) else value
+
         card_content += f"""
 | Metric | Value |
 |--------|-------|
-| Validation Accuracy | {classifier_results.get("val_accuracy", "N/A")} |
-| Test Accuracy | {classifier_results.get("test_accuracy", "N/A")} |
-| Precision | {classifier_results.get("precision", "N/A")} |
-| Recall | {classifier_results.get("recall", "N/A")} |
+| Validation Accuracy | {_pct(classifier_results.get("val_accuracy", "N/A"))} |
+| Test Accuracy | {_pct(classifier_results.get("test_accuracy", "N/A"))} |
+| Weighted Precision | {_pct(classifier_results.get("precision", "N/A"))} |
+| Weighted Recall | {_pct(classifier_results.get("recall", "N/A"))} |
+| Weighted F1 | {_pct(classifier_results.get("weighted_f1", "N/A"))} |
+| Macro F1 | {_pct(classifier_results.get("macro_f1", "N/A"))} |
 """
     else:
         card_content += """
@@ -159,13 +166,17 @@ It combines a ResNet-based classifier with a Diffusion Transformer (DiT) generat
 |--------|-------|
 | Validation Accuracy | 97.46% |
 | Test Accuracy | ~96.8% |
+| Weighted F1 | 0.82 |
 """
 
     card_content += """
 ### Generation Performance
 """
 
-    if evaluation_results:
+    # A report is treated as generator evaluation only when it carries
+    # generator metrics (scalar FID / Inception Score). A classifier report
+    # (accuracy + per-class dicts) must not leak raw dicts into this table.
+    if evaluation_results and isinstance(evaluation_results.get("fid"), (int, float)):
         fid = evaluation_results.get("fid", "N/A")
         is_mean = evaluation_results.get("inception_score", {}).get("mean", "N/A")
         is_std = evaluation_results.get("inception_score", {}).get("std", "N/A")
@@ -500,8 +511,43 @@ def upload_to_huggingface(
             with open(benchmark_report_path) as f:
                 benchmark_results = json.load(f)
 
+        # When the evaluation report is a classifier report (carries an
+        # "accuracy" key), derive scalar classifier metrics for the model card:
+        # per-class precision/recall dicts are aggregated with class support.
+        classifier_results = None
+        if evaluation_results and "accuracy" in evaluation_results:
+            class_names = evaluation_results.get("class_names") or []
+            prec = evaluation_results.get("precision") or {}
+            rec = evaluation_results.get("recall") or {}
+            cm = evaluation_results.get("confusion_matrix") or []
+            if cm and class_names:
+                support = {
+                    c: sum(row[: len(class_names)]) for c, row in zip(class_names, cm)
+                }
+            else:
+                support = {}
+            total = evaluation_results.get("total") or sum(support.values())
+
+            def _weighted(metric: dict) -> float | None:
+                if not total or not class_names:
+                    return None
+                return (
+                    sum(support.get(c, 0) * metric.get(c, 0) for c in class_names)
+                    / total
+                )
+
+            classifier_results = {
+                "val_accuracy": evaluation_results.get("accuracy"),
+                "test_accuracy": evaluation_results.get("accuracy"),
+                "precision": _weighted(prec),
+                "recall": _weighted(rec),
+                "weighted_f1": evaluation_results.get("weighted_f1"),
+                "macro_f1": evaluation_results.get("macro_f1"),
+            }
+
         # Create model card
         card = create_model_card(
+            classifier_results=classifier_results,
             evaluation_results=evaluation_results,
             benchmark_results=benchmark_results,
             repo_id=repo_id,
