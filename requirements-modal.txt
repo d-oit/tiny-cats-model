@@ -13,7 +13,7 @@ pillow==12.3.0
 tqdm==4.70.0
 
 # Modal SDK (for local development)
-modal==1.5.3
+modal==1.5.4
 
 # HuggingFace Hub integration (ADR-026)
 huggingface_hub==1.27.0
