@@ -10,5 +10,5 @@ onnxruntime>=1.20.0,<1.24  # Upper bound blocks dependabot bumping to non-existe
 onnxruntime-tools>=1.7.0
 onnx>=1.22.0
 onnxscript>=0.7.1
-mlflow>=3.15.1
-gradio>=6.25.0
+mlflow>=3.15.2
+gradio>=6.26.0
