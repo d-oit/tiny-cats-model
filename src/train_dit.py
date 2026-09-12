@@ -37,6 +37,7 @@ import signal
 import sys
 import time
 import zipfile
+from collections import Counter
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -847,22 +848,26 @@ def create_dataloader(
     Returns:
         DataLoader yielding (images, breed_indices).
     """
-    # Use ImageFolder directly
-    from torchvision.datasets import ImageFolder
-
-    from dataset import build_enhanced_transforms
+    from dataset import CatBreedGenerationDataset, build_enhanced_transforms
 
     transform = build_enhanced_transforms(
         train=True,
         image_size=image_size,
         augmentation_level=augmentation_level,  # type: ignore[arg-type]
     )
-    dataset = ImageFolder(data_dir, transform=transform)
+    dataset = CatBreedGenerationDataset(data_dir, transform=transform)
+    class_counts = Counter(label for _, label in dataset.samples)
+    sample_weights = [1.0 / class_counts[label] for _, label in dataset.samples]
+    sampler = torch.utils.data.WeightedRandomSampler(
+        sample_weights,
+        num_samples=len(dataset),
+        replacement=True,
+    )
 
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=True,
+        sampler=sampler,
         num_workers=num_workers,
         pin_memory=True,
         drop_last=True,

@@ -13,11 +13,12 @@ Expects ImageFolder-compatible structure:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import torchvision.transforms as T
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, Dataset, random_split
 from torchvision.datasets import ImageFolder
+from torchvision.datasets.folder import IMG_EXTENSIONS, default_loader
 
 # ImageNet mean/std for pretrained model normalization
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -27,6 +28,73 @@ DEFAULT_IMAGE_SIZE = 224
 # Supported augmentation levels
 AugmentationLevel = Literal["basic", "standard", "advanced"]
 EnhancedAugmentationLevel = Literal["basic", "medium", "full"]
+
+CAT_BREEDS = (
+    "Abyssinian",
+    "Bengal",
+    "Birman",
+    "Bombay",
+    "British_Shorthair",
+    "Egyptian_Mau",
+    "Maine_Coon",
+    "Persian",
+    "Ragdoll",
+    "Russian_Blue",
+    "Siamese",
+    "Sphynx",
+)
+OTHER_CLASS_INDEX = len(CAT_BREEDS)
+
+
+class CatBreedGenerationDataset(Dataset):
+    """Load the two-folder dataset with the generator's 13 class labels.
+
+    The downloaded dataset stores all cat breeds under ``cat/`` and all dog
+    breeds under ``other/``. ``ImageFolder`` therefore produces only binary
+    labels, which leaves 11 of TinyDiT's 13 conditioning embeddings untrained.
+    Oxford Pets filenames retain the cat breed, so map those names to indices
+    0-11 and reserve index 12 for every image in ``other/``.
+    """
+
+    def __init__(self, root: str | Path, transform: T.Compose | None = None) -> None:
+        self.root = Path(root)
+        self.transform = transform
+        self.samples: list[tuple[Path, int]] = []
+
+        for class_dir in ("cat", "other"):
+            directory = self.root / class_dir
+            if not directory.is_dir():
+                raise FileNotFoundError(
+                    f"Generator dataset directory not found: {directory}"
+                )
+
+            for path in sorted(directory.iterdir()):
+                if not path.is_file() or path.suffix.lower() not in IMG_EXTENSIONS:
+                    continue
+                label = OTHER_CLASS_INDEX
+                if class_dir == "cat":
+                    matches = [
+                        index
+                        for index, breed in enumerate(CAT_BREEDS)
+                        if path.name.startswith(f"{breed}_")
+                    ]
+                    if not matches:
+                        raise ValueError(f"Unknown cat breed filename: {path.name}")
+                    label = matches[0]
+                self.samples.append((path, label))
+
+        if not self.samples:
+            raise RuntimeError(f"No images found in generator dataset: {self.root}")
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, index: int) -> tuple[Any, int]:
+        path, label = self.samples[index]
+        image = default_loader(path)
+        if self.transform is not None:
+            image = self.transform(image)
+        return image, label
 
 
 def build_enhanced_transforms(

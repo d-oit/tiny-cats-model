@@ -18,17 +18,63 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from dataset import (
+    CAT_BREEDS,
     DEFAULT_IMAGE_SIZE,
     IMAGENET_MEAN,
     IMAGENET_STD,
+    OTHER_CLASS_INDEX,
+    CatBreedGenerationDataset,
     build_transforms,
     cats_dataloader,
     get_class_names,
 )
 from model import SUPPORTED_BACKBONES, cats_model, count_parameters
+from train_dit import create_dataloader
 
 if TYPE_CHECKING:
     pass
+
+
+class TestCatBreedGenerationDataset:
+    """Regression coverage for the generator's filename-based breed labels."""
+
+    def test_maps_cat_breeds_and_other_to_all_conditioning_indices(
+        self, temp_dir: Path
+    ) -> None:
+        for class_name in ("cat", "other"):
+            (temp_dir / class_name).mkdir()
+
+        for breed in CAT_BREEDS:
+            Image.new("RGB", (8, 8)).save(temp_dir / "cat" / f"{breed}_1.jpg")
+        Image.new("RGB", (8, 8)).save(temp_dir / "other" / "beagle_1.jpg")
+
+        dataset = CatBreedGenerationDataset(temp_dir)
+
+        assert sorted(label for _, label in dataset.samples) == list(range(13))
+        assert dataset[-1][1] == OTHER_CLASS_INDEX
+
+    def test_rejects_unknown_cat_breed(self, temp_dir: Path) -> None:
+        (temp_dir / "cat").mkdir()
+        (temp_dir / "other").mkdir()
+        Image.new("RGB", (8, 8)).save(temp_dir / "cat" / "Unknown_1.jpg")
+
+        with pytest.raises(ValueError, match="Unknown cat breed filename"):
+            CatBreedGenerationDataset(temp_dir)
+
+    def test_training_sampler_balances_unequal_classes(self, temp_dir: Path) -> None:
+        (temp_dir / "cat").mkdir()
+        (temp_dir / "other").mkdir()
+        Image.new("RGB", (8, 8)).save(temp_dir / "cat" / "Abyssinian_1.jpg")
+        for index in range(4):
+            Image.new("RGB", (8, 8)).save(temp_dir / "other" / f"beagle_{index}.jpg")
+
+        loader = create_dataloader(str(temp_dir), batch_size=1, image_size=8)
+        weights = loader.sampler.weights.tolist()
+        totals: dict[int, float] = {}
+        for (_, label), weight in zip(loader.dataset.samples, weights, strict=True):
+            totals[label] = totals.get(label, 0.0) + weight
+
+        assert totals[0] == pytest.approx(totals[OTHER_CLASS_INDEX])
 
 
 class TestBuildTransforms:
