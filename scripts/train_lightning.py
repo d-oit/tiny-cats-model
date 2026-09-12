@@ -110,9 +110,9 @@ def detect_lightning_environment() -> dict[str, Any]:
     return info
 
 
-def setup_lightning_dirs() -> None:
+def setup_lightning_dirs(data_dir: str, checkpoint_dir: str) -> None:
     """Create required directories in Lightning Studio."""
-    for d in [LIGHTNING_DATA_DIR, LIGHTNING_CHECKPOINT_DIR]:
+    for d in [data_dir, checkpoint_dir]:
         Path(d).mkdir(parents=True, exist_ok=True)
         logger.info(f"  Directory OK: {d}")
 
@@ -278,7 +278,7 @@ def main() -> int:
     logger.info(f"Data dir: {args.data_dir}")
     logger.info(f"Checkpoint dir: {args.checkpoint_dir}")
 
-    setup_lightning_dirs()
+    setup_lightning_dirs(args.data_dir, args.checkpoint_dir)
 
     # Sync-only mode: just pull/push checkpoints
     if args.sync_only:

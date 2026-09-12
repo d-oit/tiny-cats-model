@@ -27,12 +27,12 @@ on:
       steps:
         description: "Training steps per provider run"
         required: false
-        default: "20000"
+        default: "60000"
         type: string
       batch_size:
         description: "Batch size"
         required: false
-        default: "256"
+        default: "32"
         type: string
       lr:
         description: "Learning rate"
@@ -63,7 +63,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.run_id }}
+  group: ${{ github.workflow }}-training
   cancel-in-progress: false
 
 jobs:
@@ -118,21 +118,26 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          HUBSYNC=""
-          if [ "${{ github.event.inputs.hub_resume }}" = "true" ]; then
-            HUBSYNC="--hub-resume"
+          set -o pipefail
+          HUBSYNC=()
+          if [ "${{ github.event_name }}" = "schedule" ] || \
+             [ "${{ github.event.inputs.hub_resume }}" = "true" ]; then
+            HUBSYNC+=(--hub-resume)
           fi
-          if [ "${{ github.event.inputs.push_to_hub }}" != "true" ]; then
-            HUBSYNC="$HUBSYNC --no-hub-push"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ "${{ github.event.inputs.push_to_hub }}" != "true" ]; then
+            HUBSYNC+=(--no-hub-push)
           fi
           modal run src/train_dit.py \
             --data-dir /data/cats \
-            --steps ${{ github.event.inputs.steps || '20000' }} \
-            --batch-size ${{ github.event.inputs.batch_size || '256' }} \
+            --output /outputs/checkpoints/dit/breed-conditioned-v3/dit_model.pt \
+            --ema-output /outputs/checkpoints/dit/breed-conditioned-v3/dit_model_ema.pt \
+            --steps ${{ github.event.inputs.steps || '60000' }} \
+            --batch-size ${{ github.event.inputs.batch_size || '32' }} \
             --lr ${{ github.event.inputs.lr || '5e-5' }} \
             --save-interval 500 \
             --hub-push-interval ${{ github.event.inputs.hub_push_interval || '5000' }} \
-            ${HUBSYNC:+"$HUBSYNC"} 2>&1 | tee modal-training.log
+            "${HUBSYNC[@]}" 2>&1 | tee modal-training.log
 
       - name: Upload training log
         uses: actions/upload-artifact@v7
@@ -149,10 +154,12 @@ jobs:
     name: Train on Pool Runner
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    # CPU-only simulation of the Lightning/Colab/Kaggle providers, so it runs
+    # only when one of them is explicitly requested. It is skipped on schedule
+    # and for provider=all, where the Modal job runs the real training.
     if: |
       (github.event_name == 'workflow_dispatch' &&
-       (inputs.provider != 'modal' || inputs.provider == 'all')) ||
-      github.event_name == 'schedule'
+       inputs.provider != 'modal' && inputs.provider != 'all')
     steps:
       - uses: actions/checkout@v7
 
@@ -186,20 +193,20 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          RESUME=""
-          NOPUSH=""
+          set -o pipefail
+          POOL_FLAGS=()
           if [ "${{ github.event.inputs.hub_resume }}" = "true" ]; then
-            RESUME="--hub-resume"
+            POOL_FLAGS+=(--hub-resume)
           fi
           if [ "${{ github.event.inputs.push_to_hub }}" != "true" ]; then
-            NOPUSH="--no-hub-push"
+            POOL_FLAGS+=(--no-hub-push)
           fi
           python scripts/train_lightning.py \
             --steps ${{ github.event.inputs.steps || '5000' }} \
             --batch-size ${{ github.event.inputs.batch_size || '128' }} \
             --lr ${{ github.event.inputs.lr || '5e-5' }} \
             --save-interval 200 \
-            ${RESUME:+"$RESUME"} ${NOPUSH:+"$NOPUSH"} \
+            "${POOL_FLAGS[@]}" \
             --checkpoint-dir checkpoints/pool \
             --data-dir data/cats \
             2>&1 | tee pool-training.log
