@@ -43,8 +43,12 @@ KNOWN_BENCHMARKS: list[dict[str, Any]] = [
         "batch_size": 256,
         "image_size": 128,
         "gpu_type": "A10G/H100",
-        "actual_hours": 42,  # midpoint of 36-48h from TRAINING_400K_LOG.md
+        "actual_hours": None,  # never measured — 36-48h was only a plan estimate
         "source": "docs/TRAINING_400K_LOG.md",
+        "note": (
+            "The log records an estimated 36-48h duration, not a wall-clock "
+            "measurement, so it is excluded from tune until a real run exists."
+        ),
     },
     {
         "steps": 100_000,
@@ -53,7 +57,10 @@ KNOWN_BENCHMARKS: list[dict[str, Any]] = [
         "gpu_type": "T4",
         "actual_hours": None,  # placeholder — needs real T4 wall-clock measurement
         "source": "ADR-057 (estimated, not yet measured on real T4)",
-        "note": "Theoretical: 100k/2.2 = 45,454s ≈ 12.6h. Replace with real run.",
+        "note": (
+            "At the measured 0.06 batch-512-equivalent steps/s baseline "
+            "(2026-09-12): 100k/0.06 ≈ 463h on one T4. Replace with a real run."
+        ),
     },
     {
         "steps": 200_000,
@@ -62,7 +69,37 @@ KNOWN_BENCHMARKS: list[dict[str, Any]] = [
         "gpu_type": "T4",
         "actual_hours": None,  # placeholder — fill in from real runs
         "source": "Placeholder for real T4 200k run",
-        "note": "Estimate: 200k/(2.2*512/128) = 200k/8.8 = 22,727s ≈ 6.3h",
+        "note": (
+            "At the measured 0.06 batch-512-equivalent steps/s baseline: "
+            "200k*128/512/0.06 ≈ 231h on one T4."
+        ),
+    },
+    # Real T4 wall-clock measurements from Modal runs on 2026-09-12
+    # (128x128, AMP, num_workers=0). actual_hours is the config→last-logged-step
+    # window from the Modal app logs; the implied rates are noted in `source`.
+    {
+        "steps": 1_600,
+        "batch_size": 32,
+        "image_size": 128,
+        "gpu_type": "T4",
+        "actual_hours": 0.38,  # 1376s: 16:53:38 → step 1,600 at 17:16:34
+        "source": "MEASURED: Modal T4 2026-09-12 (breed-conditioned-v3, 1.16 steps/s)",
+    },
+    {
+        "steps": 100,
+        "batch_size": 64,
+        "image_size": 128,
+        "gpu_type": "T4",
+        "actual_hours": 0.062,  # 223s: 16:37:04 → step 100 at 16:40:47
+        "source": "MEASURED: Modal T4 2026-09-12 (breed-conditioned-v1, 0.45 steps/s)",
+    },
+    {
+        "steps": 100,
+        "batch_size": 128,
+        "image_size": 128,
+        "gpu_type": "T4",
+        "actual_hours": 0.165,  # 595s: 16:42:44 → step 100 at 16:52:39
+        "source": "MEASURED: Modal T4 2026-09-12 (breed-conditioned-v2, 0.17 steps/s)",
     },
     # Derived from 400k A10G benchmark using GPU speed factors.
     # A10G is 2.5x T4, so T4 time ~ A10G time * 2.5.

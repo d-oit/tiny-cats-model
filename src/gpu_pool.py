@@ -815,13 +815,11 @@ def setup_lightning_environment() -> bool:
 # Time/cost estimation
 # ──────────────────────────────────────────────────────────────────────
 
-# Tunable baseline: steps/second on T4 GPU at batch=512, 128x128.
-# Sourced from a real T4 run (see AGENTS.md: "Speed: 2.2 steps/s per loop
-# iteration"). The benchmark_estimates.py --tune output should NOT be
-# auto-applied — the dataset is too sparse (one real entry, plus a
-# derived 2.5x-scaled twin). Calibration requires >=3 independent real
-# T4 wall-clock measurements before a tune recommendation is trustworthy.
-T4_STEPS_PER_SECOND: float = 2.2
+# T4 baseline normalized to batch=512 at 128x128. Three corrected wall-clock
+# measurements on 2026-09-12 gave 1.1 steps/s at batch 32, 0.5 at batch 64,
+# and 0.2 at batch 128. Their batch-normalized rates are 0.069, 0.063, and
+# 0.050 steps/s; 0.06 is a practical planning baseline.
+T4_STEPS_PER_SECOND: float = 0.06
 
 
 def estimate_gpu_hours(
@@ -832,7 +830,7 @@ def estimate_gpu_hours(
 ) -> float:
     """Estimate GPU hours needed for training.
 
-    Based on benchmarks: ~2.2 steps/s on T4 for 128x128, batch 512.
+    Based on benchmarks: ~0.06 steps/s on T4 for 128x128, batch 512.
     Set T4_STEPS_PER_SECOND or pass steps_per_second to override.
 
     Args:

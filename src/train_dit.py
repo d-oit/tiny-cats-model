@@ -37,6 +37,7 @@ import signal
 import sys
 import time
 import zipfile
+from collections import Counter
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -847,22 +848,26 @@ def create_dataloader(
     Returns:
         DataLoader yielding (images, breed_indices).
     """
-    # Use ImageFolder directly
-    from torchvision.datasets import ImageFolder
-
-    from dataset import build_enhanced_transforms
+    from dataset import CatBreedGenerationDataset, build_enhanced_transforms
 
     transform = build_enhanced_transforms(
         train=True,
         image_size=image_size,
         augmentation_level=augmentation_level,  # type: ignore[arg-type]
     )
-    dataset = ImageFolder(data_dir, transform=transform)
+    dataset = CatBreedGenerationDataset(data_dir, transform=transform)
+    class_counts = Counter(label for _, label in dataset.samples)
+    sample_weights = [1.0 / class_counts[label] for _, label in dataset.samples]
+    sampler = torch.utils.data.WeightedRandomSampler(
+        sample_weights,
+        num_samples=len(dataset),
+        replacement=True,
+    )
 
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=True,
+        sampler=sampler,
         num_workers=num_workers,
         pin_memory=True,
         drop_last=True,
@@ -1052,8 +1057,6 @@ def train_dit_local(
     best_loss = float("inf")
     shutdown_requested = False
     patience_counter = 0
-    last_eval_step = 0
-    loss_history: list[float] = []  # Track loss trajectory for adaptive early stopping
 
     def signal_handler(signum: int, frame: Any) -> None:
         nonlocal shutdown_requested
@@ -1070,11 +1073,14 @@ def train_dit_local(
         accum_step = 0  # Accumulation step counter
         epoch = 0
         avg_loss = 0.0  # Default value if training exits early (ADR-042)
+        interval_loss = 0.0
+        interval_steps = 0
+        interval_start = time.time()
+        evaluation_loss = 0.0
+        evaluation_steps = 0
 
         while step < steps:
             epoch += 1
-            epoch_loss = 0.0
-            epoch_start = time.time()
 
             for images, breeds in train_loader:
                 if step >= steps:
@@ -1136,19 +1142,22 @@ def train_dit_local(
                     optimizer.zero_grad()
 
                     # Track loss
-                    epoch_loss += loss.item() * gradient_accumulation_steps
+                    interval_loss += loss.item() * gradient_accumulation_steps
+                    interval_steps += 1
+                    evaluation_loss += loss.item() * gradient_accumulation_steps
+                    evaluation_steps += 1
                     step += 1
 
                     # Logging
                     if step % log_interval == 0:
-                        avg_loss = epoch_loss / log_interval
+                        avg_loss = interval_loss / interval_steps
                         # Non-finite avg_loss can occur at the start of a
                         # warmup window (small batch + early-step AMP scaler
                         # has not yet calibrated its dynamic scale) or on an
                         # outlier batch. Emit a one-line warning instead of
                         # the confusing "Loss: inf" line and skip the metric
                         # log; the model + EMA continue to update, and the
-                        # next log interval starts clean once epoch_loss is
+                        # next log interval starts clean once interval_loss is
                         # reset below.
                         if not math.isfinite(avg_loss):
                             logger.warning(
@@ -1158,8 +1167,8 @@ def train_dit_local(
                             )
                         else:
                             current_lr = scheduler.get_last_lr()[0]
-                            elapsed = time.time() - epoch_start
-                            steps_per_sec = log_interval / max(elapsed, 0.001)
+                            elapsed = time.time() - interval_start
+                            steps_per_sec = interval_steps / max(elapsed, 0.001)
 
                             logger.info(
                                 f"Step {step:,}/{steps:,} | "
@@ -1178,11 +1187,14 @@ def train_dit_local(
                                 step=step,
                             )
 
-                        epoch_loss = 0.0
-                        epoch_start = time.time()
+                        interval_loss = 0.0
+                        interval_steps = 0
+                        interval_start = time.time()
 
                     # Save checkpoint
                     if step % save_interval == 0:
+                        avg_loss = evaluation_loss / evaluation_steps
+                        improved = avg_loss < best_loss - early_stopping_min_delta
                         save_checkpoint(
                             model=model,
                             optimizer=optimizer,
@@ -1191,7 +1203,7 @@ def train_dit_local(
                             loss=avg_loss,
                             path=output,
                             logger=logger,
-                            is_best=(avg_loss < best_loss),
+                            is_best=improved,
                         )
                         # Mid-run Hub push (cadence-capped) so a cancelled
                         # slice still syncs its latest checkpoint for
@@ -1219,18 +1231,24 @@ def train_dit_local(
                                 logger.warning(
                                     f"GPU pool: mid-run hub push skipped ({e})"
                                 )
-                        if avg_loss < best_loss - early_stopping_min_delta:
+                        if improved:
                             best_loss = avg_loss
                             patience_counter = 0
                             logger.info(f"New best loss: {best_loss:.6e}")
-                        else:
+                        elif early_stopping_patience > 0:
                             patience_counter += 1
                             logger.info(
                                 f"Loss plateau detected ({patience_counter}/{early_stopping_patience} evaluations)"
                             )
 
                         # Adaptive early stopping check (self-learning)
-                        if patience_counter >= early_stopping_patience:
+                        evaluation_loss = 0.0
+                        evaluation_steps = 0
+
+                        if (
+                            early_stopping_patience > 0
+                            and patience_counter >= early_stopping_patience
+                        ):
                             logger.info(
                                 f"Early stopping triggered at step {step:,}. "
                                 f"Loss hasn't improved for {early_stopping_patience} evaluations."
@@ -1325,6 +1343,11 @@ def train_dit_local(
             cleanup_memory()
 
         # Final save
+        if evaluation_steps:
+            avg_loss = evaluation_loss / evaluation_steps
+            best_loss = min(best_loss, avg_loss)
+        elif not math.isfinite(best_loss):
+            best_loss = avg_loss
         logger.info("=" * 60)
         logger.info(f"Training complete. Final loss: {best_loss:.6e}")
 

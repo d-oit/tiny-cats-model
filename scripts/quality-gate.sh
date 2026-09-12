@@ -260,6 +260,22 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 8. GPU Pool Fallback Chain Simulation
+# ─────────────────────────────────────────────────────────────────────────────
+log_info "Running GPU pool fallback chain simulation..."
+
+if SIM_OUTPUT=$(python scripts/test_fallback_chain.py 2>&1); then
+    log_success "Fallback chain simulation passed"
+else
+    log_error "Fallback chain simulation failed"
+    echo "$SIM_OUTPUT" | tail -20
+    FAILURES=$((FAILURES + 1))
+    if [[ "$STRICT" == true ]]; then
+        exit 1
+    fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
 section_header "Summary"

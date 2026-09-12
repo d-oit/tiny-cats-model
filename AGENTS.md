@@ -65,11 +65,16 @@ gh run watch
 gh secret list
 ```
 
-> **Note:** The DiT training prints `Speed: 2.2 steps/s` per loop iteration but wall-clock
-> between step reports is ~15 min/100 steps because of container cold-start + image pull
-> on GH-Actions, dataset download on first iter, and per-iteration volume + ONNX overhead.
-> This is expected — see `plans/ADR-057-modal-cli-verification-and-best-practices-2026.md`
-> for the full diagnosis and mitigation options (`@modal.enter`, `single_use_containers=True`,
+> **Note:** The `Speed: X steps/s` log line reports the current logging interval, not
+> wall-clock throughput. Measured T4 throughput on 2026-09-12 was 1.16 steps/s at batch 32,
+> 0.45 at batch 64, and 0.17 at batch 128 (128x128, AMP) — the planning baseline
+> `gpu_pool.T4_STEPS_PER_SECOND = 0.06` (batch-512-equivalent) reflects those and is
+> confirmed by `python scripts/benchmark_estimates.py --tune`. Also: scheduled
+> `train-pool.yml` runs before 2026-09-12 exited immediately without training (flags were
+> passed as a single argument, masked by a missing `pipefail`), so always check
+> `modal-training.log` for real training output. See
+> `plans/ADR-057-modal-cli-verification-and-best-practices-2026.md` for the container
+> overhead diagnosis and mitigation options (`@modal.enter`, `single_use_containers=True`,
 > larger `save_interval`, GH-Action container reuse).
 
 ## Authentication

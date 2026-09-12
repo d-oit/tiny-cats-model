@@ -214,18 +214,17 @@ def simulate_estimate_validation(verbose: bool = False) -> list[SimulationResult
     """Verify estimate_gpu_hours() reasonableness against known data."""
     results: list[SimulationResult] = []
 
-    # Known benchmark from ADR: 400k steps @ 256 batch, 128x128 = ~36-48h on A10G/H100
-    # Our estimate uses 2.2 steps/s for T4. T4 ≈ 0.5x H100 speed.
-    # So for H100: ~4.4 steps/s → 400k / 4.4 = 90,909s ≈ 25.3h
-    # For T4:   ~2.2 steps/s → 400k / 2.2 = 181,818s ≈ 50.5h
-    # The log says 36-48h which is between T4 and H100 estimates — reasonable for A10G.
+    # Measured T4 throughput (2026-09-12, see gpu_pool.T4_STEPS_PER_SECOND):
+    # ~37 images/s at 128x128 → 400k steps @ batch 256 ≈ 770h; the 0.06
+    # batch-512-equivalent baseline is slightly conservative → ~926h.
+    # The earlier 25-80h range came from the unmeasured 2.2 steps/s figure.
 
-    # Test 1: 400k steps, batch 256, 128x128 — should be 25-51h range
+    # Test 1: 400k steps, batch 256, 128x128 — should be 600-1200h on T4
     h = estimate_gpu_hours(400_000, batch_size=256, image_size=128)
     results.append(
         SimulationResult(
-            "400k steps @ 256 batch (128x128) in 25-80h",
-            25 <= h <= 80,
+            "400k steps @ 256 batch (128x128) in 600-1200h (measured T4)",
+            600 <= h <= 1200,
             f"Estimated: {h:.1f}h",
         )
     )
