@@ -101,6 +101,8 @@ generator run (`breed-conditioned-v3`):
 | `scripts/train_lightning.py` | `setup_lightning_dirs()` honors `--data-dir` / `--checkpoint-dir` |
 | `tests/test_dataset.py` | Breed-mapping, unknown-breed, and sampler-balance tests |
 | `scripts/benchmark_estimates.py` | 3 real T4 benchmarks; 400k entry excluded from tune |
+| `scripts/test_fallback_chain.py` | Estimate range updated to the measured T4 baseline (600-1200h for 400k @ 256) |
+| `scripts/quality-gate.sh` | Runs the fallback-chain simulation so baseline changes can't slip past locally |
 
 ## References
 

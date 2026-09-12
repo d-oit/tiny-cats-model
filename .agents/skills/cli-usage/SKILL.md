@@ -106,10 +106,12 @@ python src/train_dit.py --data-dir data/cats --steps 100 --batch-size 8
   `train.py` and `train_dit.py`.
 - **`modal token new`** is the canonical auth command. The old `modal token set` (Modal
   0.x) no longer works.
-- The live per-iteration `Speed: 2.2 steps/s` printed by the trainer reflects GPU
-  forward+backward only — wall-clock between step reports includes container cold-start,
-  image pull, dataset download, and per-iteration volume/ONNX overhead. See
-  `plans/ADR-057-modal-cli-verification-and-best-practices-2026.md` for the full breakdown.
+- The `Speed: X steps/s` line printed by the trainer covers the current logging
+  interval, not wall-clock throughput. Measured T4 throughput on 2026-09-12 was
+  1.16 steps/s at batch 32 (128x128, AMP); the planning baseline is
+  `gpu_pool.T4_STEPS_PER_SECOND = 0.06` batch-512-equivalent steps/s. See
+  `plans/ADR-057-modal-cli-verification-and-best-practices-2026.md` for the
+  container overhead breakdown.
 - When triggering from GitHub Actions, prefer **reusing a running run** over
   cancelling/re-triggering — every re-trigger pays container cold-start + image-pull cost.
 
