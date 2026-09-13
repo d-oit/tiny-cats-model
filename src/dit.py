@@ -498,7 +498,8 @@ def load_state_dict_checked(model: nn.Module, state_dict: dict) -> None:
     mismatched = [
         key
         for key in model_keys
-        if tuple(model_state[key].shape) != tuple(state_dict[key].shape)
+        if not isinstance(state_dict[key], torch.Tensor)
+        or tuple(model_state[key].shape) != tuple(state_dict[key].shape)
     ]
     if mismatched:
         key = mismatched[0]

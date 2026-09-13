@@ -443,10 +443,11 @@ def load_checkpoint(
 
     try:
         load_state_dict_checked(model, checkpoint["model_state_dict"])
-    except ValueError as exc:
-        # Architecture changed (e.g. a new parameter was added) — the old
-        # weights cannot be loaded. The helper checks keys before copying, so
-        # the model is left untouched and training restarts from scratch.
+    except (ValueError, RuntimeError) as exc:
+        # Architecture changed (e.g. a new parameter was added) or the
+        # checkpoint is from another model size. The helper validates keys and
+        # shapes before copying, so the model is left untouched; RuntimeError
+        # is a defensive fallback for anything PyTorch rejects unexpectedly.
         if logger:
             logger.warning(
                 f"Checkpoint at {path} is incompatible with the current model "
