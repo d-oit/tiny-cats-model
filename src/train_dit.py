@@ -439,7 +439,18 @@ def load_checkpoint(
                 f"{exc}); moved to {quarantine} and restarting from step 0."
             )
         return model, optimizer, ema, 0
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model_state = checkpoint["model_state_dict"]
+    try:
+        model.load_state_dict(model_state)
+    except RuntimeError as exc:
+        # Architecture changed (e.g. a new parameter was added) — the old
+        # weights cannot be loaded. Restart from scratch instead of crashing.
+        if logger:
+            logger.warning(
+                f"Checkpoint at {path} is incompatible with the current model "
+                f"({exc}); restarting from step 0."
+            )
+        return model, optimizer, ema, 0
 
     if optimizer and "optimizer_state_dict" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -1078,8 +1089,9 @@ def train_dit_local(
         interval_start = time.time()
         evaluation_loss = 0.0
         evaluation_steps = 0
+        stop_training = False
 
-        while step < steps:
+        while step < steps and not stop_training:
             epoch += 1
 
             for images, breeds in train_loader:
@@ -1337,44 +1349,57 @@ def train_dit_local(
                         path=ema_output,
                         logger=logger,
                     )
+                    # Exit the outer loop too, otherwise every remaining batch
+                    # re-runs both 500MB saves until the container is killed.
+                    stop_training = True
                     break
 
             # Epoch cleanup
             cleanup_memory()
 
-        # Final save
-        if evaluation_steps:
-            avg_loss = evaluation_loss / evaluation_steps
-            best_loss = min(best_loss, avg_loss)
-        elif not math.isfinite(best_loss):
-            best_loss = avg_loss
-        logger.info("=" * 60)
-        logger.info(f"Training complete. Final loss: {best_loss:.6e}")
+        # Final save. Skip when this invocation trained no steps (e.g. a resume
+        # already at/past the target) — otherwise best_loss stays inf and gets
+        # written as 0.0, clobbering a good checkpoint's metadata.
+        if step > start_step:
+            if evaluation_steps:
+                avg_loss = evaluation_loss / evaluation_steps
+                best_loss = min(best_loss, avg_loss)
+            elif not math.isfinite(best_loss):
+                best_loss = avg_loss
+            logger.info("=" * 60)
+            logger.info(f"Training complete. Final loss: {best_loss:.6e}")
 
-        save_checkpoint(
-            model=model,
-            optimizer=optimizer,
-            ema=ema,
-            step=step,
-            loss=best_loss,
-            path=output,
-            logger=logger,
-        )
-        save_checkpoint(
-            model=model,
-            optimizer=optimizer,
-            ema=ema,
-            step=step,
-            loss=best_loss,
-            path=ema_output,
-            logger=logger,
-        )
+            save_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                ema=ema,
+                step=step,
+                loss=best_loss,
+                path=output,
+                logger=logger,
+            )
+            save_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                ema=ema,
+                step=step,
+                loss=best_loss,
+                path=ema_output,
+                logger=logger,
+            )
 
-        log_gpu_memory(logger, "Final | ")
+            log_gpu_memory(logger, "Final | ")
 
-        tracker.log_metrics({"final_loss": best_loss, "total_steps": step})
-        tracker.log_artifact(output)
-        tracker.log_artifact(ema_output)
+            tracker.log_metrics({"final_loss": best_loss, "total_steps": step})
+            tracker.log_artifact(output)
+            tracker.log_artifact(ema_output)
+        else:
+            logger.info(
+                "No steps trained (checkpoint already at/past target steps); "
+                "keeping the existing checkpoint unchanged."
+            )
+            best_loss = float("nan")
+
         tracker.end_run()
 
         return best_loss
