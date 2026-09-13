@@ -130,8 +130,8 @@ jobs:
           fi
           modal run src/train_dit.py \
             --data-dir /data/cats \
-            --output /outputs/checkpoints/dit/breed-conditioned-v3/dit_model.pt \
-            --ema-output /outputs/checkpoints/dit/breed-conditioned-v3/dit_model_ema.pt \
+            --output /outputs/checkpoints/dit/breed-conditioned-v4/dit_model.pt \
+            --ema-output /outputs/checkpoints/dit/breed-conditioned-v4/dit_model_ema.pt \
             --steps ${{ github.event.inputs.steps || '60000' }} \
             --batch-size ${{ github.event.inputs.batch_size || '32' }} \
             --lr ${{ github.event.inputs.lr || '5e-5' }} \
