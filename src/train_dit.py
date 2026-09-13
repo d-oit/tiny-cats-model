@@ -439,12 +439,14 @@ def load_checkpoint(
                 f"{exc}); moved to {quarantine} and restarting from step 0."
             )
         return model, optimizer, ema, 0
-    model_state = checkpoint["model_state_dict"]
+    from dit import load_state_dict_checked
+
     try:
-        model.load_state_dict(model_state)
-    except RuntimeError as exc:
+        load_state_dict_checked(model, checkpoint["model_state_dict"])
+    except ValueError as exc:
         # Architecture changed (e.g. a new parameter was added) — the old
-        # weights cannot be loaded. Restart from scratch instead of crashing.
+        # weights cannot be loaded. The helper checks keys before copying, so
+        # the model is left untouched and training restarts from scratch.
         if logger:
             logger.warning(
                 f"Checkpoint at {path} is incompatible with the current model "

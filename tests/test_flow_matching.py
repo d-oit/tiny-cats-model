@@ -380,7 +380,13 @@ class TestDiTArchitecture:
         assert dit_model.pos_embed.shape == expected
 
     def test_output_is_position_aware(self, dit_model_with_outputs: nn.Module) -> None:
-        """Permuting image patches must change the output."""
+        """A position-aware model is not equivariant to patch permutations.
+
+        Comparing ``f(perm(x))`` with ``f(x)`` directly would also differ for
+        an equivariant (position-blind) model, because ``f(perm(x)) ==
+        perm(f(x))``. Undo the permutation on the output first: an equivariant
+        model reproduces ``f(x)`` exactly, a position-aware one does not.
+        """
         model = dit_model_with_outputs
         b, c, h, w, patch = 1, 3, 128, 128, 16
         n = h // patch
@@ -392,8 +398,9 @@ class TestDiTArchitecture:
         with torch.no_grad():
             y = model(x, t, breeds)
             y_perm = model(x_perm, t, breeds)
-        assert not torch.allclose(y, y_perm, atol=1e-4), (
-            "model output is invariant to patch permutation: it has no "
+        y_unpermuted = _permute_patches(y_perm, torch.argsort(perm), patch)
+        assert not torch.allclose(y_unpermuted, y, atol=1e-4), (
+            "model output is equivariant to patch permutation: it has no "
             "positional information and cannot model spatial structure"
         )
 

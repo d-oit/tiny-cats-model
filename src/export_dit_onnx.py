@@ -18,7 +18,7 @@ from pathlib import Path
 
 import torch
 
-from dit import TinyDiT, tinydit_128
+from dit import TinyDiT, load_state_dict_checked, tinydit_128
 
 
 class SamplerWrapper(torch.nn.Module):
@@ -217,7 +217,7 @@ def load_model(
         else:
             state_dict = checkpoint
 
-        model.load_state_dict(state_dict, strict=True)
+        load_state_dict_checked(model, state_dict)
         print(f"Loaded checkpoint from {checkpoint_path}")
     else:
         print(f"Checkpoint not found: {checkpoint_path}")

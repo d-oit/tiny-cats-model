@@ -473,6 +473,29 @@ class TinyDiT(nn.Module):
         return pred_uncond + cfg_scale * (pred_cond - pred_uncond)
 
 
+def load_state_dict_checked(model: nn.Module, state_dict: dict) -> None:
+    """Load a TinyDiT state dict, failing clearly on architecture mismatch.
+
+    ``load_state_dict(strict=True)`` copies every matching tensor *before*
+    raising for missing/unexpected keys, which would leave a partially
+    restored model behind. Comparing keys first avoids that and gives a
+    clear, actionable error — e.g. checkpoints saved before ADR-060 have no
+    ``pos_embed`` and cannot be loaded into the current architecture.
+    """
+    model_keys = set(model.state_dict().keys())
+    state_keys = set(state_dict.keys())
+    if model_keys != state_keys:
+        missing = sorted(model_keys - state_keys)[:3]
+        unexpected = sorted(state_keys - model_keys)[:3]
+        raise ValueError(
+            "Checkpoint is incompatible with the current TinyDiT architecture "
+            f"(missing keys={missing}, unexpected keys={unexpected}). "
+            "Checkpoints saved before ADR-060 have no positional embedding; "
+            "retrain or re-export with the current code."
+        )
+    model.load_state_dict(state_dict)
+
+
 def count_parameters(model: nn.Module) -> int:
     """Count trainable parameters."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
