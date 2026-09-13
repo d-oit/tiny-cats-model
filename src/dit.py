@@ -503,9 +503,15 @@ def load_state_dict_checked(model: nn.Module, state_dict: dict) -> None:
     ]
     if mismatched:
         key = mismatched[0]
+        ck_val = state_dict[key]
+        ck_shape = (
+            tuple(ck_val.shape)
+            if isinstance(ck_val, torch.Tensor)
+            else type(ck_val).__name__
+        )
         raise ValueError(
             "Checkpoint tensors do not match the current TinyDiT architecture "
-            f"(shape mismatch for {key}: checkpoint {tuple(state_dict[key].shape)} "
+            f"(shape mismatch for {key}: checkpoint {ck_shape} "
             f"vs model {tuple(model_state[key].shape)}). "
             "Retrain or re-export with the current code."
         )

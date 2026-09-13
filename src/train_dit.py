@@ -1401,6 +1401,14 @@ def train_dit_local(
                 "No steps trained (checkpoint already at/past target steps); "
                 "keeping the existing checkpoint unchanged."
             )
+            # A resume may point at a different file than the output path
+            # (e.g. hub-resume pulls dit_model_ema.pt). Preserve the loaded
+            # model at the requested output so callers can rely on it.
+            if resume and not Path(output).exists() and Path(resume).exists():
+                import shutil
+
+                shutil.copy2(resume, output)
+                logger.info(f"Copied resumed checkpoint to {output}")
             best_loss = float("nan")
 
         tracker.end_run()
