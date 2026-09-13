@@ -369,6 +369,97 @@ _DUP_ARG_PATTERN = re.compile(
 )
 
 
+class TestDiTArchitecture:
+    """Regression tests for the spatial-structure bugs (ADR-060)."""
+
+    def test_has_positional_embedding(self, dit_model: nn.Module) -> None:
+        """Without pos_embed the transformer is permutation-equivariant."""
+        assert hasattr(dit_model, "pos_embed")
+        assert isinstance(dit_model.pos_embed, nn.Parameter)
+        expected = (1, dit_model.patch_embed.num_patches, dit_model.embed_dim)
+        assert dit_model.pos_embed.shape == expected
+
+    def test_output_is_position_aware(self, dit_model_with_outputs: nn.Module) -> None:
+        """A position-aware model is not equivariant to patch permutations.
+
+        Comparing ``f(perm(x))`` with ``f(x)`` directly would also differ for
+        an equivariant (position-blind) model, because ``f(perm(x)) ==
+        perm(f(x))``. Undo the permutation on the output first: an equivariant
+        model reproduces ``f(x)`` exactly, a position-aware one does not.
+        """
+        model = dit_model_with_outputs
+        b, c, h, w, patch = 1, 3, 128, 128, 16
+        n = h // patch
+        x = torch.randn(b, c, h, w)
+        perm = torch.randperm(n * n)
+        x_perm = _permute_patches(x, perm, patch)
+        t = torch.full((b,), 0.5)
+        breeds = torch.tensor([0])
+        with torch.no_grad():
+            y = model(x, t, breeds)
+            y_perm = model(x_perm, t, breeds)
+        y_unpermuted = _permute_patches(y_perm, torch.argsort(perm), patch)
+        assert not torch.allclose(y_unpermuted, y, atol=1e-4), (
+            "model output is equivariant to patch permutation: it has no "
+            "positional information and cannot model spatial structure"
+        )
+
+    def test_unpatchify_places_each_token_in_its_patch(
+        self, dit_model: nn.Module
+    ) -> None:
+        """Each output patch must come from its own token, not a mix of all."""
+        model = dit_model
+        b, c, h, w, patch = 1, 3, 128, 128, 16
+        n = h // patch
+        num_patches = n * n
+        tokens = torch.zeros(b, num_patches, patch * patch * c)
+        for i in range(num_patches):
+            tokens[0, i] = float(i + 1)
+        original = model.final_layer
+
+        class _Stub(nn.Module):
+            def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+                return tokens
+
+        model.final_layer = _Stub()
+        try:
+            with torch.no_grad():
+                out = model(
+                    torch.zeros(b, c, h, w),
+                    torch.full((b,), 0.5),
+                    torch.tensor([0]),
+                )
+        finally:
+            model.final_layer = original
+
+        for i in range(num_patches):
+            row, col = divmod(i, n)
+            patch_values = out[
+                0, 0, row * patch : (row + 1) * patch, col * patch : (col + 1) * patch
+            ]
+            expected = torch.full_like(patch_values, float(i + 1))
+            assert torch.allclose(patch_values, expected, atol=1e-5), (
+                f"patch {i} is not reconstructed from its own token — the "
+                "unpatchify layout scrambles tokens across patches"
+            )
+
+
+def _permute_patches(x: torch.Tensor, perm: torch.Tensor, patch: int) -> torch.Tensor:
+    """Return an image whose patch i is patch perm[i] of ``x``."""
+    b, c, h, w = x.shape
+    n = h // patch
+    patches = (
+        x.reshape(b, c, n, patch, n, patch)
+        .permute(0, 1, 2, 4, 3, 5)
+        .reshape(b, c, n * n, patch, patch)[:, :, perm]
+    )
+    return (
+        patches.reshape(b, c, n, n, patch, patch)
+        .permute(0, 1, 2, 4, 3, 5)
+        .reshape(b, c, h, w)
+    )
+
+
 @pytest.mark.skipif(
     not _TRAIN_DIT.exists(),
     reason="src/train_dit.py not present in repo root",

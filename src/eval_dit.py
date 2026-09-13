@@ -37,7 +37,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from dit import TinyDiT, tinydit_128
+from dit import TinyDiT, load_state_dict_checked, tinydit_128
 from flow_matching import sample
 
 # Cat breed names (Oxford IIIT Pet dataset)
@@ -188,10 +188,10 @@ def load_model(
     # Load weights - support both checkpoint formats
     if "model_state_dict" in checkpoint:
         # Standard format from train_dit.py
-        model.load_state_dict(checkpoint["model_state_dict"])
+        load_state_dict_checked(model, checkpoint["model_state_dict"])
     elif "model" in checkpoint:
         # Alternative format with 'model' key
-        model.load_state_dict(checkpoint["model"])
+        load_state_dict_checked(model, checkpoint["model"])
     else:
         raise KeyError(
             f"Checkpoint missing 'model_state_dict' or 'model' key. Keys: {list(checkpoint.keys())}"
