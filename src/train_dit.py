@@ -1093,6 +1093,7 @@ def train_dit_local(
         evaluation_loss = 0.0
         evaluation_steps = 0
         stop_training = False
+        saved_on_shutdown = False
 
         while step < steps and not stop_training:
             epoch += 1
@@ -1355,6 +1356,7 @@ def train_dit_local(
                     # Exit the outer loop too, otherwise every remaining batch
                     # re-runs both 500MB saves until the container is killed.
                     stop_training = True
+                    saved_on_shutdown = True
                     break
 
             # Epoch cleanup
@@ -1372,24 +1374,27 @@ def train_dit_local(
             logger.info("=" * 60)
             logger.info(f"Training complete. Final loss: {best_loss:.6e}")
 
-            save_checkpoint(
-                model=model,
-                optimizer=optimizer,
-                ema=ema,
-                step=step,
-                loss=best_loss,
-                path=output,
-                logger=logger,
-            )
-            save_checkpoint(
-                model=model,
-                optimizer=optimizer,
-                ema=ema,
-                step=step,
-                loss=best_loss,
-                path=ema_output,
-                logger=logger,
-            )
+            # The shutdown branch already wrote both checkpoints; skip the
+            # duplicate 500MB pair at the timeout boundary.
+            if not saved_on_shutdown:
+                save_checkpoint(
+                    model=model,
+                    optimizer=optimizer,
+                    ema=ema,
+                    step=step,
+                    loss=best_loss,
+                    path=output,
+                    logger=logger,
+                )
+                save_checkpoint(
+                    model=model,
+                    optimizer=optimizer,
+                    ema=ema,
+                    step=step,
+                    loss=best_loss,
+                    path=ema_output,
+                    logger=logger,
+                )
 
             log_gpu_memory(logger, "Final | ")
 
