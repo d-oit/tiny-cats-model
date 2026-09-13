@@ -169,12 +169,16 @@ class TimestepEmbedder(nn.Module):
         """Embed timesteps.
 
         Args:
-            t: Timestep tensor (B,)
+            t: Timestep tensor (B,) in [0, 1]
 
         Returns:
             Timestep embeddings (B, D)
         """
-        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
+        # DDPM-style sinusoids assume t in [0, 1000]. With raw [0, 1] values
+        # the features are nearly constant across t (relative L2 change from
+        # t=0.1 to t=0.9 is only ~0.19), which starves AdaLN of timestep
+        # information. Scale to [0, 1000] so the embedding is discriminative.
+        t_freq = self.timestep_embedding(t * 1000.0, self.frequency_embedding_size)
         t_emb = self.mlp(t_freq)
         return t_emb
 
@@ -341,6 +345,13 @@ class TinyDiT(nn.Module):
         # Timestep embedding
         self.t_embedder = TimestepEmbedder(hidden_size=embed_dim)
 
+        # Learnable positional embedding. Without it the transformer is
+        # permutation-equivariant over patches: it cannot see where a patch
+        # sits in the image and can never learn spatial structure.
+        self.pos_embed = nn.Parameter(
+            torch.zeros(1, self.patch_embed.num_patches, embed_dim)
+        )
+
         # Transformer blocks
         self.blocks = nn.ModuleList(
             [
@@ -373,6 +384,9 @@ class TinyDiT(nn.Module):
         w = self.patch_embed.proj.weight.data
         nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
 
+        # Initialize positional embedding (DiT uses a small trunc-normal std)
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
         # Zero-out final layer
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
@@ -393,8 +407,8 @@ class TinyDiT(nn.Module):
         Returns:
             Velocity prediction (B, C, H, W) for flow matching
         """
-        # Patchify
-        x = self.patch_embed(x)  # (B, N, D)
+        # Patchify + positional embedding
+        x = self.patch_embed(x) + self.pos_embed  # (B, N, D)
 
         # Get conditioning
         t_emb = self.t_embedder(t)  # (B, D)
@@ -405,12 +419,17 @@ class TinyDiT(nn.Module):
         for block in self.blocks:
             x = block(x, c)
 
-        # Unpatchify
+        # Unpatchify: (B, N, P*P*C) -> (B, C, H, W).
+        # The previous `transpose(1, 2).reshape(...)` interleaved the token
+        # dimension with pixels, so each output patch mixed every token
+        # instead of reconstructing its own patch.
         x = self.final_layer(x, c)  # (B, N, P*P*C)
-
-        # Reshape to image (use explicit batch size for ONNX compatibility)
         batch_size = x.shape[0]
-        x = x.transpose(1, 2).reshape(
+        n = self.image_size // self.patch_size
+        x = x.reshape(
+            batch_size, n, n, self.patch_size, self.patch_size, self.in_channels
+        )
+        x = x.permute(0, 5, 1, 3, 2, 4).reshape(
             batch_size, self.in_channels, self.image_size, self.image_size
         )
         return x
