@@ -477,12 +477,14 @@ def load_state_dict_checked(model: nn.Module, state_dict: dict) -> None:
     """Load a TinyDiT state dict, failing clearly on architecture mismatch.
 
     ``load_state_dict(strict=True)`` copies every matching tensor *before*
-    raising for missing/unexpected keys, which would leave a partially
-    restored model behind. Comparing keys first avoids that and gives a
-    clear, actionable error — e.g. checkpoints saved before ADR-060 have no
-    ``pos_embed`` and cannot be loaded into the current architecture.
+    raising for missing/unexpected keys or shape mismatches, which would leave
+    a partially restored model behind. Checking keys *and* shapes first avoids
+    that and gives a clear, actionable error — e.g. checkpoints saved before
+    ADR-060 have no ``pos_embed``, and ``tinydit_128`` vs ``tinydit_256``
+    checkpoints share key names but not shapes.
     """
-    model_keys = set(model.state_dict().keys())
+    model_state = model.state_dict()
+    model_keys = set(model_state.keys())
     state_keys = set(state_dict.keys())
     if model_keys != state_keys:
         missing = sorted(model_keys - state_keys)[:3]
@@ -492,6 +494,19 @@ def load_state_dict_checked(model: nn.Module, state_dict: dict) -> None:
             f"(missing keys={missing}, unexpected keys={unexpected}). "
             "Checkpoints saved before ADR-060 have no positional embedding; "
             "retrain or re-export with the current code."
+        )
+    mismatched = [
+        key
+        for key in model_keys
+        if tuple(model_state[key].shape) != tuple(state_dict[key].shape)
+    ]
+    if mismatched:
+        key = mismatched[0]
+        raise ValueError(
+            "Checkpoint tensors do not match the current TinyDiT architecture "
+            f"(shape mismatch for {key}: checkpoint {tuple(state_dict[key].shape)} "
+            f"vs model {tuple(model_state[key].shape)}). "
+            "Retrain or re-export with the current code."
         )
     model.load_state_dict(state_dict)
 
