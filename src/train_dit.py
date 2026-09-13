@@ -1407,6 +1407,7 @@ def train_dit_local(
             if resume and not Path(output).exists() and Path(resume).exists():
                 import shutil
 
+                Path(output).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(resume, output)
                 logger.info(f"Copied resumed checkpoint to {output}")
             best_loss = float("nan")
