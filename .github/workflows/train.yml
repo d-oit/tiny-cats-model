@@ -282,6 +282,8 @@ jobs:
         run: |
           modal run src/train_dit.py \
             --data-dir /data/cats \
+            --output /outputs/checkpoints/pool/dit_model.pt \
+            --ema-output /outputs/checkpoints/pool/dit_model_ema.pt \
             --steps ${{ github.event.inputs.steps || '100000' }} \
             --batch-size ${{ github.event.inputs.batch_size || '128' }} \
             --lr ${{ github.event.inputs.lr || '5e-5' }} \

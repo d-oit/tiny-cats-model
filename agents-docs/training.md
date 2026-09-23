@@ -217,11 +217,25 @@ python scripts/train_kaggle.py --steps 20000 --hub-resume      # Kaggle
 python scripts/train_hf_spaces.py --steps 20000 --hub-resume   # HF Spaces
 ```
 
-Pool CI workflow:
+Pool CI workflow (GitHub Actions = control plane, ADR-065):
 ```bash
-gh workflow run train-pool.yml -f steps=20000 -f batch_size=256
-gh workflow run train-pool.yml -f providers="modal,lightning"
+# Plan bounded slices toward the global target (default 400k, 25k/session)
+gh workflow run train-pool.yml -f steps=400000 -f slice_size=60000
+
+# Unsupported providers FAIL CLEARLY at the gate (never silent CPU training)
+gh workflow run train-pool.yml -f provider=kaggle   # exits 2 with instructions
+
+# Control-plane primitives (unit-tested; used by train-pool.yml)
+python src/providers.py plan   --steps 400000 --slice-size 60000
+python src/providers.py gate   --provider lightning --strict
+python src/providers.py launch --provider modal --target 60000
 ```
+
+Each slice is one bounded provider session that resumes exactly to its
+global target (`--steps` is never additive), pushes checkpoints to the Hub
+pool, and uploads a machine-readable `provider-report-<target>.json`
+(provider, GPU, VRAM, job id, start/end, completed step, checkpoint URI,
+exit reason).
 
 ## Verification
 
