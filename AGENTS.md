@@ -40,7 +40,7 @@ python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.y
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--steps` | 100,000 | Max training steps (early stopping may stop earlier) |
+| `--steps` | 100,000 | Global target steps — a resume performs `max(0, steps − completed)` (issue #163) |
 | `--batch-size` | 512 | Batch size (increased for better gradients) |
 | `--lr` | 5e-5 | Learning rate |
 | `--warmup-steps` | 2,000 | LR warmup (shorter = faster convergence) |
@@ -48,6 +48,18 @@ python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.y
 | `--val-split` | 0.05 | Held-out fraction used for checkpoint selection (0 disables) |
 | `--timestep-sampling` | uniform | `uniform` or `logit_normal` (mid-trajectory focus) |
 | `--augmentation-level` | full | basic/medium/full |
+| `--experiment-id` | dit-breed-conditioned-v4 | Manifest identity; resumes must match |
+| `--allow-experiment-mismatch` | false | Override manifest rejection (explicit migration) |
+
+> **Resume semantics (issue #163):** `--steps` is a *global* target — resuming
+> a checkpoint at 60k with `--steps 400000` performs exactly 340,000 more
+> steps; an already-complete target is a successful no-op that never
+> overwrites the checkpoint. Every checkpoint embeds an immutable experiment
+> manifest (architecture, dataset hash, breed mapping, optimizer-critical
+> settings, seed), mirrored to `training_state.json` beside it; a resume whose
+> manifest differs fails clearly unless `--allow-experiment-mismatch` is
+> passed. Corrupt checkpoints quarantine to `*.corrupt` (ADR-058);
+> architecture-incompatible ones are rejected, never silently restarted.
 
 > **Modal paths:** use absolute container paths (`/data/cats`, `/outputs/...`) — relative
 > `data/cats` only exists on the local machine, and Modal 1.0+ requires `--data-dir`

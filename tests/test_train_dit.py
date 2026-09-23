@@ -224,7 +224,10 @@ class TestCheckpointState:
             state=state,
         )
 
-        assert start_step == 43
+        # Exact global-step semantics (issue #163): the checkpoint recorded
+        # 42 *completed* steps, so resume starts from 42 — the caller then
+        # performs max(0, target - 42) more (the old "+ 1" skipped a step).
+        assert start_step == 42
         assert state["best_loss"] == pytest.approx(0.4)
         assert state["patience_counter"] == 2
         assert state["val_loss"] == pytest.approx(0.45)

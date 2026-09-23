@@ -33,11 +33,13 @@ import gc
 import logging
 import math
 import os
+import pickle
 import signal
 import sys
 import time
 import zipfile
 from collections import Counter
+from collections.abc import Callable
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -245,7 +247,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     # Training
     parser.add_argument(
-        "--steps", type=int, default=100_000, help="Total training steps"
+        "--steps",
+        type=int,
+        default=100_000,
+        help=(
+            "Global target steps (issue #163): a resume performs "
+            "max(0, steps - completed), never steps additional steps"
+        ),
     )
     parser.add_argument("--batch-size", type=int, default=512, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
@@ -273,6 +281,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Enable automatic mixed precision training",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+
+    # Experiment identity (issue #163 WP4)
+    parser.add_argument(
+        "--experiment-id",
+        type=str,
+        default="dit-breed-conditioned-v4",
+        help="Experiment identifier recorded in the manifest; resumes must match",
+    )
+    parser.add_argument(
+        "--allow-experiment-mismatch",
+        action="store_true",
+        help=(
+            "Resume even when the checkpoint manifest differs from this run "
+            "(explicit override; incompatible resumes are rejected by default)"
+        ),
+    )
 
     # Model architecture
     parser.add_argument(
@@ -464,6 +488,9 @@ def save_checkpoint(
     val_loss_ema: float | None = None,
     steps: int | None = None,
     warmup_steps: int | None = None,
+    target_steps: int | None = None,
+    manifest: dict[str, Any] | None = None,
+    seed: int | None = None,
 ) -> None:
     """Save training checkpoint with EMA weights.
 
@@ -483,7 +510,17 @@ def save_checkpoint(
         val_loss_ema: EMA-weight validation loss, when measured.
         steps: LR-schedule horizon this run is using.
         warmup_steps: LR-schedule warmup this run is using.
+        target_steps: Global target step count for this run (issue #163).
+        manifest: Immutable experiment manifest; embedded in the checkpoint
+            and mirrored into ``training_state.json`` beside it.
+        seed: Training seed recorded for reproducibility.
     """
+    from training_state import (
+        TRAINING_STATE_FILENAME,
+        capture_rng_state,
+        write_training_state,
+    )
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -500,6 +537,12 @@ def save_checkpoint(
         "patience_counter": patience_counter,
         "steps": steps,
         "warmup_steps": warmup_steps,
+        "target_steps": target_steps,
+        "manifest": manifest,
+        "seed": seed,
+        # RNG snapshot so a provider handoff resumes the exact stream
+        # (torch/python/numpy/cuda; issue #163 WP1).
+        "rng_state": capture_rng_state(),
         "timestamp": datetime.now().isoformat(),
         "config": {
             "image_size": model.image_size,
@@ -518,6 +561,14 @@ def save_checkpoint(
     torch.save(checkpoint, tmp_path)
     os.replace(tmp_path, str(path))
     logger.info(f"Saved checkpoint at step {step:,} (loss={loss:.6e}) to {path}")
+
+    # Mirror manifest + progress beside the checkpoint (issue #163 WP1/WP4).
+    if manifest is not None:
+        write_training_state(
+            path.parent / TRAINING_STATE_FILENAME,
+            manifest=manifest,
+            completed_steps=step,
+        )
 
     if is_best:
         best_path = path.parent / f"best_{path.name}"
@@ -549,13 +600,20 @@ def load_checkpoint(
             LR-schedule continuity instead of restarting them from scratch.
 
     Returns:
-        Tuple of (model, optimizer, ema, start_step). When ``path`` exists but
-        is unreadable (truncated zip from a preempted run, EOFError on partial
+        Tuple of (model, optimizer, ema, completed_steps) where
+        ``completed_steps`` is the number of *completed global steps* stored in
+        the checkpoint (issue #163 — the caller performs
+        ``max(0, target - completed)`` more). When ``path`` exists but is
+        unreadable (truncated zip from a preempted run, EOFError on partial
         write, etc.) the file is renamed to ``<path>.corrupt`` for forensics
-        and ``start_step=0`` is returned so training restarts from scratch.
+        and ``completed_steps=0`` is returned so training restarts from
+        scratch.
 
     Raises:
         FileNotFoundError: If ``path`` does not exist.
+        IncompatibleExperimentError: If the checkpoint tensors do not match
+            the current model architecture. Incompatible checkpoints are
+            rejected, never silently restarted (issue #163).
     """
     path = Path(path)
     if not path.exists():
@@ -563,7 +621,13 @@ def load_checkpoint(
 
     try:
         checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-    except (zipfile.BadZipFile, RuntimeError, EOFError, OSError) as exc:
+    except (
+        zipfile.BadZipFile,
+        RuntimeError,
+        EOFError,
+        OSError,
+        pickle.UnpicklingError,
+    ) as exc:
         # Stale or partial checkpoint from a previously preempted run. Quarantine
         # the bad file (so it stays available for post-mortem) and return
         # start_step=0 so train_dit_local restarts from scratch with fresh
@@ -588,20 +652,23 @@ def load_checkpoint(
             )
         return model, optimizer, ema, 0
     from dit import load_state_dict_checked
+    from training_state import IncompatibleExperimentError
 
     try:
         load_state_dict_checked(model, checkpoint["model_state_dict"])
     except (ValueError, RuntimeError) as exc:
         # Architecture changed (e.g. a new parameter was added) or the
         # checkpoint is from another model size. The helper validates keys and
-        # shapes before copying, so the model is left untouched; RuntimeError
-        # is a defensive fallback for anything PyTorch rejects unexpectedly.
-        if logger:
-            logger.warning(
-                f"Checkpoint at {path} is incompatible with the current model "
-                f"({exc}); restarting from step 0."
-            )
-        return model, optimizer, ema, 0
+        # shapes before copying, so the model is left untouched.
+        #
+        # Reject instead of silently restarting from step 0 (issue #163):
+        # a provider handoff that lands on the wrong architecture must fail
+        # clearly so the operator moves the checkpoint aside deliberately.
+        raise IncompatibleExperimentError(
+            f"Checkpoint at {path} does not match the current model "
+            f"architecture: {exc} Refusing to resume. Move the checkpoint "
+            "aside (or restore the matching configuration) to continue."
+        ) from exc
 
     if optimizer and "optimizer_state_dict" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -621,12 +688,27 @@ def load_checkpoint(
                 "val_loss_ema": checkpoint.get("val_loss_ema"),
                 "steps": checkpoint.get("steps"),
                 "warmup_steps": checkpoint.get("warmup_steps"),
+                # Issue #163: experiment identity, progress and RNG stream for
+                # exact global-step / cross-provider resume. "loaded" marks a
+                # successful load so a stale training_state.json sidecar is
+                # never validated after a quarantined (corrupt) checkpoint.
+                "loaded": True,
+                "manifest": checkpoint.get("manifest"),
+                "rng_state": checkpoint.get("rng_state"),
+                "seed": checkpoint.get("seed"),
+                "target_steps": checkpoint.get("target_steps"),
             }
         )
 
-    start_step = checkpoint.get("step", 0) + 1
+    # Exact global-step semantics (issue #163): checkpoint["step"] counts
+    # *completed* optimizer steps, and a resume must perform exactly
+    # max(0, target - completed) more — the old "+ 1" silently skipped one
+    # step (45k -> 60k ran 14,999 instead of the required 15,000).
+    start_step = int(checkpoint.get("step", 0))
     if logger:
-        logger.info(f"Loaded checkpoint from {path} (resuming at step {start_step:,})")
+        logger.info(
+            f"Loaded checkpoint from {path} ({start_step:,} global steps completed)"
+        )
 
     return model, optimizer, ema, start_step
 
@@ -665,6 +747,7 @@ image = (
         "huggingface_hub",
     )
     .add_local_file("src/train_dit.py", "/app/train_dit.py")
+    .add_local_file("src/training_state.py", "/app/training_state.py")
     .add_local_file("src/dit.py", "/app/dit.py")
     .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
     .add_local_file("src/dit_validation.py", "/app/dit_validation.py")
@@ -793,6 +876,8 @@ class DiTTrainer:
         hub_resume: bool = False,
         no_hub_push: bool = False,
         hub_push_interval: int = 0,
+        experiment_id: str = "dit-breed-conditioned-v4",
+        allow_experiment_mismatch: bool = False,
     ) -> dict[str, Any]:
         """Run DiT training (was train_dit_on_gpu, now DiTTrainer.train).
 
@@ -952,6 +1037,8 @@ class DiTTrainer:
                 no_hub_push=no_hub_push,
                 hub_push_interval=hub_push_interval,
                 hub_repo=hub_repo,
+                experiment_id=experiment_id,
+                allow_experiment_mismatch=allow_experiment_mismatch,
             )
 
             # Export to ONNX and Quantize (Issue #63)
@@ -1094,6 +1181,9 @@ def train_dit_local(
     no_hub_push: bool = True,
     hub_push_interval: int = 0,
     hub_repo: str = "d4oit/tiny-cats-model",
+    experiment_id: str = "dit-breed-conditioned-v4",
+    allow_experiment_mismatch: bool = False,
+    model_fn: Callable[[], nn.Module] | None = None,
 ) -> float:
     """Full TinyDiT training loop with flow matching and EMA.
 
@@ -1126,6 +1216,13 @@ def train_dit_local(
         resume: Optional checkpoint to resume from.
         early_stopping_min_delta: Minimum loss improvement to count as progress.
         augmentation_level: Level of data augmentation.
+        experiment_id: Experiment identifier for the immutable manifest
+            (issue #163); resumes must carry a matching one.
+        allow_experiment_mismatch: Accept a resume whose manifest differs
+            from this run (explicit override; rejected by default).
+        model_fn: Optional factory replacing the built-in TinyDiT builder —
+            a verification seam (WP8) so exact-resume behaviour runs on CPU
+            in tests with a tiny model. Production paths leave it None.
 
     Returns:
         Final training loss.
@@ -1140,6 +1237,17 @@ def train_dit_local(
         flow_matching_step,
         sample,
         sample_timesteps,
+    )
+    from training_state import (
+        TRAINING_STATE_FILENAME,
+        IncompatibleExperimentError,
+        build_manifest,
+        manifest_mismatches,
+        manifest_of,
+        read_training_state,
+        restore_rng_state,
+        steps_to_run,
+        write_training_state,
     )
 
     # Setup logging
@@ -1163,7 +1271,12 @@ def train_dit_local(
 
     # Create model
     num_classes = 13  # 12 cat breeds + other
-    if image_size == 128:
+    if model_fn is not None:
+        # Verification seam (issue #163 WP8): tests inject a tiny model so
+        # exact-resume behaviour can be exercised on CPU without building the
+        # 33M-param 128x128 generator. Production callers leave this None.
+        model = model_fn().to(device)
+    elif image_size == 128:
         model = tinydit_128(num_classes=num_classes).to(device)
     elif image_size == 256:
         model = tinydit_256(num_classes=num_classes).to(device)
@@ -1174,6 +1287,28 @@ def train_dit_local(
         f"Model: TinyDiT | Image size: {image_size} | "
         f"Parameters: {count_parameters(model):,} | "
         f"Timesteps: {timestep_sampling}"
+    )
+
+    # Immutable experiment manifest (issue #163 WP4). Built from the *model*
+    # (source of truth for architecture) and the *dataset on disk*, then
+    # embedded in every checkpoint and mirrored to training_state.json.
+    blocks = getattr(model, "blocks", [])
+    manifest = build_manifest(
+        experiment_id=experiment_id,
+        data_dir=data_dir,
+        image_size=int(getattr(model, "image_size", image_size)),
+        patch_size=int(getattr(model, "patch_size", 0)),
+        embed_dim=int(getattr(model, "embed_dim", 0)),
+        depth=len(blocks),
+        num_heads=int(blocks[0].attn.num_heads) if blocks else 0,
+        num_classes=int(getattr(model, "num_classes", num_classes) or num_classes),
+        batch_size=batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        learning_rate=lr,
+        warmup_steps=warmup_steps,
+        augmentation_level=augmentation_level,
+        seed=seed,
+        target_steps=steps,
     )
 
     # Create dataloaders (train + held-out validation, ADR-059 follow-up)
@@ -1269,11 +1404,72 @@ def train_dit_local(
     resume_state: dict[str, Any] = {}
     if resume:
         logger.info(f"Resuming from checkpoint: {resume}")
-        model, optimizer, _ema, start_step = load_checkpoint(
+        # Keep the local `optimizer` binding: load_checkpoint mutates and
+        # returns the same instance, but its return type is Optional —
+        # rebinding would poison later optimizer.param_groups access for mypy.
+        model, _loaded_optimizer, _ema, start_step = load_checkpoint(
             resume, model, optimizer, ema, logger, state=resume_state
         )
         # Use loaded EMA if available
         ema = _ema if _ema is not None else ema
+
+        # Exact global-step accounting (issue #163): `start_step` is the
+        # number of *completed* global steps, so this invocation runs
+        # max(0, target - completed) more — a 45k checkpoint with
+        # --steps 60000 performs exactly 15,000, and an already-complete
+        # checkpoint performs 0 (successful no-op at the end of this function).
+        additional_steps = steps_to_run(steps, start_step)
+        logger.info(
+            f"Global-step resume: checkpoint={start_step:,} completed | "
+            f"target={steps:,} | additional_steps={additional_steps:,}"
+        )
+        if additional_steps == 0:
+            logger.info(
+                "Checkpoint already at/past the global target; "
+                "no training steps will run."
+            )
+
+        # Manifest gate (issue #163 WP4): only meaningful when the load
+        # actually succeeded — a quarantined (corrupt) checkpoint leaves
+        # resume_state empty and restarts fresh instead of consulting a
+        # stale training_state.json sidecar.
+        if resume_state.get("loaded"):
+            saved_manifest = resume_state.get("manifest")
+            if not saved_manifest:
+                sidecar = read_training_state(
+                    Path(resume).parent / TRAINING_STATE_FILENAME
+                )
+                saved_manifest = manifest_of(sidecar) if sidecar else None
+            if saved_manifest:
+                mismatches = manifest_mismatches(saved_manifest, manifest)
+                if mismatches:
+                    detail = "; ".join(mismatches)
+                    if allow_experiment_mismatch:
+                        logger.warning(
+                            "Resuming despite experiment manifest mismatch "
+                            f"(--allow-experiment-mismatch): {detail}"
+                        )
+                    else:
+                        raise IncompatibleExperimentError(
+                            f"Checkpoint {resume} belongs to a different "
+                            f"experiment ({detail}). Refusing to resume; pass "
+                            "--allow-experiment-mismatch to override "
+                            "deliberately."
+                        )
+                else:
+                    logger.info("Experiment manifest matches; resume accepted")
+            else:
+                logger.warning(
+                    "Checkpoint has no experiment manifest (saved before "
+                    "issue #163); architecture was validated but config "
+                    "continuity cannot be verified."
+                )
+
+            if resume_state.get("rng_state"):
+                restore_rng_state(resume_state["rng_state"])
+                logger.info(
+                    "Restored RNG state (torch/python/numpy/cuda) from checkpoint"
+                )
 
         # Continue the recorded LR horizon. Resuming with a *smaller* --steps
         # than the run was scheduled for used to push the cosine past its end,
@@ -1292,9 +1488,25 @@ def train_dit_local(
                 )
             scheduler = make_scheduler(schedule_steps, schedule_warmup_steps)
 
-        # Adjust scheduler to current step without triggering the
-        # "scheduler.step() before optimizer.step()" warning
-        scheduler.last_epoch = start_step - 1
+        # Position the schedule exactly at the completed step count. After N
+        # completed optimizer steps the invariant is last_epoch == N and the
+        # param-group LR == lambda(N). Assigning last_epoch alone does *not*
+        # recompute the LR, so the first optimizer step after a resume used to
+        # run at the init LR (lambda(0)) — materialise it explicitly instead
+        # of calling scheduler.step(), which would warn about stepping before
+        # optimizer.step().
+        scheduler.last_epoch = start_step
+        base_lr_resume = optimizer.param_groups[0].get("initial_lr") or lr
+        min_lr_ratio_resume = (
+            min(min_lr / base_lr_resume, 1.0) if base_lr_resume > 0 else 0.0
+        )
+        resumed_lr_fn = build_lr_lambda(
+            schedule_warmup_steps, schedule_steps, min_lr_ratio_resume
+        )
+        resumed_lr = base_lr_resume * resumed_lr_fn(start_step)
+        for group in optimizer.param_groups:
+            group["lr"] = resumed_lr
+        scheduler._last_lr = [resumed_lr for _ in optimizer.param_groups]
 
     # Training state (best_loss/patience are restored so early stopping works
     # across hub-resumed slices instead of restarting on every resume)
@@ -1342,6 +1554,9 @@ def train_dit_local(
             val_loss_ema=val_loss_ema,
             steps=schedule_steps,
             warmup_steps=schedule_warmup_steps,
+            target_steps=steps,
+            manifest=manifest,
+            seed=seed,
         )
 
     try:
@@ -1729,6 +1944,14 @@ def train_dit_local(
                 Path(output).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(resume, output)
                 logger.info(f"Copied resumed checkpoint to {output}")
+            # Never clobber a valid completed checkpoint with a no-op one
+            # (issue #163) — but make sure the output directory at least has
+            # a training state describing the checkpoint that lives there.
+            state_path = Path(output).parent / TRAINING_STATE_FILENAME
+            if not state_path.exists():
+                write_training_state(
+                    state_path, manifest=manifest, completed_steps=step
+                )
             best_loss = float("nan")
 
         tracker.end_run()
@@ -1773,6 +1996,8 @@ def main(
     hub_resume: bool = False,
     no_hub_push: bool = False,
     hub_push_interval: int = 0,
+    experiment_id: str = "dit-breed-conditioned-v4",
+    allow_experiment_mismatch: bool = False,
 ):
     """Local entrypoint for Modal CLI (ADR-025: @modal.enter() class pattern).
 
@@ -1810,6 +2035,8 @@ def main(
         hub_resume=hub_resume,
         no_hub_push=no_hub_push,
         hub_push_interval=hub_push_interval,
+        experiment_id=experiment_id,
+        allow_experiment_mismatch=allow_experiment_mismatch,
     )
     print(f"Training completed: {result}")
 
@@ -1845,6 +2072,8 @@ if __name__ == "__main__":
             ema_beta=args.ema_beta,
             resume=args.resume,
             augmentation_level=args.augmentation_level,
+            experiment_id=args.experiment_id,
+            allow_experiment_mismatch=args.allow_experiment_mismatch,
         )
     except (TrainingError, Exception) as e:
         logging.error(f"Training failed: {e}")

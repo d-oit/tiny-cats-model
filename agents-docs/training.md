@@ -53,7 +53,7 @@ python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.y
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--data-dir` | required | Dataset root (`/data/cats` inside Modal) |
-| `--steps` | 100,000 | Training steps |
+| `--steps` | 100,000 | Global target steps (resume = `max(0, steps − completed)`) |
 | `--batch-size` | 512 | Batch size |
 | `--lr` | 1e-4 | Learning rate |
 | `--gradient-accumulation-steps` | 1 | Effective batch = batch × steps |
@@ -68,10 +68,47 @@ python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.y
 | `--save-interval` | 10,000 | Checkpoint frequency (Modal default: 500) |
 | `--sample-interval` | 5,000 | Sample generation frequency |
 | `--config` | - | YAML config applied as defaults |
+| `--experiment-id` | dit-breed-conditioned-v4 | Manifest identity; resumes must match |
+| `--allow-experiment-mismatch` | false | Override manifest rejection (explicit migration) |
 
 Checkpoint selection and early stopping use the held-out validation loss (EMA
 weights when available). The training-batch average is only a fallback when
 `--val-split 0` is set.
+
+### Exact global-step resume & experiment manifest (issue #163)
+
+`--steps` is a **global target**, never "train this many additional steps":n
+```bash
+# Slice 1: trains 0 -> 60,000
+modal run src/train_dit.py --data-dir /data/cats --steps 60000 --batch-size 32
+
+# Slice 2 (same experiment, e.g. after preemption): performs exactly
+# max(0, 400000 - 60000) = 340,000 more steps — not another 400,000
+modal run src/train_dit.py --data-dir /data/cats --steps 400000 --batch-size 32
+
+# Target already reached? Exits 0 without training or touching the checkpoint
+modal run src/train_dit.py --data-dir /data/cats --steps 60000
+```
+
+State written with every checkpoint:
+
+- **Embedded in `*.pt`**: manifest, completed/target steps, seed, optimizer,
+  EMA, and a torch/python/numpy/CUDA RNG snapshot restored on resume.
+- **`training_state.json`** beside the checkpoint: the manifest flattened to
+  top level plus `completed_steps` / `target_steps`, written atomically so
+  tooling can inspect a run without unpickling the checkpoint.
+
+Resume rules:
+
+| Situation | Behaviour |
+|-----------|-----------|
+| Manifest matches | Resume; performs exactly `max(0, target − completed)` steps |
+| Target raised (60k → 400k) | Allowed — slices raise the global target |
+| Architecture / dataset / seed / optimizer-critical change | `IncompatibleExperimentError` (pass `--allow-experiment-mismatch` to override) |
+| Checkpoint at/past target | Successful no-op; checkpoint bytes untouched |
+| Corrupt / truncated checkpoint | Quarantined to `*.corrupt`, restart from 0 (ADR-058) |
+
+See ADR-063 for the full field list and rationale.
 
 ### Comparing configurations
 
@@ -185,3 +222,4 @@ python scripts/benchmark_estimates.py --tune
 - [ADR-057: Modal CLI Verification & Best Practices](../plans/ADR-057-modal-cli-verification-and-best-practices-2026.md)
 - [ADR-025: Cold Start Optimization](../plans/ADR-025-modal-cold-start-optimization.md)
 - [ADR-058: GPU Selection & Cost Optimization](../plans/ADR-058-dit-l40s-non-spot-and-save-interval.md)
+- [ADR-063: Exact Global-Step Resume & Experiment Manifest](../plans/ADR-063-exact-global-step-resume-and-experiment-manifest.md)
