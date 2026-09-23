@@ -45,10 +45,14 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
+import tempfile
 import time
+import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -386,11 +390,88 @@ def _check_hf_available() -> bool:
     return _HF_AVAILABLE
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Canonical pool layout (issue #163 WP3):
+#
+#   checkpoints/pool/<experiment-id>/step-XXXXXX/<files>   immutable snapshot
+#   checkpoints/pool/<experiment-id>/latest/manifest.json  pointer (uploaded LAST)
+#
+# The pointer flip is the commit boundary: a failed or interrupted push stays
+# invisible to pullers because the previous pointer still resolves. Stale
+# results are rejected *before* any upload — an older provider's outcome can
+# never replace a newer checkpoint. The legacy flat layout
+# (checkpoints/pool/<name>) remains readable and writable when experiment_id
+# is None, so pre-WP3 writers/readers keep working during the transition.
+# ──────────────────────────────────────────────────────────────────────────
+
+POOL_ROOT = "checkpoints/pool"
+
+
+def _pool_base(experiment_id: str) -> str:
+    return f"{POOL_ROOT}/{experiment_id}"
+
+
+def _run_with_retry(op: Callable[[], Any], what: str) -> Any:
+    """Run a Hub operation with bounded exponential backoff (WP3 retries).
+
+    Uses the repo's retry_utils (ConnectionError/TimeoutError/OSError with
+    exponential backoff + jitter); falls back to a single attempt when
+    retry_utils is unavailable.
+    """
+    try:
+        from retry_utils import upload_with_retry
+    except ImportError:  # pragma: no cover - retry_utils ships with the repo
+        return op()
+    try:
+        return upload_with_retry(op, max_retries=3, initial_delay=1.0, logger=logger)
+    except Exception:
+        logger.warning(f"Hub {what} failed after retries")
+        raise
+
+
+def _is_missing_remote_error(exc: Exception) -> bool:
+    """True when a Hub error means 'file does not exist' (first push)."""
+    if isinstance(exc, FileNotFoundError):
+        return True
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status == 404:
+        return True
+    return type(exc).__name__ in ("EntryNotFound", "RepositoryNotFoundError")
+
+
+def _fetch_pool_pointer(
+    hub_repo: str, base: str, token: str | None
+) -> dict[str, Any] | None:
+    """Download ``latest/manifest.json``; returns None only when absent.
+
+    Transient/unknown failures propagate so a push cannot blindly clobber a
+    newer pointer it failed to read.
+    """
+    from huggingface_hub import hf_hub_download
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _run_with_retry(
+            lambda: hf_hub_download(
+                repo_id=hub_repo,
+                filename=f"{base}/latest/manifest.json",
+                repo_type="model",
+                token=token,
+                local_dir=tmp,
+            ),
+            "pointer download",
+        )
+        document = json.loads(Path(path).read_text())
+    return document if isinstance(document, dict) else None
+
+
 def push_checkpoint_to_hub(
     checkpoint_path: str | Path,
     hub_repo: str = "d4oit/tiny-cats-model",
     checkpoint_name: str | None = None,
     token: str | None = None,
+    experiment_id: str | None = None,
+    completed_steps: int | None = None,
+    training_state_path: str | Path | None = None,
 ) -> bool:
     """Push a checkpoint to HuggingFace Hub for cross-provider sync.
 
@@ -399,6 +480,14 @@ def push_checkpoint_to_hub(
         hub_repo: HF Hub repo ID (username/repo-name).
         checkpoint_name: Optional name for the checkpoint on the hub.
         token: HF token (defaults to HF_TOKEN env var).
+        experiment_id: When set *together with* ``completed_steps``, pushes
+            to the canonical immutable layout
+            ``checkpoints/pool/<experiment-id>/step-XXXXXX/`` and flips the
+            ``latest/manifest.json`` pointer last (issue #163 WP3). A push
+            whose step is below the remote pointer is rejected as stale.
+        completed_steps: Completed global step of this checkpoint.
+        training_state_path: Optional ``training_state.json`` included in the
+            step snapshot.
 
     Returns:
         True if upload succeeded, False otherwise.
@@ -437,28 +526,126 @@ def push_checkpoint_to_hub(
         if checkpoint_name is None:
             checkpoint_name = checkpoint_path.name
 
-        remote_path = f"checkpoints/pool/{checkpoint_name}"
+        if experiment_id is None or completed_steps is None:
+            # Legacy flat layout (pre-WP3 writers and readers).
+            remote_path = f"{POOL_ROOT}/{checkpoint_name}"
+            if checkpoint_path.is_file():
+                api.upload_file(
+                    path_or_fileobj=str(checkpoint_path),
+                    path_in_repo=remote_path,
+                    repo_id=hub_repo,
+                    repo_type="model",
+                    token=token,
+                    commit_message=f"pool: push checkpoint {checkpoint_name}",
+                )
+            elif checkpoint_path.is_dir():
+                api.upload_folder(
+                    folder_path=str(checkpoint_path),
+                    path_in_repo=remote_path,
+                    repo_id=hub_repo,
+                    repo_type="model",
+                    token=token,
+                    commit_message=f"pool: push checkpoint dir {checkpoint_name}",
+                )
+            logger.info(f"✅ Pushed checkpoint to: {hub_repo}/{remote_path}")
+            return True
 
-        if checkpoint_path.is_file():
-            api.upload_file(
+        # Canonical pool layout (issue #163 WP3).
+        completed = int(completed_steps)
+        step_dir = f"step-{completed:06d}"
+        base = _pool_base(experiment_id)
+
+        try:
+            pointer = _fetch_pool_pointer(hub_repo, base, token)
+        except Exception as exc:
+            if _is_missing_remote_error(exc):
+                pointer = None
+            else:
+                # Unreadable pointer: fail rather than risk clobbering a
+                # newer remote state we could not inspect.
+                raise
+
+        remote_step = -1
+        if pointer is not None:
+            try:
+                remote_step = int(pointer.get("completed_steps", -1))
+            except (TypeError, ValueError):
+                remote_step = -1
+            if remote_step > completed:
+                logger.warning(
+                    f"Skipping stale checkpoint push for {experiment_id}: "
+                    f"local step {completed} < remote step {remote_step} "
+                    "(never replace a newer checkpoint with an older result)"
+                )
+                return False
+
+        # Same-step re-pushes (model + EMA + state) merge their file lists.
+        files: set[str] = set()
+        if pointer is not None and remote_step == completed:
+            existing = pointer.get("files", [])
+            if isinstance(existing, list):
+                files.update(str(name) for name in existing)
+        files.add(checkpoint_name)
+
+        # 1) Immutable step snapshot (before the pointer flip).
+        _run_with_retry(
+            lambda: api.upload_file(
                 path_or_fileobj=str(checkpoint_path),
-                path_in_repo=remote_path,
+                path_in_repo=f"{base}/{step_dir}/{checkpoint_name}",
                 repo_id=hub_repo,
                 repo_type="model",
                 token=token,
-                commit_message=f"pool: push checkpoint {checkpoint_name}",
-            )
-        elif checkpoint_path.is_dir():
-            api.upload_folder(
-                folder_path=str(checkpoint_path),
-                path_in_repo=remote_path,
-                repo_id=hub_repo,
-                repo_type="model",
-                token=token,
-                commit_message=f"pool: push checkpoint dir {checkpoint_name}",
-            )
+                commit_message=(
+                    f"pool: {experiment_id} step {completed} {checkpoint_name}"
+                ),
+            ),
+            f"step snapshot upload ({checkpoint_name})",
+        )
 
-        logger.info(f"✅ Pushed checkpoint to: {hub_repo}/{remote_path}")
+        state = Path(training_state_path) if training_state_path else None
+        if state is not None and state.exists():
+            _run_with_retry(
+                lambda: api.upload_file(
+                    path_or_fileobj=str(state),
+                    path_in_repo=f"{base}/{step_dir}/training_state.json",
+                    repo_id=hub_repo,
+                    repo_type="model",
+                    token=token,
+                    commit_message=(
+                        f"pool: {experiment_id} step {completed} training_state.json"
+                    ),
+                ),
+                "training state upload",
+            )
+            files.add("training_state.json")
+
+        # 2) Pointer flip LAST = the atomic commit boundary (WP3): until this
+        # commit lands, pullers still resolve the previous snapshot.
+        new_pointer = {
+            "schema_version": 1,
+            "experiment_id": experiment_id,
+            "completed_steps": completed,
+            "step_dir": step_dir,
+            "files": sorted(files),
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        payload = json.dumps(new_pointer, indent=2, sort_keys=True).encode()
+        _run_with_retry(
+            lambda: api.upload_file(
+                path_or_fileobj=payload,
+                path_in_repo=f"{base}/latest/manifest.json",
+                repo_id=hub_repo,
+                repo_type="model",
+                token=token,
+                commit_message=f"pool: {experiment_id} pointer -> step {completed}",
+            ),
+            "pointer flip",
+        )
+
+        logger.info(
+            f"✅ Pushed checkpoint snapshot: {hub_repo}/{base}/{step_dir}/"
+            f"{checkpoint_name} (pointer -> step {completed})"
+        )
         return True
 
     except Exception as e:
@@ -471,6 +658,7 @@ def pull_checkpoint_from_hub(
     checkpoint_name: str = "dit_model.pt",
     output_dir: str | Path = "checkpoints",
     token: str | None = None,
+    experiment_id: str | None = None,
 ) -> Path | None:
     """Pull a checkpoint from HuggingFace Hub for cross-provider resume.
 
@@ -479,6 +667,13 @@ def pull_checkpoint_from_hub(
         checkpoint_name: Name of the checkpoint file on the hub.
         output_dir: Local directory to save the checkpoint.
         token: HF token (defaults to HF_TOKEN env var).
+        experiment_id: When set, resolves the canonical layout via the
+            ``latest/manifest.json`` pointer — the newest committed snapshot
+            (issue #163 WP3) — falling back to the legacy flat path when no
+            pointer exists yet. In this mode the download is structurally
+            validated (torch zip) before activation; corrupt files are
+            quarantined to ``*.corrupt`` and None is returned. When None,
+            the legacy flat layout is used unchanged.
 
     Returns:
         Path to downloaded checkpoint, or None if not found.
@@ -492,23 +687,117 @@ def pull_checkpoint_from_hub(
     try:
         from huggingface_hub import hf_hub_download
 
-        remote_path = f"checkpoints/pool/{checkpoint_name}"
-
         # Ensure output_dir exists — hf_hub_download() requires it.
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        local_path = hf_hub_download(
-            repo_id=hub_repo,
-            filename=remote_path,
-            repo_type="model",
-            token=token,
-            local_dir=str(output_dir),
-        )
+        if experiment_id is None:
+            # Legacy flat layout (unchanged, pre-WP3 readers).
+            remote_path = f"{POOL_ROOT}/{checkpoint_name}"
+            local_path = hf_hub_download(
+                repo_id=hub_repo,
+                filename=remote_path,
+                repo_type="model",
+                token=token,
+                local_dir=str(output_dir),
+            )
+            logger.info(f"✅ Pulled checkpoint from: {hub_repo}/{remote_path}")
+            logger.info(f"   Saved to: {local_path}")
+            return Path(local_path)
 
-        logger.info(f"✅ Pulled checkpoint from: {hub_repo}/{remote_path}")
-        logger.info(f"   Saved to: {local_path}")
-        return Path(local_path)
+        # Canonical layout: resolve the newest committed snapshot.
+        base = _pool_base(experiment_id)
+        try:
+            pointer = _fetch_pool_pointer(hub_repo, base, token)
+        except Exception as exc:
+            if _is_missing_remote_error(exc):
+                pointer = None
+            else:
+                raise
+
+        if pointer is None:
+            logger.info(
+                "No pool pointer on Hub (first push or pre-WP3 repo); "
+                "trying legacy flat layout"
+            )
+            remote_path = f"{POOL_ROOT}/{checkpoint_name}"
+            downloaded = Path(
+                _run_with_retry(
+                    lambda: hf_hub_download(
+                        repo_id=hub_repo,
+                        filename=remote_path,
+                        repo_type="model",
+                        token=token,
+                        local_dir=str(output_dir),
+                    ),
+                    "legacy checkpoint download",
+                )
+            )
+        else:
+            step_dir = str(pointer.get("step_dir", ""))
+            listed = pointer.get("files", [])
+            try:
+                completed = int(pointer.get("completed_steps", -1))
+            except (TypeError, ValueError):
+                completed = -1
+            if (
+                completed < 0
+                or not step_dir.startswith("step-")
+                or not isinstance(listed, list)
+                or checkpoint_name not in listed
+            ):
+                logger.warning(
+                    f"Hub pointer for {experiment_id} is invalid or does not "
+                    f"include {checkpoint_name}; not activating it"
+                )
+                return None
+            remote_path = f"{base}/{step_dir}/{checkpoint_name}"
+            downloaded = Path(
+                _run_with_retry(
+                    lambda: hf_hub_download(
+                        repo_id=hub_repo,
+                        filename=remote_path,
+                        repo_type="model",
+                        token=token,
+                        local_dir=str(output_dir),
+                    ),
+                    "checkpoint download",
+                )
+            )
+            # Training state travels with the snapshot (best effort).
+            if "training_state.json" in listed:
+                try:
+                    _run_with_retry(
+                        lambda: hf_hub_download(
+                            repo_id=hub_repo,
+                            filename=f"{base}/{step_dir}/training_state.json",
+                            repo_type="model",
+                            token=token,
+                            local_dir=str(output_dir),
+                        ),
+                        "training state download",
+                    )
+                except Exception as exc:
+                    logger.warning(f"Could not pull training_state.json: {exc}")
+
+        # Validate before activation (WP3): a corrupt transfer must never
+        # become the resume source.
+        if not zipfile.is_zipfile(downloaded):
+            quarantine = downloaded.with_name(downloaded.name + ".corrupt")
+            try:
+                downloaded.rename(quarantine)
+            except OSError:  # pragma: no cover - defensive
+                quarantine = downloaded
+            logger.warning(
+                f"Downloaded checkpoint failed zip validation; quarantined to "
+                f"{quarantine} and not activated"
+            )
+            return None
+        logger.info(
+            f"✅ Pulled validated checkpoint from {hub_repo}/{remote_path} "
+            f"\n   Saved to: {downloaded}"
+        )
+        return downloaded
 
     except Exception as e:
         logger.info(f"No checkpoint found on Hub ({e}) — starting fresh")
@@ -541,6 +830,7 @@ def train_with_fallback(
     image_size: int = 128,
     hub_repo: str = "d4oit/tiny-cats-model",
     hub_token: str | None = None,
+    experiment_id: str | None = "dit-breed-conditioned-v4",
     **train_kwargs: Any,
 ) -> PoolTrainingResult:
     """Train TinyDiT on the current provider with Hub-based checkpoint resume.
@@ -568,6 +858,10 @@ def train_with_fallback(
         image_size: Image size (128 or 256).
         hub_repo: HF Hub repo for checkpoint sync.
         hub_token: HF token for checkpoint sync.
+        experiment_id: Experiment id for the canonical Hub pool layout
+            (issue #163 WP3): immutable ``step-XXXXXX`` snapshots plus a
+            ``latest/manifest.json`` pointer. None keeps the legacy flat
+            layout.
         **train_kwargs: Additional args passed to train_dit_local.
 
     Returns:
@@ -592,6 +886,7 @@ def train_with_fallback(
         checkpoint_name=checkpoint_name,
         output_dir=config.checkpoint_dir,
         token=hub_token,
+        experiment_id=experiment_id,
     )
     resume_from = str(pulled) if pulled else None
 
@@ -641,11 +936,23 @@ def train_with_fallback(
         # Push checkpoint back to Hub for next provider
         hub_token = hub_token or os.environ.get("HF_TOKEN")
         if hub_token:
+            from training_state import TRAINING_STATE_FILENAME, read_training_state
+
+            state = read_training_state(
+                Path(ema_output).parent / TRAINING_STATE_FILENAME
+            )
             push_checkpoint_to_hub(
                 checkpoint_path=ema_output,
                 hub_repo=hub_repo,
                 checkpoint_name=checkpoint_name,
                 token=hub_token,
+                experiment_id=experiment_id if state else None,
+                completed_steps=int(state["completed_steps"]) if state else None,
+                training_state_path=(
+                    str(Path(ema_output).parent / TRAINING_STATE_FILENAME)
+                    if state
+                    else None
+                ),
             )
             logger.info("✅ Checkpoint synced to Hub for cross-provider resume")
 
@@ -670,11 +977,25 @@ def train_with_fallback(
         # Try to push any partial checkpoint
         partial_path = Path(config.checkpoint_dir) / "dit_model.pt"
         if partial_path.exists() and hub_token:
+            from training_state import TRAINING_STATE_FILENAME, read_training_state
+
+            partial_state = read_training_state(
+                partial_path.parent / TRAINING_STATE_FILENAME
+            )
             push_checkpoint_to_hub(
                 checkpoint_path=partial_path,
                 hub_repo=hub_repo,
                 checkpoint_name=f"partial_{checkpoint_name}",
                 token=hub_token,
+                experiment_id=experiment_id if partial_state else None,
+                completed_steps=(
+                    int(partial_state["completed_steps"]) if partial_state else None
+                ),
+                training_state_path=(
+                    str(partial_path.parent / TRAINING_STATE_FILENAME)
+                    if partial_state
+                    else None
+                ),
             )
 
         return PoolTrainingResult(

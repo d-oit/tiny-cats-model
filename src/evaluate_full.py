@@ -9,7 +9,7 @@ Computes:
 - Per-breed sample quality
 
 Usage:
-    python src/evaluate_full.py --checkpoint checkpoints/tinydit_final.pt
+    python src/evaluate_full.py --checkpoint checkpoints/pool/dit_model.pt
     python src/evaluate_full.py --generate-samples --num-samples 1000
     python src/evaluate_full.py --compute-fid --real-dir data/cats/test --fake-dir samples/
 
@@ -108,13 +108,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="samples/evaluation",
+        default="artifacts/evaluation/samples",
         help="Output directory for generated samples",
     )
     parser.add_argument(
         "--report-path",
         type=str,
-        default="evaluation_report.json",
+        default="artifacts/evaluation/evaluation_report.json",
         help="Path to save evaluation report",
     )
     parser.add_argument(

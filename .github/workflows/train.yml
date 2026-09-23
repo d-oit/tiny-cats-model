@@ -202,17 +202,17 @@ jobs:
         run: |
           pip install huggingface_hub safetensors pillow
           # Run evaluation if generator checkpoint exists
-          if [ -f "tinydit_final.pt" ]; then
+          if [ -f "model.pt" ]; then
             echo "Running evaluation..."
-            python src/evaluate_full.py --checkpoint tinydit_final.pt \
+            python src/evaluate_full.py --checkpoint model.pt \
               --generate-samples --num-samples 16 --all-breeds \
               --output-dir samples/evaluation \
               --report-path evaluation_report.json || true
           fi
           # Run benchmarks if models exist
-          if [ -f "tinydit_final.pt" ]; then
+          if [ -f "model.pt" ]; then
             echo "Running benchmarks..."
-            python src/benchmark_inference.py --model tinydit_final.pt \
+            python src/benchmark_inference.py --model model.pt \
               --device cpu --num-warmup 5 --num-runs 20 \
               --benchmark-throughput --batch-sizes 1,4,8 \
               --report-path benchmark_report.json || true
@@ -220,7 +220,7 @@ jobs:
           # Use comprehensive upload utility
           python src/upload_to_huggingface.py \
             --classifier best_cats_model.pt \
-            --generator tinydit_final.pt \
+            --generator model.pt \
             --onnx-classifier cats_classifier.onnx \
             --onnx-generator generator.onnx \
             --quantized-classifier cats_quantized.onnx \
@@ -243,7 +243,7 @@ jobs:
               ('best_cats_model.pt', 'classifier/model.pt'),
               ('generator.onnx', 'generator/model.onnx'),
               ('generator_quantized.onnx', 'generator/model_quantized.onnx'),
-              ('tinydit_final.pt', 'generator/model.pt'),
+              ('model.pt', 'generator/model.pt'),
           ]:
               if os.path.exists(local):
                   api.upload_file(
@@ -296,7 +296,7 @@ jobs:
         run: |
           modal volume get dit-outputs generator.onnx ./generator.onnx || echo "No generator ONNX found"
           modal volume get dit-outputs generator_quantized.onnx ./generator_quantized.onnx || echo "No quantized generator ONNX found"
-          modal volume get dit-outputs tinydit_final.pt ./tinydit_final.pt || echo "No TinyDiT checkpoint found"
+          modal volume get dit-outputs artifacts/generator/model.pt ./model.pt || echo "No generator checkpoint found"
       - name: Upload training artifacts
         uses: actions/upload-artifact@v7
         if: always()
@@ -305,7 +305,7 @@ jobs:
           path: |
             generator.onnx
             generator_quantized.onnx
-            tinydit_final.pt
+            model.pt
           retention-days: 7
           if-no-files-found: warn
       - name: Upload to Hugging Face Hub
@@ -315,24 +315,24 @@ jobs:
         run: |
           pip install huggingface_hub safetensors pillow
           # Run evaluation if generator checkpoint exists
-          if [ -f "tinydit_final.pt" ]; then
+          if [ -f "model.pt" ]; then
             echo "Running evaluation..."
-            python src/evaluate_full.py --checkpoint tinydit_final.pt \
+            python src/evaluate_full.py --checkpoint model.pt \
               --generate-samples --num-samples 16 --all-breeds \
               --output-dir samples/evaluation \
               --report-path evaluation_report.json || true
           fi
           # Run benchmarks if models exist
-          if [ -f "tinydit_final.pt" ] || [ -f "generator.onnx" ]; then
+          if [ -f "model.pt" ] || [ -f "generator.onnx" ]; then
             echo "Running benchmarks..."
-            python src/benchmark_inference.py --model tinydit_final.pt \
+            python src/benchmark_inference.py --model model.pt \
               --device cpu --num-warmup 5 --num-runs 20 \
               --benchmark-throughput --batch-sizes 1,4,8 \
               --report-path benchmark_report.json || true
           fi
           # Use comprehensive upload utility
           python src/upload_to_huggingface.py \
-            --generator tinydit_final.pt \
+            --generator model.pt \
             --onnx-generator generator.onnx \
             --quantized-generator generator_quantized.onnx \
             --evaluation-report evaluation_report.json \
@@ -349,7 +349,7 @@ jobs:
             api.upload_file('generator.onnx', 'generator/model.onnx', 'd4oit/tiny-cats-model')
           if os.path.exists('generator_quantized.onnx'):
             api.upload_file('generator_quantized.onnx', 'generator/model_quantized.onnx', 'd4oit/tiny-cats-model')
-          if os.path.exists('tinydit_final.pt'):
-            api.upload_file('tinydit_final.pt', 'generator/model.pt', 'd4oit/tiny-cats-model')
+          if os.path.exists('model.pt'):
+            api.upload_file('model.pt', 'generator/model.pt', 'd4oit/tiny-cats-model')
           print('Files uploaded successfully')
           "

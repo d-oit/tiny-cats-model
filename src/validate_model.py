@@ -10,8 +10,8 @@ Features:
 - Comprehensive validation report
 
 Usage:
-    python src/validate_model.py checkpoints/tinydit_final.pt --thresholds config/validation.json
-    python src/validate_model.py checkpoints/tinydit_final.pt --check-all --verbose
+    python src/validate_model.py checkpoints/pool/dit_model_ema.pt --thresholds config/validation.json
+    python src/validate_model.py checkpoints/pool/dit_model_ema.pt --check-all --verbose
 """
 
 from __future__ import annotations
@@ -770,7 +770,7 @@ def main():
     parser.add_argument(
         "--output",
         type=str,
-        default=None,
+        default="artifacts/evaluation/validation_report.json",
         help="Output path for validation report JSON",
     )
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")

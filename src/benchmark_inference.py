@@ -9,7 +9,7 @@ Measures:
 - Model size
 
 Usage:
-    python src/benchmark_inference.py --model checkpoints/tinydit_final.pt
+    python src/benchmark_inference.py --model checkpoints/pool/dit_model.pt
     python src/benchmark_inference.py --onnx frontend/public/models/generator.onnx
     python src/benchmark_inference.py --device cuda --batch-size 32
 
@@ -112,7 +112,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--report-path",
         type=str,
-        default="benchmark_report.json",
+        default="artifacts/evaluation/benchmark_report.json",
         help="Path to save benchmark report",
     )
     parser.add_argument(

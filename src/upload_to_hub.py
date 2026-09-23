@@ -10,8 +10,8 @@ Features:
 - Version tracking with tags
 
 Usage:
-    python src/upload_to_hub.py checkpoints/tinydit_final.pt --repo-id d-oit/tinydit-cats
-    python src/upload_to_hub.py checkpoints/tinydit_final.pt --upload-samples
+    python src/upload_to_hub.py artifacts/generator/model.pt --repo-id d-oit/tinydit-cats
+    python src/upload_to_hub.py artifacts/generator/model.pt --upload-samples
 """
 
 from __future__ import annotations

@@ -3,7 +3,7 @@
 Verify a trained checkpoint is valid and can be used for inference.
 
 Usage:
-    python src/verify_checkpoint.py --checkpoint checkpoints/tinydit_final.pt
+    python src/verify_checkpoint.py --checkpoint checkpoints/pool/dit_model.pt
 """
 
 from __future__ import annotations
@@ -185,7 +185,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint",
         type=str,
-        default="checkpoints/tinydit_final.pt",
+        default="checkpoints/pool/dit_model.pt",
         help="Path to checkpoint file",
     )
     parser.add_argument(

@@ -110,6 +110,53 @@ Resume rules:
 
 See ADR-063 for the full field list and rationale.
 
+### Canonical checkpoint & artifact layout (issue #163 WP2/WP3)
+
+Layout under the outputs root (`/outputs` on Modal, repo root locally):
+
+```
+checkpoints/pool/            # live checkpoint (canonical)
+├── dit_model.pt
+├── dit_model_ema.pt
+├── training_state.json
+└── training.log
+artifacts/
+├── generator/               # model.pt, model_ema.pt, model.onnx, model_quantized.onnx
+├── training/                # final_checkpoint.pt, training_state.json, training.log
+├── evaluation/              # evaluation_report.json, benchmark_report.json, samples/
+└── manifest.json            # sha256 manifest of the package
+```
+
+- The final `artifacts/` package is built **only when the run's global
+  target is reached**; partial slices never publish final artifacts, and a
+  broken package fails the job (`ArtifactPackageError` → `TrainingError`)
+  instead of passing silently.
+- Legacy locations (`checkpoints/dit/current`,
+  `checkpoints/dit/breed-conditioned-v4`, `tinydit_final.pt`) are read-only
+  migration inputs — resume picks them up when the canonical directory is
+  empty, but nothing writes them anymore.
+- Report-writing scripts default to `artifacts/evaluation/…`.
+
+HF Hub is the cross-provider checkpoint transport (WP3):
+
+```
+checkpoints/pool/<experiment-id>/
+├── latest/manifest.json     # pointer: step, files, updated_at (uploaded LAST)
+├── step-0060000/            # immutable snapshot: dit_model.pt,
+│                            # dit_model_ema.pt, training_state.json
+└── step-0120000/
+```
+
+- The pointer flip is the commit boundary: interrupted pushes stay
+  invisible and pullers always resolve the newest committed snapshot.
+- A push whose completed step is below the remote pointer is **rejected**
+  (a stale provider result never overwrites a newer checkpoint).
+- Pulls validate the download (torch zip) before activation; corrupt files
+  quarantine to `*.corrupt`.
+- Transient Hub errors retry with exponential backoff (`retry_utils`).
+- The legacy flat `checkpoints/pool/<name>` layout stays readable when
+  `experiment_id` is not passed (transition support).
+
 ### Comparing configurations
 
 `scripts/tune_dit_configs.py` trains several arms and scores them all on one
@@ -183,7 +230,7 @@ gh workflow run train-pool.yml -f providers="modal,lightning"
 modal run src/train_dit.py --help
 
 # Verify checkpoint
-python src/verify_checkpoint.py --checkpoint checkpoints/tinydit_final.pt
+python src/verify_checkpoint.py --checkpoint checkpoints/pool/dit_model.pt
 
 # Export and test ONNX
 python src/export_dit_onnx.py --verify --test
@@ -223,3 +270,4 @@ python scripts/benchmark_estimates.py --tune
 - [ADR-025: Cold Start Optimization](../plans/ADR-025-modal-cold-start-optimization.md)
 - [ADR-058: GPU Selection & Cost Optimization](../plans/ADR-058-dit-l40s-non-spot-and-save-interval.md)
 - [ADR-063: Exact Global-Step Resume & Experiment Manifest](../plans/ADR-063-exact-global-step-resume-and-experiment-manifest.md)
+- [ADR-064: Canonical Artifact Layout & HF Hub Pool Transport](../plans/ADR-064-canonical-artifact-layout-and-hub-pool-transport.md)
