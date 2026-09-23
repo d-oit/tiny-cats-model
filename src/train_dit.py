@@ -157,8 +157,62 @@ def setup_logging(log_file: str | None = None) -> logging.Logger:
     return logger
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command line arguments."""
+# YAML config keys whose spelling differs from the argparse destination.
+_CONFIG_KEY_ALIASES = {
+    "patience": "early_stopping_patience",
+    "min_delta": "early_stopping_min_delta",
+    "beta": "ema_beta",
+    "level": "augmentation_level",
+}
+
+
+def load_yaml_defaults(parser: argparse.ArgumentParser, config_path: str) -> list[str]:
+    """Apply a YAML config file as parser defaults.
+
+    The previous implementation applied the config *after* parse_args() and only
+    when the attribute was None — but argparse always populates defaults, so no
+    key ever qualified and ``--config`` was silently a no-op. Setting defaults
+    before parsing keeps the documented "CLI flags override the config" order.
+
+    Args:
+        parser: Argument parser to set defaults on.
+        config_path: Path to the YAML config file.
+
+    Returns:
+        Config keys that were ignored because no matching argument exists.
+    """
+    import yaml
+
+    with open(config_path) as f:
+        config = yaml.safe_load(f) or {}
+
+    known_dests = {action.dest for action in parser._actions}
+    defaults: dict[str, Any] = {}
+    ignored: list[str] = []
+
+    for section in config.values():
+        if not isinstance(section, dict):
+            continue
+        for key, value in section.items():
+            dest = _CONFIG_KEY_ALIASES.get(key, key.replace("-", "_"))
+            if dest in known_dests:
+                defaults[dest] = value
+            else:
+                ignored.append(key)
+
+    parser.set_defaults(**defaults)
+    return ignored
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command line arguments.
+
+    Args:
+        argv: Optional argument list (defaults to ``sys.argv[1:]``).
+
+    Returns:
+        Parsed arguments, with any ``--config`` YAML applied as defaults.
+    """
     parser = argparse.ArgumentParser(
         description="Train TinyDiT for cat image generation",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -285,23 +339,55 @@ def parse_args() -> argparse.Namespace:
     # Performance
     parser.add_argument("--num-workers", type=int, default=4, help="DataLoader workers")
 
-    args = parser.parse_args()
+    # Validation
+    parser.add_argument(
+        "--val-split",
+        type=float,
+        default=0.05,
+        help="Fraction of the dataset held out for validation (0 disables)",
+    )
+    parser.add_argument(
+        "--val-batches",
+        type=int,
+        default=8,
+        help="Number of validation batches per evaluation (0 = all)",
+    )
 
-    # Load config from YAML if provided
-    if args.config:
-        import yaml
+    # Timestep sampling
+    parser.add_argument(
+        "--timestep-sampling",
+        type=str,
+        default="uniform",
+        choices=["uniform", "logit_normal"],
+        help="Timestep distribution (logit_normal concentrates on mid-trajectory)",
+    )
+    parser.add_argument(
+        "--logit-normal-mean",
+        type=float,
+        default=0.0,
+        help="Mean of the logit-normal timestep sampler",
+    )
+    parser.add_argument(
+        "--logit-normal-std",
+        type=float,
+        default=1.0,
+        help="Std of the logit-normal timestep sampler",
+    )
 
-        with open(args.config) as f:
-            config = yaml.safe_load(f)
+    # Read --config before parsing so the YAML can be applied as defaults and
+    # explicit CLI flags still win.
+    config_preparser = argparse.ArgumentParser(add_help=False)
+    config_preparser.add_argument("--config", type=str, default=None)
+    config_path = config_preparser.parse_known_args(argv)[0].config
 
-        # Apply config values as defaults (CLI args still override)
-        for section in config.values():
-            if isinstance(section, dict):
-                for key, value in section.items():
-                    if getattr(args, key.replace("-", "_"), None) is None:
-                        setattr(args, key.replace("-", "_"), value)
+    if config_path:
+        ignored = load_yaml_defaults(parser, config_path)
+        if ignored:
+            logging.getLogger("tiny_dit").warning(
+                "Ignoring unknown config keys: %s", ", ".join(sorted(set(ignored)))
+            )
 
-    return args
+    return parser.parse_args(argv)
 
 
 def set_seed(seed: int) -> None:
@@ -328,6 +414,41 @@ def log_gpu_memory(logger: logging.Logger, prefix: str = "") -> None:
         )
 
 
+def build_lr_lambda(
+    warmup_steps: int,
+    steps: int,
+    min_lr_ratio: float = 0.0,
+) -> Any:
+    """Build the linear-warmup + cosine-decay LR multiplier.
+
+    Args:
+        warmup_steps: Number of warmup steps (0.01x -> 1.0x LR).
+        steps: Total steps for the cosine horizon.
+        min_lr_ratio: ``min_lr / lr``, the floor the cosine decays to. Without
+            it the schedule decayed to a literal 0.0 LR (--min-lr was parsed
+            and then never read).
+
+    Returns:
+        Callable mapping a step index to an LR multiplier.
+    """
+
+    def lr_lambda(current_step: int) -> float:
+        if current_step < warmup_steps:
+            # Linear warmup: 0.01 -> 1.0
+            return 0.01 + 0.99 * float(current_step) / float(max(1, warmup_steps))
+        # Cosine annealing: 1.0 -> min_lr_ratio. progress is clamped to [0, 1]
+        # because resuming a sliced run with a smaller --steps used to push it
+        # past 1, where the cosine turns back up and *raises* the LR.
+        progress = float(current_step - warmup_steps) / float(
+            max(1, steps - warmup_steps)
+        )
+        progress = min(max(progress, 0.0), 1.0)
+        decay = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return max(decay, min_lr_ratio)
+
+    return lr_lambda
+
+
 def save_checkpoint(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -337,6 +458,12 @@ def save_checkpoint(
     path: str | Path,
     logger: logging.Logger,
     is_best: bool = False,
+    best_loss: float | None = None,
+    patience_counter: int = 0,
+    val_loss: float | None = None,
+    val_loss_ema: float | None = None,
+    steps: int | None = None,
+    warmup_steps: int | None = None,
 ) -> None:
     """Save training checkpoint with EMA weights.
 
@@ -345,10 +472,17 @@ def save_checkpoint(
         optimizer: Optimizer state.
         ema: EMA tracker.
         step: Current training step.
-        loss: Current loss value.
+        loss: Current loss value (the selection metric).
         path: Checkpoint path.
         logger: Logger instance.
         is_best: Whether this is the best model.
+        best_loss: Best selection loss so far, persisted so early stopping
+            survives a resume (it used to reset to inf on every slice).
+        patience_counter: Consecutive non-improving evaluations.
+        val_loss: Held-out validation loss at this step, when measured.
+        val_loss_ema: EMA-weight validation loss, when measured.
+        steps: LR-schedule horizon this run is using.
+        warmup_steps: LR-schedule warmup this run is using.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -360,6 +494,12 @@ def save_checkpoint(
         "ema_shadow_params": ema.shadow_params,
         "ema_step": ema.step,
         "loss": loss,
+        "val_loss": val_loss,
+        "val_loss_ema": val_loss_ema,
+        "best_loss": best_loss,
+        "patience_counter": patience_counter,
+        "steps": steps,
+        "warmup_steps": warmup_steps,
         "timestamp": datetime.now().isoformat(),
         "config": {
             "image_size": model.image_size,
@@ -367,6 +507,9 @@ def save_checkpoint(
             "embed_dim": model.embed_dim,
             "depth": len(model.blocks),
             "num_heads": model.blocks[0].attn.num_heads,
+            # Persisted so validation/eval can rebuild the generative model
+            # instead of guessing from a hardcoded default (validate_model.py).
+            "num_classes": getattr(model, "num_classes", None),
         },
     }
 
@@ -390,6 +533,7 @@ def load_checkpoint(
     optimizer: torch.optim.Optimizer | None = None,
     ema: EMA | None = None,
     logger: logging.Logger | None = None,
+    state: dict[str, Any] | None = None,
 ) -> tuple[nn.Module, torch.optim.Optimizer | None, EMA | None, int]:
     """Load checkpoint for resume training.
 
@@ -399,6 +543,10 @@ def load_checkpoint(
         optimizer: Optional optimizer to load state.
         ema: Optional EMA to load shadow params.
         logger: Optional logger.
+        state: Optional dict populated with the persisted training state
+            (``best_loss``, ``patience_counter``, ``val_loss``, ``steps``,
+            ``warmup_steps``) so a resumed slice keeps early-stopping and
+            LR-schedule continuity instead of restarting them from scratch.
 
     Returns:
         Tuple of (model, optimizer, ema, start_step). When ``path`` exists but
@@ -464,6 +612,18 @@ def load_checkpoint(
         if logger:
             logger.info(f"Loaded EMA state (step {ema.step:,})")
 
+    if state is not None:
+        state.update(
+            {
+                "best_loss": checkpoint.get("best_loss"),
+                "patience_counter": checkpoint.get("patience_counter", 0),
+                "val_loss": checkpoint.get("val_loss"),
+                "val_loss_ema": checkpoint.get("val_loss_ema"),
+                "steps": checkpoint.get("steps"),
+                "warmup_steps": checkpoint.get("warmup_steps"),
+            }
+        )
+
     start_step = checkpoint.get("step", 0) + 1
     if logger:
         logger.info(f"Loaded checkpoint from {path} (resuming at step {start_step:,})")
@@ -507,6 +667,7 @@ image = (
     .add_local_file("src/train_dit.py", "/app/train_dit.py")
     .add_local_file("src/dit.py", "/app/dit.py")
     .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
+    .add_local_file("src/dit_validation.py", "/app/dit_validation.py")
     .add_local_file("src/dataset.py", "/app/dataset.py")
     .add_local_file("src/gpu_pool.py", "/app/gpu_pool.py")
     .add_local_file("src/export_dit_onnx.py", "/app/export_dit_onnx.py")
@@ -613,6 +774,12 @@ class DiTTrainer:
         gradient_clip: float = 1.0,
         gradient_accumulation_steps: int = 1,
         warmup_steps: int = 2_000,
+        min_lr: float = 1e-6,
+        val_split: float = 0.05,
+        val_batches: int = 8,
+        timestep_sampling: str = "uniform",
+        logit_normal_mean: float = 0.0,
+        logit_normal_std: float = 1.0,
         log_interval: int = 100,
         save_interval: int = 500,
         early_stopping_patience: int = 15,
@@ -765,6 +932,12 @@ class DiTTrainer:
                 gradient_clip=gradient_clip,
                 gradient_accumulation_steps=gradient_accumulation_steps,
                 warmup_steps=warmup_steps,
+                min_lr=min_lr,
+                val_split=val_split,
+                val_batches=val_batches,
+                timestep_sampling=timestep_sampling,
+                logit_normal_mean=logit_normal_mean,
+                logit_normal_std=logit_normal_std,
                 log_interval=log_interval,
                 save_interval=save_interval,
                 sample_interval=sample_interval,
@@ -901,6 +1074,12 @@ def train_dit_local(
     gradient_clip: float = 1.0,
     gradient_accumulation_steps: int = 1,
     warmup_steps: int = 2_000,
+    min_lr: float = 1e-6,
+    val_split: float = 0.05,
+    val_batches: int = 8,
+    timestep_sampling: str = "uniform",
+    logit_normal_mean: float = 0.0,
+    logit_normal_std: float = 1.0,
     log_interval: int = 100,
     save_interval: int = 10_000,
     sample_interval: int = 5_000,
@@ -931,6 +1110,12 @@ def train_dit_local(
         gradient_clip: Gradient clipping.
         gradient_accumulation_steps: Number of steps for gradient accumulation.
         warmup_steps: LR warmup steps.
+        min_lr: LR floor for the cosine decay.
+        val_split: Fraction of the dataset held out for validation (0 disables).
+        val_batches: Validation batches per evaluation (0 = all).
+        timestep_sampling: "uniform" or "logit_normal".
+        logit_normal_mean: Mean of the logit-normal timestep sampler.
+        logit_normal_std: Std of the logit-normal timestep sampler.
         log_interval: Logging frequency.
         save_interval: Checkpoint frequency.
         sample_interval: Sampling frequency.
@@ -946,13 +1131,15 @@ def train_dit_local(
         Final training loss.
     """
     # Import DiT modules (works for both local and Modal after path setup)
+    from dataset import create_train_val_dataloaders
     from dit import count_parameters, tinydit_128, tinydit_256
+    from dit_validation import evaluate_model_and_ema
     from flow_matching import (
         EMA,
         FlowMatchingLoss,
         flow_matching_step,
         sample,
-        sample_t,
+        sample_timesteps,
     )
 
     # Setup logging
@@ -985,16 +1172,19 @@ def train_dit_local(
 
     logger.info(
         f"Model: TinyDiT | Image size: {image_size} | "
-        f"Parameters: {count_parameters(model):,}"
+        f"Parameters: {count_parameters(model):,} | "
+        f"Timesteps: {timestep_sampling}"
     )
 
-    # Create dataloader
-    train_loader = create_dataloader(
-        data_dir=data_dir,
+    # Create dataloaders (train + held-out validation, ADR-059 follow-up)
+    train_loader, val_loader = create_train_val_dataloaders(
+        root=data_dir,
         batch_size=batch_size,
         image_size=image_size,
         num_workers=num_workers,
-        augmentation_level=augmentation_level,
+        augmentation_level=augmentation_level,  # type: ignore[arg-type]
+        val_split=val_split,
+        seed=seed,
     )
     effective_batch_size = batch_size * gradient_accumulation_steps
     logger.info(
@@ -1002,23 +1192,41 @@ def train_dit_local(
         f"Effective batch size: {effective_batch_size} "
         f"(batch_size={batch_size} x accumulation_steps={gradient_accumulation_steps})"
     )
+    if val_loader is None:
+        logger.warning(
+            "No validation split: checkpoint selection and early stopping will "
+            "fall back to augmented training-batch loss (val_split=0)."
+        )
+    else:
+        logger.info(
+            f"Validation split: {val_split:.1%} held out | "
+            f"{len(val_loader)} batches | evaluating {val_batches} per checkpoint"
+        )
 
     # Optimizer and loss
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=1e-4, betas=(0.9, 0.95))
     loss_fn = FlowMatchingLoss()
 
     # LR scheduler with warmup and cosine annealing using LambdaLR (ADR-032)
-    def lr_lambda(current_step):
-        if current_step < warmup_steps:
-            # Linear warmup: 0.01 -> 1.0
-            return 0.01 + 0.99 * float(current_step) / float(max(1, warmup_steps))
-        # Cosine annealing: 1.0 -> 0.0
-        progress = float(current_step - warmup_steps) / float(
-            max(1, steps - warmup_steps)
-        )
-        return 0.5 * (1.0 + math.cos(math.pi * progress))
+    # The horizon is persisted in checkpoints so a resumed slice keeps decaying
+    # along the original curve instead of restarting it.
+    schedule_steps = steps
+    schedule_warmup_steps = warmup_steps
 
-    scheduler = LambdaLR(optimizer, lr_lambda)
+    def make_scheduler(horizon_steps: int, horizon_warmup: int) -> LambdaLR:
+        """Build the LR schedule for a given horizon.
+
+        The base LR is the optimizer's ``initial_lr`` — set by the scheduler,
+        and on resume restored from the checkpoint — so ``--min-lr`` stays
+        proportional to the LR actually being decayed.
+        """
+        base_lr = optimizer.param_groups[0].get("initial_lr") or lr
+        min_lr_ratio = min(min_lr / base_lr, 1.0) if base_lr > 0 else 0.0
+        return LambdaLR(
+            optimizer, build_lr_lambda(horizon_warmup, horizon_steps, min_lr_ratio)
+        )
+
+    scheduler = make_scheduler(schedule_steps, schedule_warmup_steps)
 
     # Mixed precision
     scaler = (
@@ -1049,6 +1257,8 @@ def train_dit_local(
         "warmup_steps": warmup_steps,
         "steps": steps,
         "ema_beta": ema_beta,
+        "timestep_sampling": timestep_sampling,
+        "val_split": val_split,
     }
     tracker.start_run(
         params, run_name=f"dit_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -1056,21 +1266,49 @@ def train_dit_local(
 
     # Resume from checkpoint
     start_step = 0
+    resume_state: dict[str, Any] = {}
     if resume:
         logger.info(f"Resuming from checkpoint: {resume}")
         model, optimizer, _ema, start_step = load_checkpoint(
-            resume, model, optimizer, ema, logger
+            resume, model, optimizer, ema, logger, state=resume_state
         )
         # Use loaded EMA if available
         ema = _ema if _ema is not None else ema
+
+        # Continue the recorded LR horizon. Resuming with a *smaller* --steps
+        # than the run was scheduled for used to push the cosine past its end,
+        # where the decay term turns back up and raises the LR mid-run.
+        recorded_steps = resume_state.get("steps")
+        if recorded_steps:
+            schedule_steps = max(int(recorded_steps), steps)
+            schedule_warmup_steps = int(
+                resume_state.get("warmup_steps") or warmup_steps
+            )
+            if schedule_steps != steps or schedule_warmup_steps != warmup_steps:
+                logger.info(
+                    f"LR schedule continued from checkpoint: steps={schedule_steps:,}, "
+                    f"warmup={schedule_warmup_steps:,} (requested steps={steps:,}, "
+                    f"warmup={warmup_steps:,})"
+                )
+            scheduler = make_scheduler(schedule_steps, schedule_warmup_steps)
+
         # Adjust scheduler to current step without triggering the
         # "scheduler.step() before optimizer.step()" warning
         scheduler.last_epoch = start_step - 1
 
-    # Training state
+    # Training state (best_loss/patience are restored so early stopping works
+    # across hub-resumed slices instead of restarting on every resume)
     best_loss = float("inf")
+    restored_best_loss = resume_state.get("best_loss")
+    if restored_best_loss is not None and math.isfinite(float(restored_best_loss)):
+        best_loss = float(restored_best_loss)
+    patience_counter = int(resume_state.get("patience_counter") or 0)
+    if resume and math.isfinite(best_loss):
+        logger.info(
+            f"Restored early-stopping state: best_loss={best_loss:.6e}, "
+            f"patience={patience_counter}"
+        )
     shutdown_requested = False
-    patience_counter = 0
 
     def signal_handler(signum: int, frame: Any) -> None:
         nonlocal shutdown_requested
@@ -1080,6 +1318,31 @@ def train_dit_local(
     old_handler = signal.signal(signal.SIGINT, signal_handler)
     old_handler_term = signal.signal(signal.SIGTERM, signal_handler)
     old_handler_hup = signal.signal(signal.SIGHUP, signal_handler)
+
+    def persist(
+        path: str,
+        loss_value: float,
+        is_best: bool = False,
+        val_loss: float | None = None,
+        val_loss_ema: float | None = None,
+    ) -> None:
+        """Save the current step together with the early-stopping state."""
+        save_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            ema=ema,
+            step=step,
+            loss=loss_value,
+            path=path,
+            logger=logger,
+            is_best=is_best,
+            best_loss=best_loss,
+            patience_counter=patience_counter,
+            val_loss=val_loss,
+            val_loss_ema=val_loss_ema,
+            steps=schedule_steps,
+            warmup_steps=schedule_warmup_steps,
+        )
 
     try:
         model.train()
@@ -1092,6 +1355,8 @@ def train_dit_local(
         interval_start = time.time()
         evaluation_loss = 0.0
         evaluation_steps = 0
+        last_val_loss: float | None = None
+        last_val_loss_ema: float | None = None
         stop_training = False
         saved_on_shutdown = False
 
@@ -1106,7 +1371,13 @@ def train_dit_local(
                 breeds = breeds.to(device, non_blocking=True)
 
                 # Sample timesteps
-                t = sample_t(batch_size, device)
+                t = sample_timesteps(
+                    batch_size,
+                    device,
+                    sampling=timestep_sampling,  # type: ignore[arg-type]
+                    logit_normal_mean=logit_normal_mean,
+                    logit_normal_std=logit_normal_std,
+                )
 
                 # Mixed precision context
                 context = torch.amp.autocast("cuda") if scaler else nullcontext()
@@ -1209,17 +1480,68 @@ def train_dit_local(
 
                     # Save checkpoint
                     if step % save_interval == 0:
-                        avg_loss = evaluation_loss / evaluation_steps
-                        improved = avg_loss < best_loss - early_stopping_min_delta
-                        save_checkpoint(
-                            model=model,
-                            optimizer=optimizer,
-                            ema=ema,
-                            step=step,
-                            loss=avg_loss,
-                            path=output,
-                            logger=logger,
+                        avg_loss = (
+                            evaluation_loss / evaluation_steps
+                            if evaluation_steps
+                            else float("nan")
+                        )
+
+                        # Held-out validation drives selection and early
+                        # stopping; the augmented training average is only a
+                        # fallback when the split is disabled.
+                        val_loss: float | None = None
+                        val_loss_ema: float | None = None
+                        if val_loader is not None:
+                            raw_val, ema_val = evaluate_model_and_ema(
+                                model,
+                                val_loader,
+                                device,
+                                num_batches=val_batches,
+                                seed=seed,
+                                ema=ema,
+                                timestep_sampling=timestep_sampling,  # type: ignore[arg-type]
+                                logit_normal_mean=logit_normal_mean,
+                                logit_normal_std=logit_normal_std,
+                            )
+                            val_loss, val_loss_ema = raw_val, ema_val
+
+                        selection_loss = (
+                            val_loss_ema if val_loss_ema is not None else val_loss
+                        )
+                        if selection_loss is None or not math.isfinite(selection_loss):
+                            selection_loss = avg_loss
+
+                        if val_loss is not None:
+                            ema_text = (
+                                f", ema={val_loss_ema:.6e}"
+                                if val_loss_ema is not None
+                                else ""
+                            )
+                            logger.info(
+                                f"Validation loss at step {step:,}: "
+                                f"raw={val_loss:.6e}{ema_text} | "
+                                f"selected={selection_loss:.6e}"
+                            )
+                            val_metrics = {
+                                "val_loss": val_loss,
+                                "selection_loss": selection_loss,
+                            }
+                            if val_loss_ema is not None:
+                                val_metrics["val_loss_ema"] = val_loss_ema
+                            tracker.log_metrics(val_metrics, step=step)
+
+                        improved = (
+                            math.isfinite(selection_loss)
+                            and selection_loss < best_loss - early_stopping_min_delta
+                        )
+                        last_val_loss = val_loss
+                        last_val_loss_ema = val_loss_ema
+                        persist(
+                            output,
+                            selection_loss,
                             is_best=improved,
+                            val_loss=val_loss,
+                            val_loss_ema=val_loss_ema,
                         )
                         # Mid-run Hub push (cadence-capped) so a cancelled
                         # slice still syncs its latest checkpoint for
@@ -1248,7 +1570,7 @@ def train_dit_local(
                                     f"GPU pool: mid-run hub push skipped ({e})"
                                 )
                         if improved:
-                            best_loss = avg_loss
+                            best_loss = selection_loss
                             patience_counter = 0
                             logger.info(f"New best loss: {best_loss:.6e}")
                         elif early_stopping_patience > 0:
@@ -1272,23 +1594,17 @@ def train_dit_local(
                             logger.info(
                                 f"Final best loss: {best_loss:.6e} at step {step:,}"
                             )
-                            save_checkpoint(
-                                model=model,
-                                optimizer=optimizer,
-                                ema=ema,
-                                step=step,
-                                loss=best_loss,
-                                path=output,
-                                logger=logger,
+                            persist(
+                                output,
+                                best_loss,
+                                val_loss=last_val_loss,
+                                val_loss_ema=last_val_loss_ema,
                             )
-                            save_checkpoint(
-                                model=model,
-                                optimizer=optimizer,
-                                ema=ema,
-                                step=step,
-                                loss=best_loss,
-                                path=ema_output,
-                                logger=logger,
+                            persist(
+                                ema_output,
+                                best_loss,
+                                val_loss=last_val_loss,
+                                val_loss_ema=last_val_loss_ema,
                             )
                             step = steps  # Break outer loop
                             break
@@ -1335,23 +1651,17 @@ def train_dit_local(
                 # Check for shutdown
                 if shutdown_requested:
                     logger.info("Shutdown requested, saving checkpoint...")
-                    save_checkpoint(
-                        model=model,
-                        optimizer=optimizer,
-                        ema=ema,
-                        step=step,
-                        loss=avg_loss,
-                        path=output,
-                        logger=logger,
+                    persist(
+                        output,
+                        avg_loss,
+                        val_loss=last_val_loss,
+                        val_loss_ema=last_val_loss_ema,
                     )
-                    save_checkpoint(
-                        model=model,
-                        optimizer=optimizer,
-                        ema=ema,
-                        step=step,
-                        loss=avg_loss,
-                        path=ema_output,
-                        logger=logger,
+                    persist(
+                        ema_output,
+                        avg_loss,
+                        val_loss=last_val_loss,
+                        val_loss_ema=last_val_loss_ema,
                     )
                     # Exit the outer loop too, otherwise every remaining batch
                     # re-runs both 500MB saves until the container is killed.
@@ -1367,33 +1677,37 @@ def train_dit_local(
         # written as 0.0, clobbering a good checkpoint's metadata.
         if step > start_step:
             if evaluation_steps:
-                avg_loss = evaluation_loss / evaluation_steps
-                best_loss = min(best_loss, avg_loss)
-            elif not math.isfinite(best_loss):
-                best_loss = avg_loss
+                final_eval_loss = evaluation_loss / evaluation_steps
+            else:
+                final_eval_loss = float("nan")
+
+            if last_val_loss is not None:
+                # Held-out validation already drove selection for this run, so
+                # keep it instead of replacing it with the augmented training
+                # mean (the two are not the same metric).
+                final_loss = best_loss
+            else:
+                final_loss = min(best_loss, final_eval_loss)
+            if not math.isfinite(final_loss):
+                final_loss = avg_loss
+            best_loss = final_loss
             logger.info("=" * 60)
             logger.info(f"Training complete. Final loss: {best_loss:.6e}")
 
             # The shutdown branch already wrote both checkpoints; skip the
             # duplicate 500MB pair at the timeout boundary.
             if not saved_on_shutdown:
-                save_checkpoint(
-                    model=model,
-                    optimizer=optimizer,
-                    ema=ema,
-                    step=step,
-                    loss=best_loss,
-                    path=output,
-                    logger=logger,
+                persist(
+                    output,
+                    best_loss,
+                    val_loss=last_val_loss,
+                    val_loss_ema=last_val_loss_ema,
                 )
-                save_checkpoint(
-                    model=model,
-                    optimizer=optimizer,
-                    ema=ema,
-                    step=step,
-                    loss=best_loss,
-                    path=ema_output,
-                    logger=logger,
+                persist(
+                    ema_output,
+                    best_loss,
+                    val_loss=last_val_loss,
+                    val_loss_ema=last_val_loss_ema,
                 )
 
             log_gpu_memory(logger, "Final | ")
@@ -1445,6 +1759,12 @@ def main(
     gradient_clip: float = 1.0,
     gradient_accumulation_steps: int = 1,
     warmup_steps: int = 2_000,
+    min_lr: float = 1e-6,
+    val_split: float = 0.05,
+    val_batches: int = 8,
+    timestep_sampling: str = "uniform",
+    logit_normal_mean: float = 0.0,
+    logit_normal_std: float = 1.0,
     save_interval: int = 500,
     early_stopping_patience: int = 15,
     early_stopping_min_delta: float = 0.001,
@@ -1477,6 +1797,12 @@ def main(
         gradient_clip=gradient_clip,
         gradient_accumulation_steps=gradient_accumulation_steps,
         warmup_steps=warmup_steps,
+        min_lr=min_lr,
+        val_split=val_split,
+        val_batches=val_batches,
+        timestep_sampling=timestep_sampling,
+        logit_normal_mean=logit_normal_mean,
+        logit_normal_std=logit_normal_std,
         save_interval=save_interval,
         early_stopping_patience=early_stopping_patience,
         augmentation_level=augmentation_level,
@@ -1504,6 +1830,12 @@ if __name__ == "__main__":
             gradient_clip=args.gradient_clip,
             gradient_accumulation_steps=args.gradient_accumulation_steps,
             warmup_steps=args.warmup_steps,
+            min_lr=args.min_lr,
+            val_split=args.val_split,
+            val_batches=args.val_batches,
+            timestep_sampling=args.timestep_sampling,
+            logit_normal_mean=args.logit_normal_mean,
+            logit_normal_std=args.logit_normal_std,
             log_interval=args.log_interval,
             save_interval=args.save_interval,
             sample_interval=args.sample_interval,

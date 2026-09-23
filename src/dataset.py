@@ -12,11 +12,19 @@ Expects ImageFolder-compatible structure:
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 from typing import Any, Literal
 
+import torch
 import torchvision.transforms as T
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import (
+    DataLoader,
+    Dataset,
+    Subset,
+    WeightedRandomSampler,
+    random_split,
+)
 from torchvision.datasets import ImageFolder
 from torchvision.datasets.folder import IMG_EXTENSIONS, default_loader
 
@@ -95,6 +103,114 @@ class CatBreedGenerationDataset(Dataset):
         if self.transform is not None:
             image = self.transform(image)
         return image, label
+
+
+def create_train_val_dataloaders(
+    root: str | Path,
+    batch_size: int = 512,
+    image_size: int = 128,
+    num_workers: int = 4,
+    augmentation_level: EnhancedAugmentationLevel = "full",
+    val_split: float = 0.05,
+    seed: int = 42,
+) -> tuple[DataLoader, DataLoader | None]:
+    """Build the generator's train loader plus a held-out validation loader.
+
+    The generator previously trained on 100% of the data with a running loss
+    taken from augmented training batches, so checkpoint selection and early
+    stopping had no unbiased signal and overfitting was unobservable. The split
+    uses eval transforms (resize + normalize, no augmentation) and a fixed seed
+    so the validation set is identical across resumed slices.
+
+    Args:
+        root: Dataset root containing ``cat/`` and ``other/``.
+        batch_size: Batch size for both loaders.
+        image_size: Target image size.
+        num_workers: DataLoader workers.
+        augmentation_level: Augmentation level for the train loader.
+        val_split: Fraction held out for validation. 0 disables the split.
+        seed: Seed for the (deterministic) train/val partition.
+
+    Returns:
+        Tuple of (train_loader, val_loader). ``val_loader`` is None when
+        ``val_split`` is 0 or rounds down to fewer than one image.
+    """
+    train_transform = build_enhanced_transforms(
+        train=True, image_size=image_size, augmentation_level=augmentation_level
+    )
+    dataset = CatBreedGenerationDataset(root, transform=train_transform)
+
+    n_total = len(dataset)
+    n_val = int(n_total * max(val_split, 0.0))
+    if n_val <= 0 or n_total - n_val < 1:
+        return (
+            _weighted_generator_loader(
+                dataset, batch_size=batch_size, num_workers=num_workers
+            ),
+            None,
+        )
+
+    generator = torch.Generator().manual_seed(seed)
+    indices = torch.randperm(n_total, generator=generator).tolist()
+    val_indices = indices[:n_val]
+    train_indices = indices[n_val:]
+
+    train_loader = _weighted_generator_loader(
+        Subset(dataset, train_indices),
+        batch_size=batch_size,
+        num_workers=num_workers,
+        labels=[dataset.samples[i][1] for i in train_indices],
+    )
+
+    # A second dataset instance supplies the eval transforms; the validation
+    # indices refer to the same sorted sample order, so no labels are lost.
+    val_dataset = CatBreedGenerationDataset(
+        root, transform=build_enhanced_transforms(train=False, image_size=image_size)
+    )
+    val_loader = DataLoader(
+        Subset(val_dataset, val_indices),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+    )
+    return train_loader, val_loader
+
+
+def _weighted_generator_loader(
+    dataset: Dataset,
+    batch_size: int,
+    num_workers: int,
+    labels: list[int] | None = None,
+) -> DataLoader:
+    """Wrap a generator dataset in a class-balanced DataLoader.
+
+    Args:
+        dataset: Dataset (or Subset) yielding (image, label).
+        batch_size: Batch size.
+        num_workers: DataLoader workers.
+        labels: Optional class labels aligned with ``dataset``. When omitted the
+            labels are read from ``dataset.samples``.
+
+    Returns:
+        DataLoader sampling classes with equal probability.
+    """
+    if labels is None:
+        labels = [label for _, label in dataset.samples]  # type: ignore[attr-defined]
+    class_counts = Counter(labels)
+    sample_weights = [1.0 / class_counts[label] for label in labels]
+    sampler = WeightedRandomSampler(
+        sample_weights, num_samples=len(labels), replacement=True
+    )
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        sampler=sampler,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+    )
 
 
 def build_enhanced_transforms(

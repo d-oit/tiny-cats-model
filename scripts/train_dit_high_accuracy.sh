@@ -58,7 +58,7 @@ check_prerequisites() {
 }
 
 # Check if this is a short test run or long run
-if [ "$1" == "--local" ]; then
+if [ "${1:-}" == "--local" ]; then
     echo "Mode: LOCAL TEST RUN (4000 steps)"
     echo "Purpose: Verify training setup works before GitHub Actions"
     echo "Duration: ~5-10 minutes"
@@ -67,8 +67,10 @@ if [ "$1" == "--local" ]; then
     check_prerequisites
     
     echo "Starting local test training..."
+    # /data/cats is the Modal volume mount; a relative data/cats only exists
+    # locally and makes the container fail to find the dataset (ADR-051/054).
     modal run src/train_dit.py \
-        --data-dir data/cats \
+        --data-dir /data/cats \
         --steps 4000 \
         --batch-size 256 \
         --gradient-accumulation-steps 2 \
@@ -84,7 +86,7 @@ if [ "$1" == "--local" ]; then
     echo "  2. Run full 400k training via GitHub Actions:"
     echo "     gh workflow run train.yml"
     
-elif [ "$1" == "--medium" ]; then
+elif [ "${1:-}" == "--medium" ]; then
     echo "Mode: MEDIUM RUN (50000 steps)"
     echo "⚠️  Warning: This will take ~2-3 hours and cost ~$5-8"
     echo ""
@@ -98,7 +100,7 @@ elif [ "$1" == "--medium" ]; then
     check_prerequisites
     
     modal run src/train_dit.py \
-        --data-dir data/cats \
+        --data-dir /data/cats \
         --steps 50000 \
         --batch-size 256 \
         --gradient-accumulation-steps 2 \

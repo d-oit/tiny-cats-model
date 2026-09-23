@@ -24,13 +24,16 @@ bash scripts/quality-gate.sh
 
 ```bash
 # Classifier (resnet18)
-modal run src/train.py data/cats --epochs 20 --batch-size 64
+modal run src/train.py --data-dir /data/cats --epochs 20 --batch-size 64
 
 # DiT Generator (optimized - 100k with early stopping)
-modal run src/train_dit.py data/cats --steps 100000 --batch-size 512
+modal run src/train_dit.py --data-dir /data/cats --steps 100000 --batch-size 512
 
 # Custom configuration
-modal run src/train_dit.py data/cats --steps 50000 --batch-size 512 --lr 5e-5 --warmup-steps 2000
+modal run src/train_dit.py --data-dir /data/cats --steps 50000 --batch-size 512 --lr 5e-5 --warmup-steps 2000
+
+# YAML config (applied as defaults; explicit flags still win)
+python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.yaml
 ```
 
 ### Training Options
@@ -41,7 +44,16 @@ modal run src/train_dit.py data/cats --steps 50000 --batch-size 512 --lr 5e-5 --
 | `--batch-size` | 512 | Batch size (increased for better gradients) |
 | `--lr` | 5e-5 | Learning rate |
 | `--warmup-steps` | 2,000 | LR warmup (shorter = faster convergence) |
+| `--min-lr` | 1e-6 | LR floor for the cosine decay |
+| `--val-split` | 0.05 | Held-out fraction used for checkpoint selection (0 disables) |
+| `--timestep-sampling` | uniform | `uniform` or `logit_normal` (mid-trajectory focus) |
 | `--augmentation-level` | full | basic/medium/full |
+
+> **Modal paths:** use absolute container paths (`/data/cats`, `/outputs/...`) — relative
+> `data/cats` only exists on the local machine, and Modal 1.0+ requires `--data-dir`
+> (positional args fail with `Got unexpected extra argument`). See ADR-048/ADR-051/ADR-054.
+> Selection and early stopping use the held-out validation loss (EMA weights when available),
+> not the augmented training-batch average.
 
 ### Early Stopping
 

@@ -92,7 +92,14 @@ def get_clean_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass
 class ValidationResult:
-    """Result of a single validation check."""
+    """Result of a single validation check.
+
+    ``skipped`` marks checks that could not run because an optional dependency
+    or artifact is absent (missing onnxruntime, no exported .onnx, non-generative
+    checkpoint). Those must not fail the report: the gate previously reported
+    FAILED for a production classifier purely because ONNX Runtime was not
+    installed locally, which made a green gate unreachable.
+    """
 
     name: str
     passed: bool
@@ -100,6 +107,7 @@ class ValidationResult:
     threshold: Any | None = None
     message: str = ""
     critical: bool = False
+    skipped: bool = False
 
 
 @dataclass
@@ -116,6 +124,8 @@ class ValidationReport:
     def add_result(self, result: ValidationResult):
         """Add validation result."""
         self.results.append(result)
+        if result.skipped:
+            return
         if not result.passed:
             self.passed = False
             if result.critical:
@@ -130,14 +140,18 @@ class ValidationReport:
             "timestamp": self.timestamp,
             "passed": self.passed,
             "total_checks": len(self.results),
-            "passed_checks": sum(1 for r in self.results if r.passed),
-            "failed_checks": sum(1 for r in self.results if not r.passed),
+            "passed_checks": sum(1 for r in self.results if r.passed and not r.skipped),
+            "failed_checks": sum(
+                1 for r in self.results if not r.passed and not r.skipped
+            ),
+            "skipped_checks": sum(1 for r in self.results if r.skipped),
             "warnings": self.warnings,
             "errors": self.errors,
             "results": [
                 {
                     "name": r.name,
                     "passed": r.passed,
+                    "skipped": r.skipped,
                     "value": r.value,
                     "threshold": r.threshold,
                     "message": r.message,
@@ -310,7 +324,12 @@ def check_training_metrics(
     min_train_accuracy: float | None = None,
     max_final_loss: float | None = None,
 ) -> ValidationResult:
-    """Check training metrics from checkpoint."""
+    """Check training metrics from checkpoint.
+
+    Every configured threshold is enforced: ``max_final_loss`` used to be
+    formatted into the message and then ignored, so a generator at 1.28 loss
+    against a 0.5 threshold still reported "Training Metrics: passed".
+    """
     model_path = Path(model_path)
 
     try:
@@ -346,8 +365,18 @@ def check_training_metrics(
             )
 
         if max_final_loss is not None and loss is not None:
-            passed = loss <= max_final_loss
-            checks.append(f"loss={loss:.4f} {'<=' if passed else '>'} {max_final_loss}")
+            if loss > max_final_loss:
+                return ValidationResult(
+                    name="Final Loss",
+                    passed=False,
+                    value=f"{loss:.4f}",
+                    threshold=f"<={max_final_loss}",
+                    message=(
+                        f"Final loss {loss:.4f} exceeds threshold {max_final_loss}"
+                    ),
+                    critical=False,
+                )
+            checks.append(f"loss={loss:.4f} <= {max_final_loss}")
 
         return ValidationResult(
             name="Training Metrics",
@@ -368,6 +397,106 @@ def check_training_metrics(
         )
 
 
+def extract_state_dict(checkpoint: dict[str, Any]) -> dict[str, Any]:
+    """Pull a model state dict out of any supported checkpoint layout.
+
+    Supports the trainer's ``model_state_dict`` / ``ema_shadow_params`` layout,
+    the older ``model`` / ``ema_params`` layout, and a bare state dict.
+
+    Args:
+        checkpoint: Loaded checkpoint.
+
+    Returns:
+        State dict with any ``module.`` prefix stripped.
+    """
+    for key in (
+        "model_state_dict",
+        "ema_shadow_params",
+        "ema_params",
+        "model",
+    ):
+        candidate = checkpoint.get(key)
+        if isinstance(candidate, dict) and candidate:
+            return get_clean_state_dict(candidate)
+    return get_clean_state_dict(
+        {k: v for k, v in checkpoint.items() if isinstance(v, torch.Tensor)}
+    )
+
+
+def is_generative_checkpoint(checkpoint: dict[str, Any]) -> bool:
+    """Decide whether a checkpoint holds a TinyDiT generator.
+
+    Requires no single marker (the old check demanded ``num_classes`` in
+    ``config``, which ``save_checkpoint`` never wrote, so the sample-quality
+    gate silently reported "Not a generative model" for every generator).
+
+    Args:
+        checkpoint: Loaded checkpoint.
+
+    Returns:
+        True when the checkpoint looks like a TinyDiT generator.
+    """
+    config = checkpoint.get("config")
+    if isinstance(config, dict) and int(config.get("depth") or 0) > 0:
+        return True
+    if "ema_shadow_params" in checkpoint or "ema_params" in checkpoint:
+        return True
+    state_dict = checkpoint.get("model_state_dict") or checkpoint.get("model")
+    if isinstance(state_dict, dict):
+        return any(str(key).startswith("patch_embed.") for key in state_dict)
+    return False
+
+
+def build_model_from_checkpoint(
+    checkpoint: dict[str, Any],
+) -> tuple[torch.nn.Module, bool]:
+    """Rebuild the model described by a checkpoint and load its weights.
+
+    The architecture comes from the checkpoint's own config instead of
+    hardcoded ``tinydit_128`` defaults, so the gate also validates the smaller
+    models used by tests and any future resolution.
+
+    Args:
+        checkpoint: Loaded checkpoint.
+
+    Returns:
+        Tuple of (model, is_generative).
+
+    Raises:
+        ImportError: If the model modules are unavailable.
+        ValueError: If the checkpoint does not match the rebuilt architecture.
+    """
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parent))
+
+    raw_config = checkpoint.get("config")
+    config = raw_config if isinstance(raw_config, dict) else {}
+    state_dict = extract_state_dict(checkpoint)
+
+    if is_generative_checkpoint(checkpoint):
+        from dit import TinyDiT, load_state_dict_checked
+
+        model = TinyDiT(
+            image_size=config.get("image_size", 128),
+            patch_size=config.get("patch_size", 16),
+            embed_dim=config.get("embed_dim", 384),
+            depth=config.get("depth", 12),
+            num_heads=config.get("num_heads", 6),
+            num_classes=config.get("num_classes") or 13,
+        )
+        # load_state_dict_checked validates keys and shapes before copying, so a
+        # stale checkpoint cannot leave a half-loaded model behind.
+        load_state_dict_checked(model, state_dict)
+        return model, True
+
+    from model import cats_model
+
+    model = cats_model(num_classes=config.get("num_classes", 2))
+    model.load_state_dict(state_dict)
+    return model, False
+
+
 def validate_onnx_export(
     model_path: str | Path,
     onnx_path: str | Path | None = None,
@@ -377,9 +506,9 @@ def validate_onnx_export(
     if not HAS_ONNX:
         return ValidationResult(
             name="ONNX Validation",
-            passed=False,
-            message="ONNX Runtime not installed",
-            critical=False,
+            passed=True,
+            skipped=True,
+            message="ONNX Runtime not installed; skipping ONNX validation",
         )
 
     model_path = Path(model_path)
@@ -393,74 +522,26 @@ def validate_onnx_export(
     if not onnx_path.exists():
         return ValidationResult(
             name="ONNX Validation",
-            passed=False,
-            message=f"ONNX file not found: {onnx_path}",
-            critical=False,
+            passed=True,
+            skipped=True,
+            message=f"No ONNX artifact produced yet: {onnx_path}",
         )
 
     try:
-        # Load PyTorch model
         checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
-
-        # Import model
-        import sys
-
-        sys.path.insert(0, str(Path(__file__).parent))
-
-        # Try to determine model type from checkpoint
-        if "config" in checkpoint:
-            config = checkpoint["config"]
-            if "num_classes" in config and config.get("depth", 0) > 0:
-                # DiT model
-                from dit import tinydit_128
-
-                num_classes = config.get("num_classes", 13)
-                model = tinydit_128(num_classes=num_classes)
-
-                if "model_state_dict" in checkpoint:
-                    state_dict = checkpoint["model_state_dict"]
-                elif "model" in checkpoint:
-                    state_dict = checkpoint["model"]
-                else:
-                    state_dict = checkpoint
-
-                model.load_state_dict(get_clean_state_dict(state_dict))
-            else:
-                # Classifier
-                from model import cats_model
-
-                num_classes = config.get("num_classes", 2)
-                model = cats_model(num_classes=num_classes)
-
-                if "model_state_dict" in checkpoint:
-                    state_dict = checkpoint["model_state_dict"]
-                elif "model" in checkpoint:
-                    state_dict = checkpoint["model"]
-                else:
-                    state_dict = checkpoint
-
-                model.load_state_dict(get_clean_state_dict(state_dict))
-        else:
-            return ValidationResult(
-                name="ONNX Validation",
-                passed=False,
-                message="Cannot determine model type from checkpoint",
-                critical=False,
-            )
-
+        model, is_generative = build_model_from_checkpoint(checkpoint)
         model.eval()
 
-        # Create dummy input
-        if hasattr(model, "patch_size"):
+        # Create dummy input at the model's own resolution
+        if is_generative:
             # DiT: needs image and breed
-            batch_size = 1
-            dummy_input = torch.randn(batch_size, 3, 128, 128)
+            size = getattr(model, "image_size", 128)
+            dummy_input = torch.randn(1, 3, size, size)
             dummy_breed = torch.tensor([0])
             pytorch_output = model(dummy_input, dummy_breed)
         else:
             # Classifier: just image
-            batch_size = 1
-            dummy_input = torch.randn(batch_size, 3, 128, 128)
+            dummy_input = torch.randn(1, 3, 128, 128)
             pytorch_output = model(dummy_input)
 
         # Load ONNX model
@@ -507,107 +588,66 @@ def generate_sample_and_check_quality(
     min_fid_score: float = 50.0,
     num_samples: int = 8,
 ) -> ValidationResult:
-    """Generate samples and estimate quality."""
+    """Generate samples and estimate quality.
+
+    Args:
+        model_path: Checkpoint to validate.
+        min_fid_score: Retained for API compatibility; a real FID needs a
+            reference dataset and is not computed here.
+        num_samples: Number of samples to generate.
+
+    Returns:
+        ValidationResult. Checkpoints that are not generators are skipped
+        rather than failed, so the gate stays meaningful for classifiers.
+    """
     if not HAS_PIL:
         return ValidationResult(
             name="Sample Quality",
-            passed=False,
-            message="PIL not installed",
-            critical=False,
+            passed=True,
+            skipped=True,
+            message="PIL not installed; skipping sample generation",
         )
 
     model_path = Path(model_path)
 
     try:
-        # Load model
         checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+    except Exception as e:
+        return ValidationResult(
+            name="Sample Quality",
+            passed=False,
+            message=f"Could not read checkpoint: {e}",
+            critical=False,
+        )
 
-        import sys
+    if not is_generative_checkpoint(checkpoint):
+        return ValidationResult(
+            name="Sample Quality",
+            passed=True,
+            skipped=True,
+            message="Not a generative checkpoint; skipping sample generation",
+        )
 
-        sys.path.insert(0, str(Path(__file__).parent))
+    try:
+        from flow_matching import sample
 
-        # Determine model type
-        if "config" in checkpoint:
-            config = checkpoint["config"]
-            if "num_classes" in config and config.get("depth", 0) > 0:
-                from dit import tinydit_128
-                from flow_matching import sample
+        model, _ = build_model_from_checkpoint(checkpoint)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = model.to(device)
+        model.eval()
 
-                num_classes = config.get("num_classes", 13)
-                model = tinydit_128(num_classes=num_classes)
+        breeds = torch.arange(min(num_samples, model.num_classes), device=device)
 
-                if "ema_shadow_params" in checkpoint:
-                    # EMA shadow params format
-                    state_dict = checkpoint["ema_shadow_params"]
-                elif "model" in checkpoint:
-                    # Direct model format
-                    state_dict = checkpoint["model"]
-                elif "model_state_dict" in checkpoint:
-                    # Standard format
-                    state_dict = checkpoint["model_state_dict"]
-                else:
-                    state_dict = checkpoint
-
-                model.load_state_dict(get_clean_state_dict(state_dict))
-
-                model.eval()
-
-                # Generate samples
-                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                model = model.to(device)
-
-                breeds = torch.arange(min(num_samples, num_classes), device=device)
-
-                with torch.no_grad():
-                    generated = sample(
-                        model,
-                        breeds,
-                        num_steps=50,
-                        device=device,
-                        image_size=128,
-                        cfg_scale=1.5,
-                        progress=False,
-                    )
-
-                # Check for valid outputs (no NaN/Inf in generated images)
-                has_nan = torch.isnan(generated).any().item()
-                has_inf = torch.isinf(generated).any().item()
-
-                # Calculate simple statistics
-                mean_val = generated.mean().item()
-                std_val = generated.std().item()
-
-                # Note: Real FID calculation requires reference dataset
-                # This is a simplified check
-                valid_output = (
-                    not has_nan
-                    and not has_inf
-                    and abs(mean_val) < 3
-                    and 0.1 < std_val < 3.0
-                )
-
-                return ValidationResult(
-                    name="Sample Quality",
-                    passed=valid_output,
-                    value=f"mean={mean_val:.3f}, std={std_val:.3f}",
-                    message=f"Generated samples {'valid' if valid_output else 'invalid'} (NaN: {has_nan}, Inf: {has_inf})",
-                    critical=not valid_output,
-                )
-            else:
-                return ValidationResult(
-                    name="Sample Quality",
-                    passed=False,
-                    message="Not a generative model",
-                    critical=False,
-                )
-        else:
-            return ValidationResult(
-                name="Sample Quality",
-                passed=False,
-                message="Cannot determine model type",
-                critical=False,
+        with torch.no_grad():
+            generated = sample(
+                model,
+                breeds,
+                num_steps=50,
+                device=device,
+                image_size=model.image_size,
+                cfg_scale=1.5,
+                progress=False,
             )
-
     except Exception as e:
         return ValidationResult(
             name="Sample Quality",
@@ -615,6 +655,28 @@ def generate_sample_and_check_quality(
             message=f"Sample generation error: {e}",
             critical=False,
         )
+
+    # Note: real FID requires a reference dataset; this is a sanity check that
+    # the sampler produced finite, non-degenerate images.
+    has_nan = torch.isnan(generated).any().item()
+    has_inf = torch.isinf(generated).any().item()
+    mean_val = generated.mean().item()
+    std_val = generated.std().item()
+
+    valid_output = (
+        not has_nan and not has_inf and abs(mean_val) < 3 and 0.1 < std_val < 3.0
+    )
+
+    return ValidationResult(
+        name="Sample Quality",
+        passed=valid_output,
+        value=f"mean={mean_val:.3f}, std={std_val:.3f}",
+        message=(
+            f"Generated samples {'valid' if valid_output else 'invalid'} "
+            f"(NaN: {has_nan}, Inf: {has_inf})"
+        ),
+        critical=not valid_output,
+    )
 
 
 def validate_model(
@@ -742,9 +804,10 @@ def main():
     print(f"Model: {report.model_path}")
     print(f"Timestamp: {report.timestamp}")
     print(f"Status: {'PASSED' if report.passed else 'FAILED'}")
-    print(
-        f"Checks: {sum(1 for r in report.results if r.passed)}/{len(report.results)} passed"
-    )
+    skipped = sum(1 for r in report.results if r.skipped)
+    evaluated = len(report.results) - skipped
+    passed = sum(1 for r in report.results if r.passed and not r.skipped)
+    print(f"Checks: {passed}/{evaluated} passed ({skipped} skipped)")
 
     if report.warnings:
         print(f"\nWarnings ({len(report.warnings)}):")
