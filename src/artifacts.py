@@ -10,6 +10,9 @@ locally):
         dit_model_ema.pt
         training_state.json
         training.log
+    export/                           # ONNX export/quantization staging
+        model.onnx
+        generator_quantized.onnx
     artifacts/
         generator/
             model.pt
@@ -77,6 +80,24 @@ def pool_dir(outputs_root: str | Path) -> Path:
     return Path(outputs_root) / POOL_DIRNAME
 
 
+def export_paths(outputs_root: str | Path) -> dict[str, Path]:
+    """ONNX export/quantization staging paths under ``outputs_root`` (WP2).
+
+    Exports stage here and are *copied* into ``artifacts/generator`` by
+    :func:`package_final_artifacts` — sources must live outside the package
+    so the copy never becomes a same-file no-op.
+
+    The quantized name follows ``optimize_onnx``'s model-type convention
+    (``generator`` → ``generator_quantized.onnx``).
+    """
+    export = Path(outputs_root) / "export"
+    return {
+        "export_dir": export,
+        "onnx": export / "model.onnx",
+        "quantized": export / "generator_quantized.onnx",
+    }
+
+
 def pool_paths(outputs_root: str | Path) -> dict[str, Path]:
     """Canonical live-checkpoint file paths under ``outputs_root``."""
     pool = pool_dir(outputs_root)
@@ -119,7 +140,15 @@ def _sha256(path: Path) -> str:
 
 def _copy_into(source: Path, destination: Path) -> dict[str, Any]:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
+    # SameFileError guard: when the source already lives at the destination
+    # (e.g. ONNX exported straight into the package), hashing it in place is
+    # the correct "copy" — found by the live Modal smoke test (issue #163).
+    try:
+        same_file = destination.exists() and os.path.samefile(source, destination)
+    except OSError:
+        same_file = False
+    if not same_file:
+        shutil.copy2(source, destination)
     return {
         "path": str(destination),
         "sha256": _sha256(destination),

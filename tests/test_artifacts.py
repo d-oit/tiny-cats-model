@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from artifacts import (
     ArtifactPackageError,
+    export_paths,
     find_live_checkpoint,
     package_final_artifacts,
     pool_paths,
@@ -173,3 +174,34 @@ class TestPackageFinalArtifacts:
         (ready_outputs / "checkpoints/pool/training_state.json").unlink()
         manifest = self._package(ready_outputs, require_completed=None)
         assert manifest["files"]
+
+    def test_onnx_already_at_destination_is_not_a_crash(
+        self, ready_outputs: Path
+    ) -> None:
+        # Live-smoke regression: exporting straight into the package made
+        # copy2(source, source) raise SameFileError. An in-place "copy" must
+        # hash the file rather than crash (issue #163 WP2).
+        destination = ready_outputs / "artifacts/generator/model.onnx"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"onnx-already-there")
+        manifest = self._package(
+            ready_outputs,
+            onnx=destination,  # source IS the destination
+            quantized=None,
+        )
+        entries = [f for f in manifest["files"] if f["path"].endswith("model.onnx")]
+        assert len(entries) == 1
+        assert entries[0]["bytes"] == len(b"onnx-already-there")
+
+
+class TestExportPaths:
+    def test_staging_is_outside_the_package(self, tmp_path: Path) -> None:
+        paths = export_paths(tmp_path)
+        assert paths["export_dir"] == tmp_path / "export"
+        assert paths["onnx"] == tmp_path / "export/model.onnx"
+        # optimize_onnx names generator output "generator_quantized.onnx".
+        assert paths["quantized"] == tmp_path / "export/generator_quantized.onnx"
+        # Sources must never equal package destinations (SameFileError).
+        generator = tmp_path / "artifacts/generator"
+        assert paths["onnx"] != generator / "model.onnx"
+        assert paths["quantized"] != generator / "model_quantized.onnx"
