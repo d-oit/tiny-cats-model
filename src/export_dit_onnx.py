@@ -457,8 +457,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint",
         type=str,
-        default="checkpoints/tinydit_final.pt",
-        help="Path to the trained checkpoint (default: checkpoints/tinydit_final.pt)",
+        default="checkpoints/pool/dit_model.pt",
+        help="Path to the trained checkpoint (default: checkpoints/pool/dit_model.pt)",
     )
     parser.add_argument(
         "--output",

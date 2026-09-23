@@ -14,16 +14,16 @@ Usage:
     # Upload complete package
     python src/upload_to_huggingface.py \\
         --classifier checkpoints/classifier.pt \\
-        --generator checkpoints/tinydit_final.pt \\
+        --generator artifacts/generator/model.pt \\
         --repo-id d4oit/tiny-cats-model \\
         --token $HF_TOKEN
 
     # Upload with evaluation results
     python src/upload_to_huggingface.py \\
         --classifier checkpoints/classifier.pt \\
-        --generator checkpoints/tinydit_final.pt \\
-        --evaluation-report evaluation_report.json \\
-        --benchmark-report benchmark_report.json \\
+        --generator artifacts/generator/model.pt \\
+        --evaluation-report artifacts/evaluation/evaluation_report.json \\
+        --benchmark-report artifacts/evaluation/benchmark_report.json \\
         --repo-id d4oit/tiny-cats-model
 
     # Upload samples directory
@@ -291,7 +291,7 @@ from PIL import Image
 
 # Load model
 model = tinydit_128(num_classes=13)
-checkpoint = torch.load('tinydit_final.pt', map_location='cpu')
+checkpoint = torch.load('model.pt', map_location='cpu')
 model.load_state_dict(checkpoint['model'])
 model.eval()
 

@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--report",
         type=str,
-        default="evaluation_report.json",
+        default="artifacts/evaluation/evaluation_report.json",
         help="Path to write the JSON evaluation report",
     )
     parser.add_argument(
@@ -251,6 +251,9 @@ def evaluate(
         "num_failures": num_failures,
         "failure_cases": failures,
     }
+    from pathlib import Path
+
+    Path(report).parent.mkdir(parents=True, exist_ok=True)
     with open(report, "w") as f:
         json.dump(report_data, f, indent=2)
     print(f"\nReport written to {report}")

@@ -748,6 +748,7 @@ image = (
     )
     .add_local_file("src/train_dit.py", "/app/train_dit.py")
     .add_local_file("src/training_state.py", "/app/training_state.py")
+    .add_local_file("src/artifacts.py", "/app/artifacts.py")
     .add_local_file("src/dit.py", "/app/dit.py")
     .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
     .add_local_file("src/dit_validation.py", "/app/dit_validation.py")
@@ -819,12 +820,19 @@ class DiTTrainer:
         output: str,
         ema_output: str,
         logger: logging.Logger,
+        experiment_id: str | None = None,
+        completed_steps: int | None = None,
+        training_state_path: str | None = None,
     ) -> None:
         """Push current best + EMA checkpoints to HF Hub (graceful).
 
         Used both mid-run (hub_push_interval) and at run completion so a
         cancelled GHA slice still syncs its latest checkpoint for
         cross-provider resume (train-pool.yml --no-hub-push disables).
+
+        With ``experiment_id`` + ``completed_steps`` the push uses the
+        canonical immutable pool layout (issue #163 WP3); without them it
+        falls back to the legacy flat path.
         """
         try:
             from gpu_pool import push_checkpoint_to_hub
@@ -838,6 +846,11 @@ class DiTTrainer:
                         checkpoint_path=ckpt_path,
                         hub_repo=hub_repo,
                         checkpoint_name=ckpt_name,
+                        experiment_id=(
+                            experiment_id if completed_steps is not None else None
+                        ),
+                        completed_steps=completed_steps,
+                        training_state_path=training_state_path,
                     )
         except Exception as e:
             logger.warning(f"GPU pool: hub push skipped ({e})")
@@ -919,10 +932,11 @@ class DiTTrainer:
 
         # Container is already initialized by @modal.enter()
 
-        # Use a stable (non-dated) checkpoint directory so Modal retries and
-        # manually re-triggered runs can find and resume prior progress.
-        # A dated directory meant every retry silently restarted from step 0.
-        checkpoint_dir = "/outputs/checkpoints/dit/current"
+        # Canonical live-checkpoint directory (issue #163 WP2): stable
+        # (non-dated) so Modal retries and manually re-triggered runs can
+        # find and resume prior progress. A dated directory meant every
+        # retry silently restarted from step 0.
+        checkpoint_dir = "/outputs/checkpoints/pool"
         Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
         samples_dir = f"{checkpoint_dir}/samples"
         Path(samples_dir).mkdir(parents=True, exist_ok=True)
@@ -930,7 +944,7 @@ class DiTTrainer:
         # Stable output paths enable resume across retries
         output = output or f"{checkpoint_dir}/dit_model.pt"
         ema_output = ema_output or f"{checkpoint_dir}/dit_model_ema.pt"
-        log_file = log_file or f"{checkpoint_dir}/dit_training.log"
+        log_file = log_file or f"{checkpoint_dir}/training.log"
 
         # Auto-resume: if a checkpoint already exists (e.g. from a prior Modal retry),
         # pass it through to train_dit_local so training continues from that step.
@@ -954,6 +968,17 @@ class DiTTrainer:
         elif resume is not None:
             logger.info(f"Using explicit resume checkpoint: {resume}")
 
+        # Layout migration (issue #163 WP2): when the canonical directory has
+        # no valid checkpoint, pick up a valid legacy live checkpoint instead
+        # of silently restarting from step 0.
+        if resume is None:
+            from artifacts import find_live_checkpoint
+
+            legacy = find_live_checkpoint("/outputs")
+            if legacy is not None:
+                resume = str(legacy)
+                logger.info(f"Resuming from pre-migration live checkpoint: {legacy}")
+
         # GPU pool cross-provider resume (train-pool.yml --hub-resume / ADR-055).
         # Pull the last EMA checkpoint from HuggingFace Hub so a prior provider's
         # progress carries over. Degrades gracefully (logs + continues fresh) if
@@ -968,6 +993,7 @@ class DiTTrainer:
                     hub_repo=hub_repo,
                     checkpoint_name="dit_model_ema.pt",
                     output_dir=checkpoint_dir,
+                    experiment_id=experiment_id,
                 )
                 if pulled:
                     resume = str(pulled)
@@ -1041,39 +1067,74 @@ class DiTTrainer:
                 allow_experiment_mismatch=allow_experiment_mismatch,
             )
 
-            # Export to ONNX and Quantize (Issue #63)
-            logger.info("Exporting to ONNX...")
-            try:
-                from export_dit_onnx import export_generator_onnx, load_model
-                from optimize_onnx import optimize_onnx
+            # Canonical final artifact package (issue #163 WP2): export ONNX
+            # and build artifacts/ only when this run's global target is
+            # actually reached — partial slices never publish "final"
+            # artifacts, and a broken final package fails the job instead of
+            # passing silently (issue #163: never publish a final model
+            # unless the target checkpoint exists and passes validation).
+            from training_state import TRAINING_STATE_FILENAME, read_training_state
 
-                onnx_path = "/outputs/generator.onnx"
-                quant_dir = "/outputs"
-
-                # Load best model for export
-                model_to_export = load_model(output, image_size=image_size)
-                export_generator_onnx(model_to_export, output_path=onnx_path)
-                logger.info(f"✅ Exported to {onnx_path}")
-
-                logger.info("Quantizing ONNX model...")
-                optimize_onnx(
-                    model_path=onnx_path,
-                    output_dir=quant_dir,
-                    method="dynamic",
-                    model_type="generator",
-                )
+            pool_state = read_training_state(
+                Path(output).parent / TRAINING_STATE_FILENAME
+            )
+            target_steps: int | None = None
+            if (
+                pool_state is not None
+                and "completed_steps" in pool_state
+                and "target_steps" in pool_state
+                and int(pool_state["completed_steps"])
+                >= int(pool_state["target_steps"])
+            ):
+                target_steps = int(pool_state["target_steps"])
+            if target_steps is None:
                 logger.info(
-                    f"✅ Quantized model saved to {quant_dir}/generator_quantized.onnx"
+                    "Global target not reached (or training state missing) — "
+                    "skipping final artifact package for this slice."
                 )
+            else:
+                logger.info("Global target reached — building final artifacts...")
+                try:
+                    from artifacts import package_final_artifacts
+                    from export_dit_onnx import export_generator_onnx, load_model
+                    from optimize_onnx import optimize_onnx
 
-                # Copy best .pt to root for easier CI download
-                import shutil
+                    generator_dir = "/outputs/artifacts/generator"
+                    onnx_path = f"{generator_dir}/model.onnx"
 
-                shutil.copy2(output, "/outputs/tinydit_final.pt")
-                logger.info("✅ Copied best model to /outputs/tinydit_final.pt")
+                    model_to_export = load_model(output, image_size=image_size)
+                    export_generator_onnx(model_to_export, output_path=onnx_path)
+                    logger.info(f"✅ Exported to {onnx_path}")
 
-            except Exception as e:
-                logger.warning(f"ONNX export/quantization failed: {e}")
+                    logger.info("Quantizing ONNX model...")
+                    optimize_onnx(
+                        model_path=onnx_path,
+                        output_dir=generator_dir,
+                        method="dynamic",
+                        model_type="generator",
+                    )
+                    quantized_path = f"{generator_dir}/model_quantized.onnx"
+                    logger.info(f"✅ Quantized model saved to {quantized_path}")
+
+                    package_final_artifacts(
+                        "/outputs",
+                        raw_checkpoint=output,
+                        ema_checkpoint=ema_output,
+                        training_log=log_file,
+                        samples_dir=str(Path(output).parent / "samples"),
+                        onnx=onnx_path,
+                        quantized=quantized_path,
+                        require_completed=target_steps,
+                    )
+                    logger.info(
+                        "✅ Final artifact package written to /outputs/artifacts/"
+                    )
+                except Exception as e:
+                    # Training + checkpoints are already safe; surface the
+                    # packaging failure loudly (the except below commits the
+                    # volume before re-raising as TrainingError).
+                    logger.error(f"Final artifact packaging failed: {e}")
+                    raise TrainingError(f"Final artifact packaging failed: {e}") from e
 
             # Commit volume after successful training (ADR-024: explicit commits)
             volume_outputs.commit()
@@ -1088,6 +1149,15 @@ class DiTTrainer:
                     output=output,
                     ema_output=ema_output,
                     logger=logger,
+                    experiment_id=experiment_id,
+                    completed_steps=(
+                        int(pool_state["completed_steps"]) if pool_state else None
+                    ),
+                    training_state_path=(
+                        str(Path(output).parent / TRAINING_STATE_FILENAME)
+                        if pool_state
+                        else None
+                    ),
                 )
 
             logger.info("Training completed successfully")
@@ -1774,11 +1844,21 @@ def train_dit_local(
                                     checkpoint_path=output,
                                     hub_repo=hub_repo,
                                     checkpoint_name="dit_model.pt",
+                                    experiment_id=manifest["experiment_id"],
+                                    completed_steps=step,
+                                    training_state_path=str(
+                                        Path(output).parent / TRAINING_STATE_FILENAME
+                                    ),
                                 )
                                 push_checkpoint_to_hub(
                                     checkpoint_path=ema_output,
                                     hub_repo=hub_repo,
                                     checkpoint_name="dit_model_ema.pt",
+                                    experiment_id=manifest["experiment_id"],
+                                    completed_steps=step,
+                                    training_state_path=str(
+                                        Path(output).parent / TRAINING_STATE_FILENAME
+                                    ),
                                 )
                             except Exception as e:
                                 logger.warning(

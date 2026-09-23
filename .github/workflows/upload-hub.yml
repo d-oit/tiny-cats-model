@@ -99,8 +99,8 @@ jobs:
           pip install modal
           modal volume get dit-outputs generator.onnx \
             ./generator.onnx || echo "No generator ONNX found"
-          modal volume get dit-outputs tinydit_final.pt \
-            ./tinydit_final.pt || echo "No generator checkpoint found"
+          modal volume get dit-outputs artifacts/generator/model.pt \
+            ./model.pt || echo "No generator checkpoint found"
 
       - name: Quantize models
         run: |
@@ -127,7 +127,7 @@ jobs:
         run: |
           python src/upload_to_huggingface.py \
             --classifier best_cats_model.pt \
-            --generator tinydit_final.pt \
+            --generator model.pt \
             --onnx-classifier cats_classifier.onnx \
             --onnx-generator generator.onnx \
             --quantized-classifier cats_quantized.onnx \
@@ -149,7 +149,7 @@ jobs:
               "best_cats_model.pt": "classifier/model.pt",
               "generator.onnx": "generator/model.onnx",
               "generator_quantized.onnx": "generator/model_quantized.onnx",
-              "tinydit_final.pt": "generator/model.pt",
+              "model.pt": "generator/model.pt",
           }
           uploaded = 0
           for local, remote in files.items():

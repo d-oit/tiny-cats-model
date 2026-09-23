@@ -217,12 +217,12 @@ python src/eval.py \
   --backbone resnet18
 
 # Full evaluation (FID, IS, Precision/Recall)
-python src/evaluate_full.py --checkpoint checkpoints/tinydit_final.pt \
+python src/evaluate_full.py --checkpoint checkpoints/pool/dit_model.pt \
     --generate-samples --num-samples 500 \
     --compute-fid --real-dir data/cats/test --fake-dir samples/evaluation
 
 # Benchmark inference
-python src/benchmark_inference.py --model checkpoints/tinydit_final.pt \
+python src/benchmark_inference.py --model checkpoints/pool/dit_model.pt \
     --device cpu --num-warmup 10 --num-runs 100 \
     --benchmark-throughput --batch-sizes 1,4,8,16
 ```
@@ -244,7 +244,7 @@ checkpoints/
 ls -la checkpoints/
 
 # Verify checkpoint
-python src/verify_checkpoint.py --checkpoint checkpoints/tinydit_final.pt
+python src/verify_checkpoint.py --checkpoint checkpoints/pool/dit_model.pt
 ```
 
 ## Dataset Preparation
