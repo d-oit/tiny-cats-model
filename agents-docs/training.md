@@ -15,23 +15,26 @@ Training scripts now use the `@app.cls` + `@modal.enter()` pattern (ADR-025, ADR
 modal run src/train.py data/cats --epochs 20 --batch-size 64
 
 # Local CPU testing (debug)
-python src/train.py data/cats --epochs 1 --batch-size 8
+python src/train.py --data-dir data/cats --epochs 1 --batch-size 8
 ```
 
 ### DiT Generator (train_dit.py)
 ```bash
-# Modal GPU training (300k steps)
-modal run src/train_dit.py data/cats --steps 300000 --batch-size 256
+# Modal GPU training (100k steps, early stopping)
+modal run src/train_dit.py --data-dir /data/cats --steps 100000 --batch-size 512
 
-# High-accuracy (400k steps, gradient accumulation)
-modal run src/train_dit.py data/cats \
+# Long run (explicit horizon, gradient accumulation)
+modal run src/train_dit.py --data-dir /data/cats \
   --steps 400000 \
   --batch-size 256 \
   --gradient-accumulation-steps 2 \
   --augmentation-level full
 
 # Local CPU testing
-python src/train_dit.py data/cats --steps 100 --batch-size 8
+python src/train_dit.py --data-dir data/cats --steps 100 --batch-size 8
+
+# YAML config (applied as defaults; explicit flags still override)
+python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.yaml
 ```
 
 ## Training Options
@@ -49,14 +52,75 @@ python src/train_dit.py data/cats --steps 100 --batch-size 8
 ### DiT (train_dit.py)
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--steps` | 200,000 | Training steps |
-| `--batch-size` | 256 | Batch size |
+| `--data-dir` | required | Dataset root (`/data/cats` inside Modal) |
+| `--steps` | 100,000 | Global target steps (resume = `max(0, steps − completed)`) |
+| `--batch-size` | 512 | Batch size |
 | `--lr` | 1e-4 | Learning rate |
 | `--gradient-accumulation-steps` | 1 | Effective batch = batch × steps |
 | `--augmentation-level` | full | basic/medium/full |
-| `--warmup-steps` | 10,000 | LR warmup steps |
-| `--save-interval` | 10,000 | Checkpoint frequency |
+| `--warmup-steps` | 2,000 | LR warmup steps |
+| `--min-lr` | 1e-6 | LR floor for the cosine decay |
+| `--val-split` | 0.05 | Held-out fraction for selection/early stopping (0 disables) |
+| `--val-batches` | 8 | Validation batches per evaluation (0 = all) |
+| `--timestep-sampling` | uniform | `uniform` or `logit_normal` |
+| `--logit-normal-mean` | 0.0 | Mean of the logit-normal sampler |
+| `--logit-normal-std` | 1.0 | Std of the logit-normal sampler |
+| `--save-interval` | 10,000 | Checkpoint frequency (Modal default: 500) |
 | `--sample-interval` | 5,000 | Sample generation frequency |
+| `--config` | - | YAML config applied as defaults |
+| `--experiment-id` | dit-breed-conditioned-v4 | Manifest identity; resumes must match |
+| `--allow-experiment-mismatch` | false | Override manifest rejection (explicit migration) |
+
+Checkpoint selection and early stopping use the held-out validation loss (EMA
+weights when available). The training-batch average is only a fallback when
+`--val-split 0` is set.
+
+### Exact global-step resume & experiment manifest (issue #163)
+
+`--steps` is a **global target**, never "train this many additional steps":n
+```bash
+# Slice 1: trains 0 -> 60,000
+modal run src/train_dit.py --data-dir /data/cats --steps 60000 --batch-size 32
+
+# Slice 2 (same experiment, e.g. after preemption): performs exactly
+# max(0, 400000 - 60000) = 340,000 more steps — not another 400,000
+modal run src/train_dit.py --data-dir /data/cats --steps 400000 --batch-size 32
+
+# Target already reached? Exits 0 without training or touching the checkpoint
+modal run src/train_dit.py --data-dir /data/cats --steps 60000
+```
+
+State written with every checkpoint:
+
+- **Embedded in `*.pt`**: manifest, completed/target steps, seed, optimizer,
+  EMA, and a torch/python/numpy/CUDA RNG snapshot restored on resume.
+- **`training_state.json`** beside the checkpoint: the manifest flattened to
+  top level plus `completed_steps` / `target_steps`, written atomically so
+  tooling can inspect a run without unpickling the checkpoint.
+
+Resume rules:
+
+| Situation | Behaviour |
+|-----------|-----------|
+| Manifest matches | Resume; performs exactly `max(0, target − completed)` steps |
+| Target raised (60k → 400k) | Allowed — slices raise the global target |
+| Architecture / dataset / seed / optimizer-critical change | `IncompatibleExperimentError` (pass `--allow-experiment-mismatch` to override) |
+| Checkpoint at/past target | Successful no-op; checkpoint bytes untouched |
+| Corrupt / truncated checkpoint | Quarantined to `*.corrupt`, restart from 0 (ADR-058) |
+
+See ADR-063 for the full field list and rationale.
+
+### Comparing configurations
+
+`scripts/tune_dit_configs.py` trains several arms and scores them all on one
+common held-out metric (uniform timesteps), so arms that differ in
+`--timestep-sampling` stay comparable:
+
+```bash
+python scripts/tune_dit_configs.py --data-dir data/cats --steps 300 \
+  --arms label=uniform,timestep_sampling=uniform \
+  --arms label=logit,timestep_sampling=logit_normal --json-out tune.json
+```
 
 ## Error Handling & Logging
 
@@ -158,3 +222,4 @@ python scripts/benchmark_estimates.py --tune
 - [ADR-057: Modal CLI Verification & Best Practices](../plans/ADR-057-modal-cli-verification-and-best-practices-2026.md)
 - [ADR-025: Cold Start Optimization](../plans/ADR-025-modal-cold-start-optimization.md)
 - [ADR-058: GPU Selection & Cost Optimization](../plans/ADR-058-dit-l40s-non-spot-and-save-interval.md)
+- [ADR-063: Exact Global-Step Resume & Experiment Manifest](../plans/ADR-063-exact-global-step-resume-and-experiment-manifest.md)

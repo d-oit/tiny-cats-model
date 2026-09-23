@@ -24,24 +24,48 @@ bash scripts/quality-gate.sh
 
 ```bash
 # Classifier (resnet18)
-modal run src/train.py data/cats --epochs 20 --batch-size 64
+modal run src/train.py --data-dir /data/cats --epochs 20 --batch-size 64
 
 # DiT Generator (optimized - 100k with early stopping)
-modal run src/train_dit.py data/cats --steps 100000 --batch-size 512
+modal run src/train_dit.py --data-dir /data/cats --steps 100000 --batch-size 512
 
 # Custom configuration
-modal run src/train_dit.py data/cats --steps 50000 --batch-size 512 --lr 5e-5 --warmup-steps 2000
+modal run src/train_dit.py --data-dir /data/cats --steps 50000 --batch-size 512 --lr 5e-5 --warmup-steps 2000
+
+# YAML config (applied as defaults; explicit flags still win)
+python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.yaml
 ```
 
 ### Training Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--steps` | 100,000 | Max training steps (early stopping may stop earlier) |
+| `--steps` | 100,000 | Global target steps — a resume performs `max(0, steps − completed)` (issue #163) |
 | `--batch-size` | 512 | Batch size (increased for better gradients) |
 | `--lr` | 5e-5 | Learning rate |
 | `--warmup-steps` | 2,000 | LR warmup (shorter = faster convergence) |
+| `--min-lr` | 1e-6 | LR floor for the cosine decay |
+| `--val-split` | 0.05 | Held-out fraction used for checkpoint selection (0 disables) |
+| `--timestep-sampling` | uniform | `uniform` or `logit_normal` (mid-trajectory focus) |
 | `--augmentation-level` | full | basic/medium/full |
+| `--experiment-id` | dit-breed-conditioned-v4 | Manifest identity; resumes must match |
+| `--allow-experiment-mismatch` | false | Override manifest rejection (explicit migration) |
+
+> **Resume semantics (issue #163):** `--steps` is a *global* target — resuming
+> a checkpoint at 60k with `--steps 400000` performs exactly 340,000 more
+> steps; an already-complete target is a successful no-op that never
+> overwrites the checkpoint. Every checkpoint embeds an immutable experiment
+> manifest (architecture, dataset hash, breed mapping, optimizer-critical
+> settings, seed), mirrored to `training_state.json` beside it; a resume whose
+> manifest differs fails clearly unless `--allow-experiment-mismatch` is
+> passed. Corrupt checkpoints quarantine to `*.corrupt` (ADR-058);
+> architecture-incompatible ones are rejected, never silently restarted.
+
+> **Modal paths:** use absolute container paths (`/data/cats`, `/outputs/...`) — relative
+> `data/cats` only exists on the local machine, and Modal 1.0+ requires `--data-dir`
+> (positional args fail with `Got unexpected extra argument`). See ADR-048/ADR-051/ADR-054.
+> Selection and early stopping use the held-out validation loss (EMA weights when available),
+> not the augmented training-batch average.
 
 ### Early Stopping
 

@@ -14,10 +14,15 @@ References:
 
 from __future__ import annotations
 
+from typing import Literal
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
+
+# Supported timestep distributions for flow-matching training.
+TimestepSampling = Literal["uniform", "logit_normal"]
 
 
 class FlowMatchingLoss(nn.Module):
@@ -49,6 +54,7 @@ def sample_t(
     device: torch.device,
     t_min: float = 0.0,
     t_max: float = 1.0,
+    generator: torch.Generator | None = None,
 ) -> torch.Tensor:
     """Sample timesteps uniformly.
 
@@ -57,11 +63,90 @@ def sample_t(
         device: Device to sample on
         t_min: Minimum timestep
         t_max: Maximum timestep
+        generator: Optional seeded generator, so validation loss can reuse the
+            exact same timesteps across evaluations
 
     Returns:
         Timestep tensor (batch_size,)
     """
-    return torch.rand(batch_size, device=device) * (t_max - t_min) + t_min
+    return (
+        torch.rand(batch_size, device=device, generator=generator) * (t_max - t_min)
+        + t_min
+    )
+
+
+def sample_t_logit_normal(
+    batch_size: int,
+    device: torch.device,
+    mean: float = 0.0,
+    std: float = 1.0,
+    generator: torch.Generator | None = None,
+) -> torch.Tensor:
+    """Sample timesteps from a logit-normal distribution (SD3-style).
+
+    ``t = sigmoid(mean + std * N(0, 1))`` concentrates training on the middle of
+    the trajectory, where the velocity field carries the most information, and
+    is the standard flow-matching recipe (Esser et al., "Scaling Rectified Flow
+    Transformers for High-Resolution Image Synthesis", 2024). Uniform sampling
+    spends a third of its capacity on t near 0 and near 1, where the target is
+    dominated by either pure noise or the target image itself.
+
+    Args:
+        batch_size: Number of samples
+        device: Device to sample on
+        mean: Mean of the underlying normal (0.0 matches SD3)
+        std: Standard deviation of the underlying normal (1.0 matches SD3)
+        generator: Optional seeded generator for reproducible evaluation
+
+    Returns:
+        Timestep tensor (batch_size,) in (0, 1)
+    """
+    normal = torch.randn(batch_size, device=device, generator=generator)
+    return torch.sigmoid(normal * std + mean)
+
+
+def sample_timesteps(
+    batch_size: int,
+    device: torch.device,
+    sampling: TimestepSampling = "uniform",
+    t_min: float = 0.0,
+    t_max: float = 1.0,
+    logit_normal_mean: float = 0.0,
+    logit_normal_std: float = 1.0,
+    generator: torch.Generator | None = None,
+) -> torch.Tensor:
+    """Sample training timesteps from the configured distribution.
+
+    Args:
+        batch_size: Number of samples
+        device: Device to sample on
+        sampling: "uniform" or "logit_normal"
+        t_min: Minimum timestep (uniform only)
+        t_max: Maximum timestep (uniform only)
+        logit_normal_mean: Mean of the logit-normal (logit_normal only)
+        logit_normal_std: Std of the logit-normal (logit_normal only)
+        generator: Optional seeded generator
+
+    Returns:
+        Timestep tensor (batch_size,)
+
+    Raises:
+        ValueError: If ``sampling`` is not a supported distribution.
+    """
+    if sampling == "logit_normal":
+        return sample_t_logit_normal(
+            batch_size,
+            device,
+            mean=logit_normal_mean,
+            std=logit_normal_std,
+            generator=generator,
+        )
+    if sampling != "uniform":
+        raise ValueError(
+            f"Unsupported timestep sampling: {sampling!r}. "
+            "Use 'uniform' or 'logit_normal'."
+        )
+    return sample_t(batch_size, device, t_min=t_min, t_max=t_max, generator=generator)
 
 
 def flow_matching_step(

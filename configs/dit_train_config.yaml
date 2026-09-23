@@ -20,6 +20,12 @@ training:
   gradient_accumulation_steps: 1
   mixed_precision: true
   seed: 42
+  # "uniform" or "logit_normal" (logit-normal concentrates on mid-trajectory).
+  # Kept at the measured default: a 250-step A/B found no resolvable difference
+  # (0.7285 uniform vs 0.7327 logit-normal) — see ADR-062 before switching.
+  timestep_sampling: uniform
+  logit_normal_mean: 0.0
+  logit_normal_std: 1.0
 
 early_stopping:
   patience: 10
@@ -30,6 +36,10 @@ ema:
 
 augmentation:
   level: full
+
+validation:
+  val_split: 0.05
+  val_batches: 8
 
 logging:
   log_interval: 100

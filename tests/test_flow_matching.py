@@ -33,7 +33,14 @@ import torch.nn as nn
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from dit import tinydit_128
-from flow_matching import EMA, FlowMatchingLoss, flow_matching_step, sample_t
+from flow_matching import (
+    EMA,
+    FlowMatchingLoss,
+    flow_matching_step,
+    sample_t,
+    sample_t_logit_normal,
+    sample_timesteps,
+)
 
 # ---------------------------------------------------------------------------
 # Per-function fixtures so EMA's in-place weight mutations do not
@@ -195,6 +202,81 @@ def test_sample_t_single_step() -> None:
     """sample_t returns (batch_size,) shape."""
     t = sample_t(8, torch.device("cpu"))
     assert t.shape == (8,)
+
+
+# ---------------------------------------------------------------------------
+# sample_timesteps / logit-normal sampling
+# ---------------------------------------------------------------------------
+
+
+class TestTimestepSampling:
+    """Tests for the selectable training timestep distribution."""
+
+    def test_uniform_dispatch_matches_sample_t(self) -> None:
+        device = torch.device("cpu")
+        generator = torch.Generator(device=device).manual_seed(0)
+
+        uniform = sample_timesteps(
+            512, device, sampling="uniform", t_min=0.2, t_max=0.8, generator=generator
+        )
+
+        assert uniform.shape == (512,)
+        assert uniform.min().item() >= 0.2
+        assert uniform.max().item() <= 0.8
+
+    def test_logit_normal_stays_inside_the_unit_interval(self) -> None:
+        t = sample_t_logit_normal(5000, torch.device("cpu"), mean=0.0, std=1.0)
+
+        assert t.shape == (5000,)
+        assert t.min().item() > 0.0
+        assert t.max().item() < 1.0
+
+    def test_logit_normal_concentrates_towards_the_middle(self) -> None:
+        t = sample_t_logit_normal(20000, torch.device("cpu"), mean=0.0, std=1.0)
+
+        middle_fraction = ((t > 0.25) & (t < 0.75)).float().mean().item()
+
+        # P(0.25 < sigmoid(N(0,1)) < 0.75) ~ 0.73 vs 0.50 for uniform.
+        assert middle_fraction > 0.65
+        assert t.mean().item() == pytest.approx(0.5, abs=0.02)
+
+    def test_uniform_spends_more_mass_at_the_tails(self) -> None:
+        uniform = sample_timesteps(20000, torch.device("cpu"), sampling="uniform")
+        logit = sample_t(20000, torch.device("cpu"))
+
+        assert uniform.mean().item() == pytest.approx(logit.mean().item(), abs=0.02)
+        tails = ((uniform < 0.25) | (uniform > 0.75)).float().mean().item()
+        assert tails == pytest.approx(0.5, abs=0.02)
+
+    def test_zero_std_is_deterministic_at_the_mean(self) -> None:
+        t = sample_t_logit_normal(16, torch.device("cpu"), mean=0.0, std=0.0)
+
+        assert torch.allclose(t, torch.full((16,), 0.5))
+
+    def test_seeded_generator_is_reproducible(self) -> None:
+        device = torch.device("cpu")
+
+        def draw() -> torch.Tensor:
+            generator = torch.Generator(device=device).manual_seed(7)
+            return sample_timesteps(
+                64,
+                device,
+                sampling="logit_normal",
+                logit_normal_mean=0.0,
+                logit_normal_std=1.0,
+                generator=generator,
+            )
+
+        assert torch.equal(draw(), draw())
+
+    def test_unknown_sampling_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported timestep sampling"):
+            sample_timesteps(4, torch.device("cpu"), sampling="beta")  # type: ignore[arg-type]
+
+    def test_logit_normal_mean_shifts_the_distribution(self) -> None:
+        t = sample_t_logit_normal(20000, torch.device("cpu"), mean=1.5, std=1.0)
+
+        assert t.mean().item() > 0.65
 
 
 # ---------------------------------------------------------------------------
