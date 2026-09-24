@@ -13,11 +13,12 @@ plans bounded per-session slices (e.g. 0 → 60k → 120k → ... → 400k) and
 runs them as separate provider sessions, each resuming exactly from the
 Hub checkpoint (see ADR-065).
 
-CLI (used by .github/workflows/train-pool.yml):
+CLI (used by .github/workflows/train.yml and train-pool.yml):
 
     python src/providers.py plan   --steps 400000 --slice-size 60000
     python src/providers.py gate   --provider lightning --strict
     python src/providers.py launch --provider modal --target 60000 ...
+    python src/providers.py verify --state-file training_state.json --target 60000
     python src/providers.py report --provider modal --job-id ... --target 60000
 """
 
@@ -29,6 +30,7 @@ import json
 import shlex
 import sys
 import time
+import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -44,6 +46,13 @@ VRAM_GB: dict[str, int] = {"T4": 16, "L4": 24, "P100": 16, "A10G": 24, "CPU": 0}
 EXIT_REASONS = frozenset(
     {"completed", "partial", "interrupted", "failed", "unsupported"}
 )
+
+
+# Exit codes for `providers.py verify` (WP7 post-provider verification).
+# Distinct codes let the workflow branch without parsing prose.
+VERIFY_OK = 0  # checkpoint valid and the global target was reached
+VERIFY_INVALID = 1  # checkpoint missing/unreadable or state unreadable
+VERIFY_PARTIAL = 3  # checkpoint valid but short of the requested target
 
 
 class UnsupportedProviderError(RuntimeError):
@@ -212,6 +221,9 @@ def build_launch_command(
     hub_push_interval: str = "5000",
     hub_resume: bool = False,
     no_hub_push: bool = False,
+    warmup_steps: str | None = None,
+    gradient_accumulation_steps: str | None = None,
+    early_stopping_patience: str | None = None,
     experiment_id: str = DEFAULT_EXPERIMENT_ID,
 ) -> list[str]:
     """Build the exact command that launches one bounded provider session.
@@ -250,6 +262,16 @@ def build_launch_command(
         "--experiment-id",
         experiment_id,
     ]
+    # Optional knobs: only emitted when explicitly requested so the default
+    # launch command stays byte-for-byte identical to the pinned test/ADR-065
+    # contract (train-pool passes none of these).
+    for flag, value in (
+        ("--warmup-steps", warmup_steps),
+        ("--gradient-accumulation-steps", gradient_accumulation_steps),
+        ("--early-stopping-patience", early_stopping_patience),
+    ):
+        if value is not None:
+            command.extend([flag, str(value)])
     if hub_resume:
         command.append("--hub-resume")
     if no_hub_push:
@@ -327,6 +349,30 @@ class ProviderReport:
         return cls(**json.loads(Path(path).read_text()))
 
 
+@dataclass
+class CheckpointVerification:
+    """Result of control-plane checkpoint verification (issue #163 WP7).
+
+    GitHub Actions must not publish a "final model" on the strength of an exit
+    code alone, so the workflow verifies the *artifacts* the provider left
+    behind: the checkpoint is a real torch zip and ``training_state.json``
+    records progress at (or past) the requested global target.
+    """
+
+    checkpoint: str | None
+    state_file: str | None
+    checkpoint_exists: bool
+    checkpoint_valid: bool
+    completed_steps: int | None
+    target_steps: int | None
+    reached_target: bool
+    experiment_id: str | None
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 def resolve_exit_reason(
     outcome: str, completed_steps: int | None, target_steps: int | None
 ) -> str:
@@ -359,6 +405,81 @@ def _read_state(state_file: str | None) -> dict[str, Any] | None:
     from training_state import read_training_state  # src is on sys.path (CLI)
 
     return read_training_state(path)
+
+
+def verify_checkpoint(
+    *,
+    state_file: str | None = None,
+    checkpoint: str | None = None,
+    target: int | None = None,
+) -> CheckpointVerification:
+    """Verify the artifacts a provider session left behind (issue #163 WP7).
+
+    Args:
+        state_file: ``training_state.json`` beside the live checkpoint.
+        checkpoint: The live checkpoint (``checkpoints/pool/dit_model.pt``).
+            When given it must exist and be a valid torch (zip) checkpoint.
+        target: Requested global target. Falls back to the state file's
+            ``target_steps`` when omitted.
+
+    Returns:
+        A :class:`CheckpointVerification`. ``checkpoint_valid`` is False (and
+        ``reached_target`` False) when the checkpoint is missing/corrupt, so
+        callers can gate publication on it.
+    """
+    state = _read_state(state_file)
+    completed: int | None = None
+    resolved_target = target
+    experiment_id: str | None = None
+    if state is not None:
+        try:
+            completed = int(state["completed_steps"])
+        except (KeyError, TypeError, ValueError):
+            completed = None
+        if resolved_target is None and state.get("target_steps"):
+            resolved_target = int(state["target_steps"])
+        experiment_id = state.get("experiment_id")
+
+    checkpoint_exists = True
+    checkpoint_valid = True
+    if checkpoint is not None:
+        path = Path(checkpoint)
+        checkpoint_exists = path.exists()
+        checkpoint_valid = checkpoint_exists and zipfile.is_zipfile(path)
+
+    reasons: list[str] = []
+    if checkpoint is not None and not checkpoint_exists:
+        reasons.append(f"checkpoint missing: {checkpoint}")
+    elif checkpoint is not None and not checkpoint_valid:
+        reasons.append(f"checkpoint is not a valid torch zip: {checkpoint}")
+    if state is None:
+        reasons.append(f"training state unreadable: {state_file}")
+
+    reached_target = bool(
+        checkpoint_valid
+        and completed is not None
+        and resolved_target is not None
+        and completed >= resolved_target
+    )
+    if not reasons:
+        if resolved_target is None:
+            reasons.append("no target supplied; progress not evaluated")
+        elif reached_target:
+            reasons.append(f"completed {completed} >= target {resolved_target}")
+        else:
+            reasons.append(f"completed {completed} < target {resolved_target}")
+
+    return CheckpointVerification(
+        checkpoint=checkpoint,
+        state_file=state_file,
+        checkpoint_exists=checkpoint_exists,
+        checkpoint_valid=checkpoint_valid,
+        completed_steps=completed,
+        target_steps=resolved_target,
+        reached_target=reached_target,
+        experiment_id=experiment_id,
+        reason="; ".join(reasons),
+    )
 
 
 def _cmd_plan(args: argparse.Namespace) -> int:
@@ -423,10 +544,38 @@ def _cmd_launch(args: argparse.Namespace) -> int:
         hub_push_interval=args.hub_push_interval,
         hub_resume=args.hub_resume,
         no_hub_push=args.no_hub_push,
+        warmup_steps=args.warmup_steps,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        early_stopping_patience=args.early_stopping_patience,
         experiment_id=args.experiment_id,
     )
     print(shlex.join(command))
     return 0
+
+
+def _cmd_verify(args: argparse.Namespace) -> int:
+    result = verify_checkpoint(
+        state_file=args.state_file,
+        checkpoint=args.checkpoint,
+        target=args.target,
+    )
+    # Machine-readable status line, mirroring PROVIDER_REPORT_JSON (WP6.10).
+    print(f"CHECKPOINT_VERIFY_JSON={json.dumps(result.to_dict(), sort_keys=True)}")
+    if args.out:
+        Path(args.out).write_text(
+            json.dumps(result.to_dict(), indent=2, sort_keys=True)
+        )
+    if args.github_output:
+        completed = "" if result.completed_steps is None else result.completed_steps
+        with open(args.github_output, "a") as handle:
+            handle.write(f"reached={'true' if result.reached_target else 'false'}\n")
+            handle.write(
+                f"checkpoint_valid={'true' if result.checkpoint_valid else 'false'}\n"
+            )
+            handle.write(f"completed_steps={completed}\n")
+    if not result.checkpoint_valid or result.completed_steps is None:
+        return VERIFY_INVALID
+    return VERIFY_OK if result.reached_target else VERIFY_PARTIAL
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
@@ -505,8 +654,25 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument("--hub-push-interval", default="5000")
     launch.add_argument("--hub-resume", action="store_true")
     launch.add_argument("--no-hub-push", action="store_true")
+    launch.add_argument("--warmup-steps", default=None)
+    launch.add_argument("--gradient-accumulation-steps", default=None)
+    launch.add_argument("--early-stopping-patience", default=None)
     launch.add_argument("--experiment-id", default=DEFAULT_EXPERIMENT_ID)
     launch.set_defaults(func=_cmd_launch)
+
+    verify = sub.add_parser(
+        "verify", help="verify provider artifacts against the global target"
+    )
+    verify.add_argument("--state-file", default=None)
+    verify.add_argument("--checkpoint", default=None)
+    verify.add_argument("--target", type=int, default=None)
+    verify.add_argument("--out", default=None)
+    verify.add_argument(
+        "--github-output",
+        default=None,
+        help="append reached/checkpoint_valid/completed_steps to $GITHUB_OUTPUT",
+    )
+    verify.set_defaults(func=_cmd_verify)
 
     report = sub.add_parser("report", help="write the machine-readable session report")
     report.add_argument("--provider", required=True)

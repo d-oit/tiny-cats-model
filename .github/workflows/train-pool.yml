@@ -157,7 +157,15 @@ jobs:
   # ────────────────────────────────────────────────────────
   train-slice:
     name: Slice → ${{ matrix.target }}
-    needs: [plan-slices]
+    # Never launch a slice when an unsupported provider was requested: the
+    # provider gate runs for every non-modal provider, so a `skipped` gate is
+    # the (only) signal that modal was actually requested. `always()` keeps the
+    # matrix alive when the gate is skipped rather than failed.
+    needs: [plan-slices, provider-gate]
+    if: |
+      always() &&
+      needs.plan-slices.result == 'success' &&
+      needs.provider-gate.result == 'skipped'
     runs-on: ubuntu-latest
     environment: modal-training
     timeout-minutes: 360
@@ -250,6 +258,39 @@ jobs:
             --outcome "${{ steps.train.outcome }}" \
             --out "provider_report_${{ matrix.target }}.json"
 
+      - name: Verify slice checkpoint
+        id: verify
+        if: always()
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          set -o pipefail
+          mkdir -p verify
+          modal volume get dit-outputs checkpoints/pool/dit_model.pt verify/dit_model.pt \
+            2>&1 | tee -a modal-training.log \
+            || echo "::warning::dit_model.pt not on volume for this slice"
+          set +e
+          python src/providers.py verify \
+            --state-file training_state.json \
+            --checkpoint verify/dit_model.pt \
+            --target ${{ matrix.target }} \
+            --out slice_verification_${{ matrix.target }}.json
+          rc=$?
+          set -e
+          echo "verify_exit_code=$rc" >> "$GITHUB_OUTPUT"
+          # 1 = no usable checkpoint. A later slice would resume from stale
+          # state, so fail loudly (WP7: never report success on a failed run).
+          if [ "$rc" = "1" ]; then
+            echo "::error::slice ${{ matrix.target }} produced no usable checkpoint"
+            exit 1
+          fi
+          # 3 = valid but short of target (preemption/interruption). The
+          # checkpoint is resumable by design, so continue to the next slice.
+          if [ "$rc" = "3" ]; then
+            echo "::warning::slice ${{ matrix.target }} is partial — checkpoint is resumable"
+          fi
+
       - name: Upload training log
         uses: actions/upload-artifact@v7
         if: always()
@@ -264,7 +305,9 @@ jobs:
         if: always()
         with:
           name: provider-report-${{ matrix.target }}
-          path: provider_report_${{ matrix.target }}.json
+          path: |
+            provider_report_${{ matrix.target }}.json
+            slice_verification_${{ matrix.target }}.json
           retention-days: 30
           if-no-files-found: warn
 
@@ -291,6 +334,8 @@ jobs:
           # break when interpolated into Python source. Pass the string via a
           # step env var instead; read it with os.environ below.
           SLICES_SUCCEEDED: ${{ needs.train-slice.result == 'success' }}
+          SLICES_RESULT: ${{ needs.train-slice.result }}
+          GATE_RESULT: ${{ needs.provider-gate.result }}
           PLANNED: ${{ needs.plan-slices.outputs.matrix }}
         run: |
           # shellcheck disable=SC2140  # Python -c block uses escaped quotes
@@ -314,14 +359,27 @@ jobs:
           print('  https://huggingface.co/d4oit/tiny-cats-model/tree/main/checkpoints/pool')
           print()
           # shellcheck disable=SC2140  # GHA expression, not shell quoting
-          status = os.environ.get('SLICES_SUCCEEDED', 'false')
-          if status.lower() == 'true':
+          gate = os.environ.get('GATE_RESULT', '')
+          result = os.environ.get('SLICES_RESULT', '')
+          if gate == 'failed':
+              print('❌ Provider gate failed — no slice was launched (see gate job)')
+          elif result == 'skipped':
+              print('ℹ️  No slice ran (unsupported provider or failed gate)')
+          elif result == 'success':
               print('✅ Slices completed — provider reports uploaded as artifacts')
+              print('   exit reasons are recorded per slice in provider-report-* artifacts')
           else:
-              print('⚠️  One or more slices failed (see provider-report-* artifacts)')
+              # The failing slice already failed the workflow; just be explicit
+              # here instead of reporting a vacuous success.
+              print('❌ One or more slices failed (see provider-report-* artifacts)')
           "
 
       - name: Verify Hub checkpoints
+        # Only meaningful when the run was supposed to push: schedule always
+        # pushes, dispatch does unless push_to_hub was set to false.
+        if: |
+          github.event_name == 'schedule' ||
+          inputs.push_to_hub == true
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |

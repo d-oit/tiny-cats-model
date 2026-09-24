@@ -179,7 +179,7 @@ def verify_onnx_inference(
     return results
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Verify trained checkpoint")
     parser.add_argument(
@@ -199,12 +199,20 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip ONNX verification",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--require-onnx",
+        action="store_true",
+        help=(
+            "Fail (exit 1) when ONNX verification fails instead of warning; "
+            "used by train.yml's publication gate (issue #163 WP7/WP8)"
+        ),
+    )
+    return parser.parse_args(argv)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     """Main verification function."""
-    args = parse_args()
+    args = parse_args(argv)
 
     print("=" * 60)
     print("TinyDiT Checkpoint Verification")
@@ -219,6 +227,9 @@ def main() -> None:
     if not args.skip_onnx:
         onnx_results = verify_onnx_inference(args.onnx)
         if not onnx_results["valid"]:
+            if args.require_onnx:
+                print("\nONNX verification failed (--require-onnx). Exiting.")
+                sys.exit(1)
             print("\nWARNING: ONNX verification failed, but checkpoint is valid")
 
     print("\n" + "=" * 60)

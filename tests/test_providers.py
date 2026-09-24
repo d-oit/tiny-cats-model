@@ -19,6 +19,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from providers import (
     DEFAULT_EXPERIMENT_ID,
     EXIT_REASONS,
+    VERIFY_INVALID,
+    VERIFY_OK,
+    VERIFY_PARTIAL,
     ProviderReport,
     UnsupportedProviderError,
     build_launch_command,
@@ -27,6 +30,7 @@ from providers import (
     main,
     parse_slice_targets,
     resolve_exit_reason,
+    verify_checkpoint,
 )
 
 
@@ -157,6 +161,195 @@ class TestLaunchCommand:
         out = capsys.readouterr().out
         assert out.startswith("modal run src/train_dit.py")
         assert "--steps 60000" in out
+
+    def test_optional_training_knobs_only_when_requested(self) -> None:
+        baseline = build_launch_command("modal", 60_000)
+        assert "--warmup-steps" not in baseline
+        assert "--gradient-accumulation-steps" not in baseline
+        assert "--early-stopping-patience" not in baseline
+
+        tuned = build_launch_command(
+            "modal",
+            60_000,
+            warmup_steps="2000",
+            gradient_accumulation_steps="2",
+            early_stopping_patience="15",
+        )
+        joined = " ".join(tuned)
+        assert "--warmup-steps 2000" in joined
+        assert "--gradient-accumulation-steps 2" in joined
+        assert "--early-stopping-patience 15" in joined
+
+    def test_launch_cli_forwards_training_knobs(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        code = main(
+            [
+                "launch",
+                "--provider",
+                "modal",
+                "--target",
+                "60000",
+                "--warmup-steps",
+                "2000",
+                "--early-stopping-patience",
+                "15",
+            ]
+        )
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "--warmup-steps 2000" in out
+        assert "--early-stopping-patience 15" in out
+
+
+class TestCheckpointVerification:
+    """WP7: publication is gated on verified provider artifacts."""
+
+    def _state(self, tmp_path: Path, completed: int, target: int) -> Path:
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "experiment_id": "dit-breed-conditioned-v4",
+                    "completed_steps": completed,
+                    "target_steps": target,
+                }
+            )
+        )
+        return state_file
+
+    def _checkpoint(self, tmp_path: Path, *, valid: bool = True) -> Path:
+        import zipfile
+
+        path = tmp_path / "checkpoints" / "pool" / "dit_model.pt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if valid:
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("archive/data.pkl", b"stub")
+        else:
+            path.write_bytes(b"not-a-zip")
+        return path
+
+    def test_target_reached_is_ok(self, tmp_path: Path) -> None:
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=60_000,
+        )
+        assert result.reached_target
+        assert result.checkpoint_valid
+        assert result.completed_steps == 60_000
+        assert result.experiment_id == "dit-breed-conditioned-v4"
+
+    def test_short_of_target_is_not_reached(self, tmp_path: Path) -> None:
+        # 45k checkpoint against a 60k target: valid artifact, target missed.
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 45_000, 60_000)),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=60_000,
+        )
+        assert result.checkpoint_valid
+        assert not result.reached_target
+
+    def test_corrupt_checkpoint_is_invalid(self, tmp_path: Path) -> None:
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(self._checkpoint(tmp_path, valid=False)),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+
+    def test_missing_checkpoint_is_invalid(self, tmp_path: Path) -> None:
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(tmp_path / "nope.pt"),
+            target=60_000,
+        )
+        assert not result.checkpoint_exists
+        assert not result.checkpoint_valid
+
+    def test_target_falls_back_to_state(self, tmp_path: Path) -> None:
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(self._checkpoint(tmp_path)),
+        )
+        assert result.target_steps == 60_000
+        assert result.reached_target
+
+    def test_verify_cli_exit_codes(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        state = str(self._state(tmp_path, 60_000, 60_000))
+        checkpoint = str(self._checkpoint(tmp_path))
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    state,
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "60000",
+                ]
+            )
+            == VERIFY_OK
+        )
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    state,
+                    "--checkpoint",
+                    str(tmp_path / "missing.pt"),
+                    "--target",
+                    "60000",
+                ]
+            )
+            == VERIFY_INVALID
+        )
+        short = self._state(tmp_path, 10, 20)
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(short),
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "20",
+                ]
+            )
+            == VERIFY_PARTIAL
+        )
+        assert "CHECKPOINT_VERIFY_JSON=" in capsys.readouterr().out
+
+    def test_verify_cli_appends_github_output(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        github_output = tmp_path / "gh_output"
+        code = main(
+            [
+                "verify",
+                "--state-file",
+                str(self._state(tmp_path, 45_000, 60_000)),
+                "--checkpoint",
+                str(self._checkpoint(tmp_path)),
+                "--target",
+                "60000",
+                "--github-output",
+                str(github_output),
+            ]
+        )
+        assert code == VERIFY_PARTIAL
+        text = github_output.read_text()
+        assert "reached=false" in text
+        assert "checkpoint_valid=true" in text
+        assert "completed_steps=45000" in text
+        assert capsys.readouterr().out
 
 
 class TestProviderReport:

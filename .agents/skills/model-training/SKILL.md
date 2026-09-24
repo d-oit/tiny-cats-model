@@ -124,12 +124,47 @@ class DiTTrainer:
 | L40S | Non-spot DiT training | High ($1.95/hr) |
 | A100 | Large models | High ($2.10/hr) |
 
+### Production 400k Run (slices, not one job)
+
+`--steps` is a GLOBAL target. Resume always performs
+`max(0, steps − completed)`, so slices continue one experiment and re-running a
+plan is idempotent. GitHub Actions is the control plane (it plans, launches,
+verifies — it never trains on CPU); HF Hub is the state transport.
+
+```bash
+# 0. One bounded Modal slice
+modal run src/train_dit.py --data-dir /data/cats \
+  --steps 60000 --batch-size 32 --lr 5e-5 --warmup-steps 2000 \
+  --save-interval 5000 --hub-push-interval 5000 --hub-resume
+
+# 1. Continue with INCREASING GLOBAL TARGETS (never additional steps)
+modal run src/train_dit.py --data-dir /data/cats --steps 120000 --batch-size 32 --hub-resume
+modal run src/train_dit.py --data-dir /data/cats --steps 400000 --batch-size 32 --hub-resume
+
+# 2. Or let GitHub Actions run every slice (sequential, fail-fast)
+gh workflow run train-pool.yml -f steps=400000 -f slice_size=60000
+gh workflow run train.yml -f steps=25000 -f batch_size=32   # one verified slice
+```
+
+A slice only publishes a final model when the target is reached AND the
+checkpoint verifies; otherwise it reports `partial` and publishes nothing.
+GitHub-hosted runners cap a job at 6h, so any single job is one bounded slice.
+
 ### Free GPU Pool Training
 
 Multi-provider training with HF Hub checkpoint sync.
-See `src/gpu_pool.py` for the full abstraction.
+See `src/gpu_pool.py` for the abstraction and `src/providers.py` for the control
+plane (plan / gate / launch / verify / report).
 
 ```bash
+# Control plane primitives (no GPU launch, safe to inspect)
+python src/providers.py gate   --provider all
+python src/providers.py gate   --provider kaggle --strict    # exits 2
+python src/providers.py plan   --steps 400000 --slice-size 60000
+python src/providers.py launch --provider modal --target 60000
+python src/providers.py verify --state-file checkpoints/pool/training_state.json \
+    --checkpoint checkpoints/pool/dit_model.pt --target 60000
+
 # Check provider and cost estimates
 python -c "from gpu_pool import detect_provider_and_log, estimate_cost; detect_provider_and_log(); print(estimate_cost(50000))"
 
@@ -139,6 +174,10 @@ python -c "from gpu_pool import train_with_fallback; train_with_fallback(steps=5
 # Print the fallback chain order
 python -c "from gpu_pool import train_chain; train_chain(steps=20000)"
 ```
+
+Only Modal is launchable from the control plane; Lightning/Kaggle/Colab/HF
+Spaces fail clearly instead of silently training on CPU — run those manually
+with the per-provider scripts below.
 
 Provider-specific scripts with Hub checkpoint sync:
 ```bash
@@ -150,7 +189,10 @@ python scripts/train_hf_spaces.py --steps 20000 --hub-resume    # HF Spaces
 
 Pool CI workflow:
 ```bash
-gh workflow run train-pool.yml -f steps=20000 -f provider=modal
+# Bounded slices toward one global target (default 400k, 25k/session)
+gh workflow run train-pool.yml -f steps=400000 -f slice_size=60000
+# Unsupported providers fail at the gate, never on CPU
+gh workflow run train-pool.yml -f provider=kaggle
 ```
 
 **Testing the GPU pool:**
@@ -163,6 +205,10 @@ pytest tests/test_train_chain.py -v
 
 # End-to-end fallback chain simulation (38 checks)
 python scripts/test_fallback_chain.py
+
+# End-to-end training pipeline: CPU smoke + exact resume (10 -> 20) +
+# ONNX export/runtime inference + quantized ONNX + artifact package gates
+python scripts/verify_training_pipeline.py
 ```
 
 **GPU hour estimation and calibration:**

@@ -169,6 +169,110 @@ python scripts/tune_dit_configs.py --data-dir data/cats --steps 300 \
   --arms label=logit,timestep_sampling=logit_normal --json-out tune.json
 ```
 
+## Production 400k Runbook (issue #163 WP9)
+
+This is the one canonical procedure for a complete 400k DiT run. It is built
+from **bounded, resumable slices**: GitHub Actions is the control plane, real GPU
+providers are the execution plane, and HuggingFace Hub is the state transport.
+
+### 0. Local smoke (CPU, seconds)
+
+```bash
+python src/train_dit.py \
+  --data-dir data/cats \
+  --steps 100 \
+  --batch-size 8
+```
+
+### 1. First Modal slice (bounded to fit one runner session)
+
+```bash
+modal run src/train_dit.py \
+  --data-dir /data/cats \
+  --steps 60000 \
+  --batch-size 32 \
+  --lr 5e-5 \
+  --warmup-steps 2000 \
+  --save-interval 5000 \
+  --hub-push-interval 5000 \
+  --hub-resume
+```
+
+### 2. Continue the SAME experiment with increasing GLOBAL targets
+
+`--steps` is a global target, never an additional-step count. The examples
+below are the only correct way to advance a 400k run by hand:
+
+```bash
+modal run src/train_dit.py --data-dir /data/cats --steps 120000 --batch-size 32 --hub-resume
+modal run src/train_dit.py --data-dir /data/cats --steps 180000 --batch-size 32 --hub-resume
+# ... 240000 -> 300000 -> 360000 -> 400000
+```
+
+### 3. Or let GitHub Actions orchestrate every slice
+
+```bash
+# Full 400k run, 60k per provider session, sequential + fail-fast
+train-pool.yml -f steps=400000 -f slice_size=60000
+
+# Default schedule: every 6h, 25k per session (fits the runner window on a T4)
+# Single verified production slice through the main workflow
+gh workflow run train.yml -f steps=25000 -f batch_size=32
+```
+
+The pool workflow plans `[60000, 120000, ..., 400000]`, filters out slices the
+Hub pointer already covers, and runs them with `max-parallel: 1` / `fail-fast:
+true`. Each session resumes exactly to its target, so the plan is idempotent:
+re-running it skips finished work.
+
+### Which providers actually train?
+
+| Provider | Control plane | How to run |
+|----------|---------------|------------|
+| Modal | ✅ `providers.py launch --provider modal` | `train-pool.yml` / `train.yml` |
+| Lightning AI | ❌ unsupported (fails clearly) | `python scripts/train_lightning.py --hub-resume` |
+| Kaggle | ❌ unsupported (fails clearly) | `python scripts/train_kaggle.py --hub-resume` |
+| Colab | ❌ unsupported (no headless API) | run the notebook with `--resume` |
+| HF Spaces | ❌ unsupported (no GPU-job API) | `python scripts/train_hf_spaces.py --hub-resume` |
+
+Requesting an unsupported provider **exits 2 with instructions** — the control
+plane never falls back to CPU simulation. Because GitHub-hosted runners
+hard-cap a job at 6 hours, any single job is one bounded slice regardless of the
+provider.
+
+### Slice contract
+
+Every provider session: identifies the experiment → pulls the newest valid Hub
+checkpoint → validates it against the immutable manifest → reads the global step
+→ trains only to the requested target → pushes `step-XXXXXX/` snapshots plus a
+`latest/` pointer → handles SIGTERM/SIGINT with a usable checkpoint → writes a
+machine-readable provider report.
+
+### Recovery
+
+| Situation | What happens / what to do |
+|-----------|---------------------------|
+| Provider preemption | Checkpoint survives; the slice reports `partial`; re-run the same command or let the next scheduled pool run resume from the Hub pointer |
+| GitHub Actions cancellation | `hub_push_interval` has already synced a mid-run checkpoint; `train-pool.yml` re-plans from the pointer's `completed_steps` |
+| Modal timeout | Slice reports `partial` with the last completed step; lower `slice_size` and continue |
+| Corrupt checkpoint | Quarantined to `*.corrupt` locally; a corrupt Hub download is quarantined and validation returns `None` so the previous valid snapshot is used |
+| Missing Hub checkpoint | First run (nothing to resume); training starts at step 0 |
+| Provider handoff | Hub is the only state transport; the next provider resumes from `latest/` regardless of which provider wrote it |
+| Final target already reached | The run is a successful no-op: 0 steps, checkpoint bytes untouched, `exit_reason: completed` |
+| Workflow failed but log looks green | Check the `provider-report-<target>.json` artifact and `exit_reason`; training output is piped through `tee` under `set -o pipefail`, so a failed `modal run` fails the job |
+
+### Publication gate
+
+A "final model" is published only when all of these hold:
+
+1. `training_state.json` records `completed_steps >= target_steps`.
+2. The checkpoint is a valid torch (zip) archive — `python src/providers.py verify`.
+3. `artifacts/generator/{model.pt,model.onnx,model_quantized.onnx}` + `manifest.json` exist.
+4. ONNX Runtime inference succeeds and evaluation/benchmark reports are written.
+5. The Hub upload is listed back afterwards.
+
+Anything short of the target reports `partial` and publishes nothing.
+
 ## Error Handling & Logging
 
 ### Pre-flight Checks
@@ -248,6 +352,18 @@ python src/verify_checkpoint.py --checkpoint checkpoints/pool/dit_model.pt
 
 # Export and test ONNX
 python src/export_dit_onnx.py --verify --test
+
+# Control plane: are the provider artifacts good enough to publish?
+python src/providers.py verify \
+  --state-file checkpoints/pool/training_state.json \
+  --checkpoint checkpoints/pool/dit_model.pt \
+  --target 60000
+# exit 0 = target reached, 3 = valid but partial, 1 = missing/corrupt
+
+# End-to-end pipeline: CPU smoke + exact resume (10 -> 20) + ONNX export +
+# ONNX Runtime inference + quantized ONNX + artifact package/refusal gates
+python scripts/verify_training_pipeline.py
+python scripts/verify_training_pipeline.py --stage export   # one stage only
 ```
 
 ## Common Issues
