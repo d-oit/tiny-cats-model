@@ -1,18 +1,22 @@
 # .github/workflows/train-pool.yml
-# Multi-provider GPU pool training with HF Hub checkpoint sync.
+# GPU-pool training with GitHub Actions as the CONTROL PLANE (issue #163 WP5/WP6).
 #
-# Triggers: workflow_dispatch (manual) or scheduled.
-# This workflow orchestrates training across free GPU providers
-# using the gpu_pool.py abstraction. Each provider run syncs
-# checkpoints via HuggingFace Hub so the next provider resumes
-# where the previous one left off.
+# Architecture (ADR-065):
+#   - GitHub Actions plans bounded training slices and launches real GPU
+#     provider sessions; it never trains on CPU itself.
+#   - Only providers with a real headless adapter (currently Modal) are
+#     launched; every other provider FAILS CLEARLY via `providers.py gate`
+#     instead of silently simulating on CPU.
+#   - HF Hub is the state transport (checkpoints/pool/<exp>/latest pointer);
+#     each slice resumes exactly to its global target and reports a
+#     machine-readable provider_report_<target>.json artifact.
 #
 # Usage:
-#   gh workflow run train-pool.yml
-#   gh workflow run train-pool.yml -f steps=50000 -f batch_size=256
-#   gh workflow run train-pool.yml -f providers="modal,lightning, kaggle"
+#   gh workflow run train-pool.yml                                  # 400k plan, 25k slices
+#   gh workflow run train-pool.yml -f steps=400000 -f slice_size=60000
+#   gh workflow run train-pool.yml -f provider=kaggle               # fails clearly (gate)
 #
-# See: src/gpu_pool.py, scripts/train_*.py
+# See: src/providers.py, src/gpu_pool.py, plans/ADR-065-*
 
 name: Train (GPU Pool)
 
@@ -20,14 +24,19 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: "Provider(s) to use (modal, lightning, colab, kaggle, hf_spaces, all)"
+        description: "Provider to launch (modal is the only headless adapter; others fail clearly)"
         required: false
         default: "modal"
         type: string
       steps:
-        description: "Training steps per provider run"
+        description: "Global training target (slices resume toward this, never additive)"
         required: false
-        default: "60000"
+        default: "400000"
+        type: string
+      slice_size:
+        description: "Max steps per provider session (bounded slice; fits the 6h schedule window)"
+        required: false
+        default: "25000"
         type: string
       batch_size:
         description: "Batch size"
@@ -38,6 +47,11 @@ on:
         description: "Learning rate"
         required: false
         default: "5e-5"
+        type: string
+      gpu_model:
+        description: "GPU model reported in provider reports"
+        required: false
+        default: "T4"
         type: string
       hub_resume:
         description: "Pull checkpoint from HF Hub before training"
@@ -68,17 +82,89 @@ concurrency:
 
 jobs:
   # ────────────────────────────────────────────────────────
-  # Modal GPU training (first in fallback chain)
+  # Plan: turn the global target into a bounded slice matrix (WP6)
   # ────────────────────────────────────────────────────────
-  train-modal:
-    name: Train on Modal
+  plan-slices:
+    name: Plan slices
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install huggingface_hub
+
+      - name: Compute slice matrix
+        id: plan
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          EXTRA=()
+          if [ -n "$HF_TOKEN" ]; then
+            EXTRA+=(--remote-completed --token "$HF_TOKEN")
+          fi
+          MATRIX="$(python src/providers.py plan \
+            --steps ${{ github.event.inputs.steps || '400000' }} \
+            --slice-size ${{ github.event.inputs.slice_size || '25000' }} \
+            --experiment-id dit-breed-conditioned-v4 \
+            --hub-repo d4oit/tiny-cats-model \
+            "${EXTRA[@]}")"
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "Planned slices: $MATRIX"
+
+  # ────────────────────────────────────────────────────────
+  # Provider support gate (WP5): unsupported providers fail clearly
+  # instead of silently training on CPU (replaces train-pool-runner).
+  # ────────────────────────────────────────────────────────
+  provider-gate:
+    name: Provider support gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      inputs.provider != 'modal'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Gate provider
+        run: |
+          if [ "${{ inputs.provider }}" = "all" ]; then
+            python src/providers.py gate --provider all
+          else
+            python src/providers.py gate --provider "${{ inputs.provider }}" --strict
+          fi
+
+  # ────────────────────────────────────────────────────────
+  # Train slices: one bounded Modal GPU session per slice target,
+  # run sequentially (max-parallel: 1) with fail-fast so a broken
+  # slice never lets a later one run on stale state.
+  # ────────────────────────────────────────────────────────
+  train-slice:
+    name: Slice → ${{ matrix.target }}
+    needs: [plan-slices]
     runs-on: ubuntu-latest
     environment: modal-training
     timeout-minutes: 360
-    if: |
-      (github.event_name == 'workflow_dispatch' &&
-       (inputs.provider == 'modal' || inputs.provider == 'all')) ||
-      github.event_name == 'schedule'
+    strategy:
+      max-parallel: 1
+      fail-fast: true
+      matrix: ${{ fromJson(needs.plan-slices.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
 
@@ -112,112 +198,75 @@ jobs:
               || echo "::warning::Failed to create Modal secret 'huggingface-secret'"
           fi
 
-      - name: Train on Modal GPU
+      - name: Launch slice on Modal GPU
+        id: train
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           set -o pipefail
-          HUBSYNC=()
+          HUBFLAGS=()
           if [ "${{ github.event_name }}" = "schedule" ] || \
              [ "${{ github.event.inputs.hub_resume }}" = "true" ]; then
-            HUBSYNC+=(--hub-resume)
+            HUBFLAGS+=(--hub-resume)
           fi
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
              [ "${{ github.event.inputs.push_to_hub }}" != "true" ]; then
-            HUBSYNC+=(--no-hub-push)
+            HUBFLAGS+=(--no-hub-push)
           fi
-          modal run src/train_dit.py \
-            --data-dir /data/cats \
-            --output /outputs/checkpoints/pool/dit_model.pt \
-            --ema-output /outputs/checkpoints/pool/dit_model_ema.pt \
-            --steps ${{ github.event.inputs.steps || '60000' }} \
+          CMD="$(python src/providers.py launch \
+            --provider modal \
+            --target ${{ matrix.target }} \
             --batch-size ${{ github.event.inputs.batch_size || '32' }} \
             --lr ${{ github.event.inputs.lr || '5e-5' }} \
             --save-interval 500 \
             --hub-push-interval ${{ github.event.inputs.hub_push_interval || '5000' }} \
-            "${HUBSYNC[@]}" 2>&1 | tee modal-training.log
+            --experiment-id dit-breed-conditioned-v4 \
+            "${HUBFLAGS[@]}")"
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "Launch: $CMD"
+          eval "$CMD" 2>&1 | tee modal-training.log
+
+      - name: Write provider report
+        if: always()
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          ENDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          modal volume get dit-outputs checkpoints/pool/training_state.json \
+            ./training_state.json \
+            || echo "::warning::training_state.json not on volume yet"
+          python src/providers.py report \
+            --provider modal \
+            --gpu-model ${{ github.event.inputs.gpu_model || 'T4' }} \
+            --job-id "${{ github.run_id }}/${{ github.job }}/${{ matrix.target }}" \
+            --started-at "${{ steps.train.outputs.started_at }}" \
+            --ended-at "$ENDED_AT" \
+            --target ${{ matrix.target }} \
+            --state-file training_state.json \
+            --checkpoint-uri "hf://d4oit/tiny-cats-model/checkpoints/pool/dit-breed-conditioned-v4/latest" \
+            --outcome "${{ steps.train.outcome }}" \
+            --out "provider_report_${{ matrix.target }}.json"
 
       - name: Upload training log
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: modal-training-log
+          name: modal-training-log-${{ matrix.target }}
           path: modal-training.log
           retention-days: 7
+          if-no-files-found: warn
 
-  # ────────────────────────────────────────────────────────
-  # Kubernetes runner (simulates Lightning/Colab/Kaggle)
-  # ────────────────────────────────────────────────────────
-  train-pool-runner:
-    name: Train on Pool Runner
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    # CPU-only simulation of the Lightning/Colab/Kaggle providers, so it runs
-    # only when one of them is explicitly requested. It is skipped on schedule
-    # and for provider=all, where the Modal job runs the real training.
-    if: |
-      (github.event_name == 'workflow_dispatch' &&
-       inputs.provider != 'modal' && inputs.provider != 'all')
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: requirements*.txt
-
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install huggingface_hub pillow tqdm
-          pip install -r requirements.txt
-
-      - name: Print pool status
-        run: |
-          python -c "
-          import sys; sys.path.insert(0, 'src')
-          from gpu_pool import detect_provider, estimate_cost
-          provider = detect_provider()
-          print(f'Detected provider: {provider.value}')
-          costs = estimate_cost(20000)
-          for name, info in sorted(costs.items()):
-              print(f'  {info[\"provider\"]}: {info[\"gpu_hours\"]}h, \${info[\"estimated_cost\"]}')
-          "
-
-      - name: Pull checkpoint and train (CPU fallback)
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          set -o pipefail
-          POOL_FLAGS=()
-          if [ "${{ github.event.inputs.hub_resume }}" = "true" ]; then
-            POOL_FLAGS+=(--hub-resume)
-          fi
-          if [ "${{ github.event.inputs.push_to_hub }}" != "true" ]; then
-            POOL_FLAGS+=(--no-hub-push)
-          fi
-          python scripts/train_lightning.py \
-            --steps ${{ github.event.inputs.steps || '5000' }} \
-            --batch-size ${{ github.event.inputs.batch_size || '128' }} \
-            --lr ${{ github.event.inputs.lr || '5e-5' }} \
-            --save-interval 200 \
-            "${POOL_FLAGS[@]}" \
-            --checkpoint-dir checkpoints/pool \
-            --data-dir data/cats \
-            2>&1 | tee pool-training.log
-
-      - name: Upload training log
+      - name: Upload provider report
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: pool-training-log
-          path: pool-training.log
-          retention-days: 7
+          name: provider-report-${{ matrix.target }}
+          path: provider_report_${{ matrix.target }}.json
+          retention-days: 30
+          if-no-files-found: warn
 
   # ────────────────────────────────────────────────────────
   # Pool status summary
@@ -225,7 +274,7 @@ jobs:
   pool-summary:
     name: Pool Summary
     runs-on: ubuntu-latest
-    needs: [train-modal, train-pool-runner]
+    needs: [plan-slices, train-slice, provider-gate]
     if: always()
     timeout-minutes: 5
     steps:
@@ -241,20 +290,19 @@ jobs:
           # GitHub renders booleans in ${{ }} as bare true/false, which would
           # break when interpolated into Python source. Pass the string via a
           # step env var instead; read it with os.environ below.
-          PROVIDERS_SUCCEEDED: ${{ needs.train-modal.result == 'success' || needs.train-pool-runner.result == 'success' }}
+          SLICES_SUCCEEDED: ${{ needs.train-slice.result == 'success' }}
+          PLANNED: ${{ needs.plan-slices.outputs.matrix }}
         run: |
           # shellcheck disable=SC2140  # Python -c block uses escaped quotes
           python -c "
-          import os, sys; sys.path.insert(0, 'src')
-          from gpu_pool import (
-              FALLBACK_CHAIN, detect_provider, estimate_cost,
-              get_provider_config,
-          )
+          import json, os, sys; sys.path.insert(0, 'src')
+          from gpu_pool import FALLBACK_CHAIN, estimate_cost
           print('=' * 60)
           print('GPU POOL TRAINING COMPLETE')
           print('=' * 60)
           chain = ' → '.join(p.value for p in FALLBACK_CHAIN)
           print(f'Fallback chain: {chain}')
+          print(f'Planned slices: {os.environ.get(\"PLANNED\", \"?\")}')
           print()
           print('Cost estimates (20k steps):')
           costs = estimate_cost(20000)
@@ -266,11 +314,11 @@ jobs:
           print('  https://huggingface.co/d4oit/tiny-cats-model/tree/main/checkpoints/pool')
           print()
           # shellcheck disable=SC2140  # GHA expression, not shell quoting
-          status = os.environ.get('PROVIDERS_SUCCEEDED', 'false')
+          status = os.environ.get('SLICES_SUCCEEDED', 'false')
           if status.lower() == 'true':
-              print('✅ At least one provider completed training successfully')
+              print('✅ Slices completed — provider reports uploaded as artifacts')
           else:
-              print('⚠️  No provider completed training (check logs)')
+              print('⚠️  One or more slices failed (see provider-report-* artifacts)')
           "
 
       - name: Verify Hub checkpoints

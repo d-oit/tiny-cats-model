@@ -1095,12 +1095,16 @@ class DiTTrainer:
             else:
                 logger.info("Global target reached — building final artifacts...")
                 try:
-                    from artifacts import package_final_artifacts
+                    from artifacts import export_paths, package_final_artifacts
                     from export_dit_onnx import export_generator_onnx, load_model
                     from optimize_onnx import optimize_onnx
 
-                    generator_dir = "/outputs/artifacts/generator"
-                    onnx_path = f"{generator_dir}/model.onnx"
+                    # Export stages in <root>/export/, *never* directly into
+                    # artifacts/generator/ — packaging copies sources into the
+                    # package (a same-directory source/destination crashed the
+                    # live smoke run with SameFileError).
+                    paths = export_paths("/outputs")
+                    onnx_path = paths["onnx"]
 
                     model_to_export = load_model(output, image_size=image_size)
                     export_generator_onnx(model_to_export, output_path=onnx_path)
@@ -1109,11 +1113,18 @@ class DiTTrainer:
                     logger.info("Quantizing ONNX model...")
                     optimize_onnx(
                         model_path=onnx_path,
-                        output_dir=generator_dir,
+                        output_dir=paths["export_dir"],
                         method="dynamic",
                         model_type="generator",
                     )
-                    quantized_path = f"{generator_dir}/model_quantized.onnx"
+                    # optimize_onnx names generator output
+                    # "generator_quantized.onnx" (not "model_quantized.onnx").
+                    quantized_path = paths["quantized"]
+                    if not quantized_path.exists():
+                        raise FileNotFoundError(
+                            f"Quantized ONNX missing after optimize_onnx: "
+                            f"{quantized_path}"
+                        )
                     logger.info(f"✅ Quantized model saved to {quantized_path}")
 
                     package_final_artifacts(

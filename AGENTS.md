@@ -80,6 +80,11 @@ gh workflow run train.yml
 # Custom configuration
 gh workflow run train.yml -f steps=50000 -f batch_size=512
 
+# GPU pool (control plane, ADR-065): bounded slices toward one global target
+gh workflow run train-pool.yml -f steps=400000 -f slice_size=60000
+# Unsupported providers (kaggle/lightning/colab/hf_spaces) fail clearly at the gate
+gh workflow run train-pool.yml -f provider=kaggle
+
 # Monitor runs
 gh run list
 gh run view <run-id>
