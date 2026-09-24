@@ -34,7 +34,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import sys
 import tempfile
@@ -49,6 +48,7 @@ if str(ROOT / "src") not in sys.path:
 import torch  # noqa: E402
 from PIL import Image  # noqa: E402
 
+import train_dit  # noqa: E402
 from artifacts import ArtifactPackageError, package_final_artifacts  # noqa: E402
 from dataset import CAT_BREEDS, build_transforms  # noqa: E402
 from dit import TinyDiT  # noqa: E402
@@ -56,6 +56,43 @@ from export_dit_onnx import export_generator_onnx, verify_onnx_model  # noqa: E4
 from optimize_onnx import optimize_onnx  # noqa: E402
 from train_dit import train_dit_local  # noqa: E402
 from training_state import read_training_state  # noqa: E402
+
+
+class _NullTracker:
+    """Keeps MLflow out of the verification loop.
+
+    Mirrors the fixture in ``tests/test_resume_exactness.py``. This is not just
+    tidiness: mlflow 3.x refuses the filesystem tracking backend unless
+    ``MLFLOW_ALLOW_FILE_STORE=true``, so the real ``ExperimentTracker`` aborts
+    the run in CI before a single training step happens.
+    """
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def start_run(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def log_params(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def log_metrics(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def log_artifact(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def end_run(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def __enter__(self) -> _NullTracker:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+
+train_dit.ExperimentTracker = _NullTracker  # type: ignore[assignment,misc]
 
 # Tiny-but-real architecture: small enough for CPU, structurally identical to
 # the production DiT (flow-matching velocity model conditioned on the breed).
@@ -348,9 +385,6 @@ def main(argv: list[str] | None = None) -> int:
 
     work = Path(tempfile.mkdtemp(prefix="verify-pipeline-"))
     print(f"Work directory: {work}")
-    # Keep MLflow runs inside the throwaway directory instead of creating a
-    # stray ./mlruns in the repository checkout.
-    os.environ.setdefault("MLFLOW_TRACKING_URI", f"file:{work / 'mlruns'}")
     try:
         checkpoint: Path | None = None
         onnx = quantized = None
