@@ -578,6 +578,44 @@ def save_checkpoint(
         logger.info(f"Saved best model to {best_path}")
 
 
+def resolve_resume_checkpoint(
+    *,
+    explicit: str | None,
+    output: str | Path,
+    hub_pulled: str | None,
+    logger: logging.Logger,
+) -> str | None:
+    """Decide which checkpoint a run resumes from (issue #163).
+
+    Precedence: an explicit ``--resume`` wins, then a ``--hub-resume`` Hub
+    checkpoint, then the local canonical output, then nothing (fresh start).
+
+    HF Hub outranks a *local* checkpoint on purpose: Hub is the authoritative
+    cross-provider transport (ADR-064), and a stale file left on a Modal volume
+    by an unrelated run used to shadow the real experiment state forever — every
+    scheduled slice resumed the stale file and died on the manifest gate
+    (``warmup_steps`` checkpoint=10 vs current=2000). Legacy-layout migration is
+    handled by the caller once this returns None.
+    """
+    if explicit is not None:
+        logger.info(f"Using explicit resume checkpoint: {explicit}")
+        return explicit
+    if hub_pulled is not None:
+        logger.info(f"Resuming from Hub checkpoint (--hub-resume): {hub_pulled}")
+        return hub_pulled
+    path = Path(output)
+    if path.exists() and zipfile.is_zipfile(path):
+        logger.info(f"Found existing checkpoint; will resume from: {path}")
+        return str(path)
+    if path.exists():
+        logger.warning(
+            f"Ignoring non-zip file at {path} (likely a stale partial "
+            "checkpoint from a previously preempted run); starting fresh. "
+            "load_checkpoint() will quarantine the file if it is unreadable."
+        )
+    return None
+
+
 def load_checkpoint(
     path: str | Path,
     model: nn.Module,
@@ -955,36 +993,18 @@ class DiTTrainer:
         # preempt would silently restart training at step 0 instead of raising
         # (or worse, raise and abort the run). load_checkpoint() itself also has
         # a defensive try/except as belt-and-braces (ADR-058).
-        resume: str | None = resume_checkpoint
-        if resume is None and Path(output).exists() and zipfile.is_zipfile(output):
-            resume = output
-            logger.info(f"Found existing checkpoint; will resume from: {output}")
-        elif resume is None and Path(output).exists():
-            logger.warning(
-                f"Ignoring non-zip file at {output} (likely a stale partial "
-                "checkpoint from a previously preempted run); starting fresh. "
-                "load_checkpoint() will quarantine the file if it is unreadable."
-            )
-        elif resume is not None:
-            logger.info(f"Using explicit resume checkpoint: {resume}")
-
-        # Layout migration (issue #163 WP2): when the canonical directory has
-        # no valid checkpoint, pick up a valid legacy live checkpoint instead
-        # of silently restarting from step 0.
-        if resume is None:
-            from artifacts import find_live_checkpoint
-
-            legacy = find_live_checkpoint("/outputs")
-            if legacy is not None:
-                resume = str(legacy)
-                logger.info(f"Resuming from pre-migration live checkpoint: {legacy}")
-
-        # GPU pool cross-provider resume (train-pool.yml --hub-resume / ADR-055).
-        # Pull the last EMA checkpoint from HuggingFace Hub so a prior provider's
-        # progress carries over. Degrades gracefully (logs + continues fresh) if
-        # huggingface_hub is unavailable or no HF_TOKEN is set in the container.
         hub_repo = "d4oit/tiny-cats-model"
-        if hub_resume and resume is None:
+
+        # GPU pool cross-provider resume (train-pool.yml --hub-resume / ADR-055,
+        # ADR-064). HF Hub is the authoritative cross-provider transport, so it
+        # is resolved BEFORE local auto-detection. Pulling only when no local
+        # checkpoint existed let a stale file on the Modal volume shadow the real
+        # Hub checkpoint forever: every scheduled slice resumed the stale file
+        # and died on the manifest gate (issue #163: warmup_steps checkpoint=10
+        # vs current=2000). Degrades gracefully (logs and falls back to the local
+        # checkpoint or a fresh start) when the pull is unavailable.
+        hub_pulled: str | None = None
+        if hub_resume and resume_checkpoint is None:
             logger.info(f"GPU pool: pulling checkpoint from Hub ({hub_repo})...")
             try:
                 from gpu_pool import pull_checkpoint_from_hub
@@ -996,12 +1016,30 @@ class DiTTrainer:
                     experiment_id=experiment_id,
                 )
                 if pulled:
-                    resume = str(pulled)
-                    logger.info(f"GPU pool: resuming from Hub checkpoint: {resume}")
+                    hub_pulled = str(pulled)
+                    logger.info(f"GPU pool: Hub checkpoint available: {hub_pulled}")
                 else:
-                    logger.info("GPU pool: no Hub checkpoint found — starting fresh")
+                    logger.info("GPU pool: no Hub checkpoint found")
             except Exception as e:  # graceful degradation
                 logger.warning(f"GPU pool: hub pull skipped ({e})")
+
+        resume: str | None = resolve_resume_checkpoint(
+            explicit=resume_checkpoint,
+            output=output,
+            hub_pulled=hub_pulled,
+            logger=logger,
+        )
+
+        # Layout migration (issue #163 WP2): only when nothing above supplied a
+        # checkpoint, pick up a valid legacy live checkpoint instead of silently
+        # restarting from step 0.
+        if resume is None:
+            from artifacts import find_live_checkpoint
+
+            legacy = find_live_checkpoint("/outputs")
+            if legacy is not None:
+                resume = str(legacy)
+                logger.info(f"Resuming from pre-migration live checkpoint: {legacy}")
 
         # Setup training-specific logging (after auth validation)
         logger = setup_logging(log_file)

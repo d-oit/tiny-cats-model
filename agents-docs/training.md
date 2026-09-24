@@ -260,6 +260,7 @@ machine-readable provider report.
 | Provider handoff | Hub is the only state transport; the next provider resumes from `latest/` regardless of which provider wrote it |
 | Final target already reached | The run is a successful no-op: 0 steps, checkpoint bytes untouched, `exit_reason: completed` |
 | Workflow failed but log looks green | Check the `provider-report-<target>.json` artifact and `exit_reason`; training output is piped through `tee` under `set -o pipefail`, so a failed `modal run` fails the job |
+| `IncompatibleExperimentError` on every slice | `--hub-resume` now prefers the Hub checkpoint, so a stale file left on the Modal volume by an unrelated run can no longer shadow the experiment. If it still fails, the *Hub* checkpoint itself belongs to a different experiment: start a new `--experiment-id` (or re-run with the original hyperparameters) rather than forcing `--allow-experiment-mismatch`, which would silently continue with a different LR horizon |
 
 ### Publication gate
 
