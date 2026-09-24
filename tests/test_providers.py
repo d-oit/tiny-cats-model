@@ -225,7 +225,7 @@ class TestCheckpointVerification:
         path.parent.mkdir(parents=True, exist_ok=True)
         if valid:
             with zipfile.ZipFile(path, "w") as archive:
-                archive.writestr("archive/data.pkl", b"stub")
+                torch.save({"model_state_dict": {}}, path)
         else:
             path.write_bytes(b"not-a-zip")
         return path
