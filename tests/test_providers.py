@@ -468,6 +468,42 @@ class TestCheckpointVerification:
             == VERIFY_INVALID
         )
 
+    def test_zero_target_in_state_is_invalid(self, tmp_path: Path) -> None:
+        # `target_steps: 0` is malformed, not absent: it must not slip past the
+        # verifier's positive-target requirement.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(json.dumps({"completed_steps": 5, "target_steps": 0}))
+        checkpoint = str(self._checkpoint(tmp_path))
+        result = verify_checkpoint(state_file=str(state_file), checkpoint=checkpoint)
+        assert not result.reached_target
+        assert "target must be positive" in result.reason
+        assert (
+            main(
+                ["verify", "--state-file", str(state_file), "--checkpoint", checkpoint]
+            )
+            == VERIFY_INVALID
+        )
+
+    def test_zip_with_corrupt_payload_is_invalid(self, tmp_path: Path) -> None:
+        import zipfile
+
+        path = tmp_path / "corrupt.pt"
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as archive:
+            archive.writestr("archive/data.pkl", b"\x80\x05not-a-real-pickle")
+        # Flip a byte inside the stored payload so the member CRC no longer
+        # matches: the zip framing is intact but the archive is corrupt.
+        data = bytearray(path.read_bytes())
+        data[data.index(b"not-a-real-pickle")] ^= 0xFF
+        path.write_bytes(bytes(data))
+
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+
 
 class TestProviderReport:
     """WP5: every session reports the 9 required fields, machine-readably."""

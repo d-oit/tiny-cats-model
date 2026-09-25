@@ -428,7 +428,11 @@ def _is_torch_checkpoint(path: Path) -> bool:
         return False
     try:
         with zipfile.ZipFile(path) as archive:
-            return any(name.endswith("data.pkl") for name in archive.namelist())
+            if not any(name.endswith("data.pkl") for name in archive.namelist()):
+                return False
+            # Verify every member's CRC so a truncated/corrupt archive is
+            # rejected here instead of passing the publication gate.
+            return archive.testzip() is None
     except (zipfile.BadZipFile, OSError):
         return False
 
@@ -468,9 +472,12 @@ def verify_checkpoint(
             completed = None
             state_valid = False
             invalid_state_fields.append("completed_steps")
-        if resolved_target is None and state.get("target_steps"):
+        # Presence, not truthiness: `target_steps: 0` is a malformed global
+        # target and must not be silently skipped by the verifier.
+        raw_target = state.get("target_steps")
+        if resolved_target is None and raw_target is not None:
             try:
-                resolved_target = int(state["target_steps"])
+                resolved_target = int(raw_target)
             except (TypeError, ValueError):
                 # A readable but malformed state must fail verification, not
                 # abort the CLI with an unhandled exception (exit 2).
@@ -612,9 +619,6 @@ def _cmd_launch(args: argparse.Namespace) -> int:
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
-    if args.target is not None and args.target <= 0:
-        print(f"error: target must be positive, got {args.target}", file=sys.stderr)
-        return VERIFY_INVALID
     result = verify_checkpoint(
         state_file=args.state_file,
         checkpoint=args.checkpoint,
@@ -634,6 +638,12 @@ def _cmd_verify(args: argparse.Namespace) -> int:
                 f"checkpoint_valid={'true' if result.checkpoint_valid else 'false'}\n"
             )
             handle.write(f"completed_steps={completed}\n")
+    if result.target_steps is not None and result.target_steps <= 0:
+        print(
+            f"error: target must be positive, got {result.target_steps}",
+            file=sys.stderr,
+        )
+        return VERIFY_INVALID
     if not result.checkpoint_valid or result.completed_steps is None:
         return VERIFY_INVALID
     if not result.state_valid:
