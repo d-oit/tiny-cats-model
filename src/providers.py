@@ -545,6 +545,7 @@ def verify_checkpoint(
     experiment_id: str | None = None
     state_valid = True
     converged = False
+    state_target: int | None = None
     invalid_state_fields: list[str] = []
     if state is not None:
         try:
@@ -619,12 +620,19 @@ def verify_checkpoint(
     elif resolved_target is not None and resolved_target <= 0:
         reasons.append(f"target must be positive, got {resolved_target}")
 
-    # A converged run is finished for its target even though it stopped short:
-    # early stopping is a deliberate terminal state the trainer records. It only
-    # satisfies a *positive* target, exactly like the completed_steps
-    # comparison, so a suspicious manifest cannot use it to escape validation.
+    # A converged run is finished for the target recorded in *its own* state
+    # document even though it stopped short: early stopping is a deliberate
+    # terminal state the trainer records. It only satisfies that same positive
+    # target — converged is not evidence of progress toward a *larger* target,
+    # so a stale/early-stopped state cannot be certified for a later slice's
+    # target (125.6 finding) and, like the completed_steps comparison, a
+    # negative target cannot be certified either.
     converged_satisfies_target = bool(
-        converged and resolved_target is not None and resolved_target > 0
+        converged
+        and state_target is not None
+        and resolved_target is not None
+        and state_target == resolved_target
+        and resolved_target > 0
     )
 
     reached_target = bool(
@@ -645,6 +653,11 @@ def verify_checkpoint(
             reasons.append(
                 f"converged early at step {completed} of target "
                 f"{resolved_target} (early stopping ended the run)"
+            )
+        elif converged and state_target is not None and resolved_target is not None:
+            reasons.append(
+                f"converged early for target {state_target}, not the requested "
+                f"{resolved_target}"
             )
         elif resolved_target is None:
             reasons.append("no target supplied; progress not evaluated")

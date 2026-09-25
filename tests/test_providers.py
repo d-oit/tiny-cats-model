@@ -642,6 +642,63 @@ class TestCheckpointVerification:
             == VERIFY_OK
         )
 
+    def test_converged_for_a_smaller_target_is_not_reached(
+        self, tmp_path: Path
+    ) -> None:
+        # Early stopping finished the run for the target *it* recorded (75k).
+        # Converged is not evidence of progress toward a larger slice target,
+        # so a stale 75k state must not be certified as complete for 150k.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "completed_steps": 68_000,
+                    "target_steps": 75_000,
+                    "converged": True,
+                }
+            )
+        )
+        checkpoint = str(self._checkpoint(tmp_path))
+        result = verify_checkpoint(
+            state_file=str(state_file), checkpoint=checkpoint, target=150_000
+        )
+        assert result.converged
+        assert result.state_valid
+        assert not result.reached_target
+        assert "converged early for target 75000, not the requested 150000" in (
+            result.reason
+        )
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(state_file),
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "150000",
+                ]
+            )
+            == VERIFY_PARTIAL
+        )
+
+    def test_converged_without_a_recorded_target_is_not_reached(
+        self, tmp_path: Path
+    ) -> None:
+        # Convergence has to be anchored to a recorded target: a state that
+        # claims convergence without one cannot certify the requested target.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps({"completed_steps": 68_000, "converged": True})
+        )
+        result = verify_checkpoint(
+            state_file=str(state_file),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=75_000,
+        )
+        assert not result.reached_target
+
     def test_non_boolean_converged_flag_is_invalid(self, tmp_path: Path) -> None:
         # A stringified ``"false"`` is truthy in Python, so only a real boolean
         # may claim that the run converged early.
