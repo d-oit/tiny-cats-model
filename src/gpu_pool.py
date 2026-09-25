@@ -740,18 +740,36 @@ def pull_checkpoint_from_hub(
                 completed = int(pointer.get("completed_steps", -1))
             except (TypeError, ValueError):
                 completed = -1
+
+            # The pointer's ``files`` list is a snapshot, not a guarantee that
+            # every sibling exists: older pushes uploaded only ``dit_model.pt``.
+            # Prefer the requested name, then fall back to the primary training
+            # checkpoint rather than refusing the whole snapshot (issue #163: a
+            # snapshot without ``dit_model_ema.pt`` sent every pool slice back
+            # to a stale local file that then failed the manifest gate).
+            candidates = [checkpoint_name]
+            if checkpoint_name != "dit_model.pt":
+                candidates.append("dit_model.pt")
+            resolved_name = next(
+                (
+                    name
+                    for name in candidates
+                    if isinstance(listed, list) and name in listed
+                ),
+                None,
+            )
             if (
                 completed < 0
                 or not step_dir.startswith("step-")
                 or not isinstance(listed, list)
-                or checkpoint_name not in listed
+                or resolved_name is None
             ):
                 logger.warning(
                     f"Hub pointer for {experiment_id} is invalid or does not "
-                    f"include {checkpoint_name}; not activating it"
+                    f"include any of {candidates}; not activating it"
                 )
                 return None
-            remote_path = f"{base}/{step_dir}/{checkpoint_name}"
+            remote_path = f"{base}/{step_dir}/{resolved_name}"
             downloaded = Path(
                 _run_with_retry(
                     lambda: hf_hub_download(

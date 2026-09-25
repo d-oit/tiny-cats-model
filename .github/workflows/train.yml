@@ -316,12 +316,12 @@ jobs:
             echo "::warning::HF_TOKEN is unset; Hub checkpoint sync will degrade gracefully"
             exit 0
           fi
-          if modal secret list 2>/dev/null | grep -qw huggingface-secret; then
-            echo "Modal secret 'huggingface-secret' already exists; skipping creation"
-          else
-            modal secret create huggingface-secret HF_TOKEN="$HF_TOKEN" \
-              || echo "::warning::Failed to create Modal secret 'huggingface-secret'"
-          fi
+          # Always refresh the Modal secret from the current GitHub secret.
+          # Skipping when it already existed let a rotated/expired HF_TOKEN
+          # linger inside the container, silently breaking Hub pulls. `--force`
+          # overwrites an existing secret.
+          modal secret create --force huggingface-secret HF_TOKEN="$HF_TOKEN" \
+            || echo "::warning::Failed to sync Modal secret 'huggingface-secret'"
       - name: Launch DiT slice (control plane)
         id: train
         run: |

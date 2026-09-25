@@ -78,3 +78,17 @@ def test_non_zip_local_file_starts_fresh(tmp_path: Path) -> None:
     stale.parent.mkdir(parents=True, exist_ok=True)
     stale.write_bytes(b"not-a-zip")
     assert resolve(tmp_path) is None
+
+
+def test_hub_mode_ignores_a_stale_local_checkpoint(tmp_path: Path) -> None:
+    """In --hub-resume mode Hub is authoritative: a file left on a provider
+    volume is a foreign/stale artifact and must not be resumed (which is how
+    every pool slice died on the manifest gate)."""
+    zip_checkpoint(tmp_path / "checkpoints" / "pool" / "dit_model.pt")
+    assert resolve(tmp_path, hub_mode=True) is None
+
+
+def test_hub_mode_still_prefers_the_hub_checkpoint(tmp_path: Path) -> None:
+    zip_checkpoint(tmp_path / "checkpoints" / "pool" / "dit_model.pt")
+    pulled = str(tmp_path / "pulled" / "dit_model_ema.pt")
+    assert resolve(tmp_path, hub_pulled=pulled, hub_mode=True) == pulled

@@ -584,6 +584,7 @@ def resolve_resume_checkpoint(
     output: str | Path,
     hub_pulled: str | None,
     logger: logging.Logger,
+    hub_mode: bool = False,
 ) -> str | None:
     """Decide which checkpoint a run resumes from (issue #163).
 
@@ -596,6 +597,14 @@ def resolve_resume_checkpoint(
     scheduled slice resumed the stale file and died on the manifest gate
     (``warmup_steps`` checkpoint=10 vs current=2000). Legacy-layout migration is
     handled by the caller once this returns None.
+
+    Args:
+        hub_mode: Set when the caller requested ``--hub-resume``. In this mode
+            Hub is authoritative, so a *local* checkpoint at the canonical path
+            is not trusted at all: if the Hub supplied nothing, a file left on a
+            provider volume is a foreign/stale artifact, and resuming it is what
+            poisoned every pool slice. Such a run starts fresh instead of
+            dying on the manifest gate.
     """
     if explicit is not None:
         logger.info(f"Using explicit resume checkpoint: {explicit}")
@@ -605,6 +614,13 @@ def resolve_resume_checkpoint(
         return hub_pulled
     path = Path(output)
     if path.exists() and zipfile.is_zipfile(path):
+        if hub_mode:
+            logger.warning(
+                f"Hub mode: ignoring local checkpoint {path} — Hub is "
+                "authoritative, so a file left on the volume is not trusted "
+                "(starting fresh because the Hub had no checkpoint)"
+            )
+            return None
         logger.info(f"Found existing checkpoint; will resume from: {path}")
         return str(path)
     if path.exists():
@@ -1028,12 +1044,13 @@ class DiTTrainer:
             output=output,
             hub_pulled=hub_pulled,
             logger=logger,
+            hub_mode=bool(hub_resume),
         )
 
         # Layout migration (issue #163 WP2): only when nothing above supplied a
-        # checkpoint, pick up a valid legacy live checkpoint instead of silently
-        # restarting from step 0.
-        if resume is None:
+        # checkpoint — and never in Hub-authoritative mode, where a legacy file
+        # under /outputs is just as untrusted as the canonical local one.
+        if resume is None and not hub_resume:
             from artifacts import find_live_checkpoint
 
             legacy = find_live_checkpoint("/outputs")
