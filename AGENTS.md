@@ -60,6 +60,10 @@ python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.y
 > manifest differs fails clearly unless `--allow-experiment-mismatch` is
 > passed. Corrupt checkpoints quarantine to `*.corrupt` (ADR-058);
 > architecture-incompatible ones are rejected, never silently restarted.
+> Early stopping records `converged: true` alongside the step it *actually*
+> reached, so `completed_steps` is never inflated to the target; a converged
+> run still counts as finished for its target (publication proceeds), while a
+> resume from it continues toward a higher target.
 
 > **Modal paths:** use absolute container paths (`/data/cats`, `/outputs/...`) — relative
 > `data/cats` only exists on the local machine, and Modal 1.0+ requires `--data-dir`
@@ -71,19 +75,35 @@ python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.y
 
 Training automatically stops when loss plateaus for 3 consecutive evaluations (every 10k steps). This typically occurs at 50k-80k steps, saving 60-80% cost.
 
+A stopped run is written as `converged: true` plus the step it actually
+reached — `completed_steps` is never stamped with the target, so
+`providers.py verify` and the artifact gates see real progress. Resuming a
+converged checkpoint starts a **fresh** patience window (the counter is not
+inherited — inheriting a saturated one made every pool slice after the first
+stop after ~500 steps).
+
 ## GitHub Actions
 
+Production training runs as **bounded, resumable slices** (ADR-065/066).
+GitHub Actions is the control plane — it plans slices, launches real GPU sessions
+and verifies artifacts; it never trains on CPU. `--steps` is always the *global*
+target, and GitHub-hosted runners cap a job at 6h, so one job is one slice.
+
 ```bash
-# Trigger training (optimized defaults)
-gh workflow run train.yml
+# Single verified production slice (Modal, <= 6h)
+gh workflow run train.yml -f steps=25000 -f batch_size=32
 
-# Custom configuration
-gh workflow run train.yml -f steps=50000 -f batch_size=512
-
-# GPU pool (control plane, ADR-065): bounded slices toward one global target
+# Full 400k run as bounded slices (sequential, fail-fast, resumable)
 gh workflow run train-pool.yml -f steps=400000 -f slice_size=60000
+
 # Unsupported providers (kaggle/lightning/colab/hf_spaces) fail clearly at the gate
 gh workflow run train-pool.yml -f provider=kaggle
+
+# Control plane without launching anything
+python src/providers.py gate   --provider all
+python src/providers.py plan   --steps 400000 --slice-size 60000
+python src/providers.py verify --state-file checkpoints/pool/training_state.json \
+  --checkpoint checkpoints/pool/dit_model.pt --target 60000
 
 # Monitor runs
 gh run list
@@ -153,6 +173,10 @@ pytest tests/test_train_chain.py -v
 
 # Fallback chain simulation (standalone)
 python scripts/test_fallback_chain.py
+
+# End-to-end training pipeline: CPU smoke + exact resume (10 -> 20) + ONNX
+# export/runtime inference + quantized ONNX + artifact package/refusal gates
+python scripts/verify_training_pipeline.py
 
 # GPU hour estimation calibration
 python scripts/benchmark_estimates.py

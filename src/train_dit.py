@@ -491,6 +491,7 @@ def save_checkpoint(
     target_steps: int | None = None,
     manifest: dict[str, Any] | None = None,
     seed: int | None = None,
+    converged: bool = False,
 ) -> None:
     """Save training checkpoint with EMA weights.
 
@@ -514,6 +515,8 @@ def save_checkpoint(
         manifest: Immutable experiment manifest; embedded in the checkpoint
             and mirrored into ``training_state.json`` beside it.
         seed: Training seed recorded for reproducibility.
+        converged: Early stopping ended this run, so it is finished for
+            ``target_steps`` without having trained that many steps.
     """
     from training_state import (
         TRAINING_STATE_FILENAME,
@@ -568,6 +571,7 @@ def save_checkpoint(
             path.parent / TRAINING_STATE_FILENAME,
             manifest=manifest,
             completed_steps=step,
+            converged=converged,
         )
 
     if is_best:
@@ -576,6 +580,60 @@ def save_checkpoint(
         torch.save(checkpoint, tmp_best_path)
         os.replace(tmp_best_path, str(best_path))
         logger.info(f"Saved best model to {best_path}")
+
+
+def resolve_resume_checkpoint(
+    *,
+    explicit: str | None,
+    output: str | Path,
+    hub_pulled: str | None,
+    logger: logging.Logger,
+    hub_mode: bool = False,
+) -> str | None:
+    """Decide which checkpoint a run resumes from (issue #163).
+
+    Precedence: an explicit ``--resume`` wins, then a ``--hub-resume`` Hub
+    checkpoint, then the local canonical output, then nothing (fresh start).
+
+    HF Hub outranks a *local* checkpoint on purpose: Hub is the authoritative
+    cross-provider transport (ADR-064), and a stale file left on a Modal volume
+    by an unrelated run used to shadow the real experiment state forever — every
+    scheduled slice resumed the stale file and died on the manifest gate
+    (``warmup_steps`` checkpoint=10 vs current=2000). Legacy-layout migration is
+    handled by the caller once this returns None.
+
+    Args:
+        hub_mode: Set when the caller requested ``--hub-resume``. In this mode
+            Hub is authoritative, so a *local* checkpoint at the canonical path
+            is not trusted at all: if the Hub supplied nothing, a file left on a
+            provider volume is a foreign/stale artifact, and resuming it is what
+            poisoned every pool slice. Such a run starts fresh instead of
+            dying on the manifest gate.
+    """
+    if explicit is not None:
+        logger.info(f"Using explicit resume checkpoint: {explicit}")
+        return explicit
+    if hub_pulled is not None:
+        logger.info(f"Resuming from Hub checkpoint (--hub-resume): {hub_pulled}")
+        return hub_pulled
+    path = Path(output)
+    if path.exists() and zipfile.is_zipfile(path):
+        if hub_mode:
+            logger.warning(
+                f"Hub mode: ignoring local checkpoint {path} — Hub is "
+                "authoritative, so a file left on the volume is not trusted "
+                "(starting fresh because the Hub had no checkpoint)"
+            )
+            return None
+        logger.info(f"Found existing checkpoint; will resume from: {path}")
+        return str(path)
+    if path.exists():
+        logger.warning(
+            f"Ignoring non-zip file at {path} (likely a stale partial "
+            "checkpoint from a previously preempted run); starting fresh. "
+            "load_checkpoint() will quarantine the file if it is unreadable."
+        )
+    return None
 
 
 def load_checkpoint(
@@ -955,36 +1013,18 @@ class DiTTrainer:
         # preempt would silently restart training at step 0 instead of raising
         # (or worse, raise and abort the run). load_checkpoint() itself also has
         # a defensive try/except as belt-and-braces (ADR-058).
-        resume: str | None = resume_checkpoint
-        if resume is None and Path(output).exists() and zipfile.is_zipfile(output):
-            resume = output
-            logger.info(f"Found existing checkpoint; will resume from: {output}")
-        elif resume is None and Path(output).exists():
-            logger.warning(
-                f"Ignoring non-zip file at {output} (likely a stale partial "
-                "checkpoint from a previously preempted run); starting fresh. "
-                "load_checkpoint() will quarantine the file if it is unreadable."
-            )
-        elif resume is not None:
-            logger.info(f"Using explicit resume checkpoint: {resume}")
-
-        # Layout migration (issue #163 WP2): when the canonical directory has
-        # no valid checkpoint, pick up a valid legacy live checkpoint instead
-        # of silently restarting from step 0.
-        if resume is None:
-            from artifacts import find_live_checkpoint
-
-            legacy = find_live_checkpoint("/outputs")
-            if legacy is not None:
-                resume = str(legacy)
-                logger.info(f"Resuming from pre-migration live checkpoint: {legacy}")
-
-        # GPU pool cross-provider resume (train-pool.yml --hub-resume / ADR-055).
-        # Pull the last EMA checkpoint from HuggingFace Hub so a prior provider's
-        # progress carries over. Degrades gracefully (logs + continues fresh) if
-        # huggingface_hub is unavailable or no HF_TOKEN is set in the container.
         hub_repo = "d4oit/tiny-cats-model"
-        if hub_resume and resume is None:
+
+        # GPU pool cross-provider resume (train-pool.yml --hub-resume / ADR-055,
+        # ADR-064). HF Hub is the authoritative cross-provider transport, so it
+        # is resolved BEFORE local auto-detection. Pulling only when no local
+        # checkpoint existed let a stale file on the Modal volume shadow the real
+        # Hub checkpoint forever: every scheduled slice resumed the stale file
+        # and died on the manifest gate (issue #163: warmup_steps checkpoint=10
+        # vs current=2000). Degrades gracefully (logs and falls back to the local
+        # checkpoint or a fresh start) when the pull is unavailable.
+        hub_pulled: str | None = None
+        if hub_resume and resume_checkpoint is None:
             logger.info(f"GPU pool: pulling checkpoint from Hub ({hub_repo})...")
             try:
                 from gpu_pool import pull_checkpoint_from_hub
@@ -996,12 +1036,31 @@ class DiTTrainer:
                     experiment_id=experiment_id,
                 )
                 if pulled:
-                    resume = str(pulled)
-                    logger.info(f"GPU pool: resuming from Hub checkpoint: {resume}")
+                    hub_pulled = str(pulled)
+                    logger.info(f"GPU pool: Hub checkpoint available: {hub_pulled}")
                 else:
-                    logger.info("GPU pool: no Hub checkpoint found — starting fresh")
+                    logger.info("GPU pool: no Hub checkpoint found")
             except Exception as e:  # graceful degradation
                 logger.warning(f"GPU pool: hub pull skipped ({e})")
+
+        resume: str | None = resolve_resume_checkpoint(
+            explicit=resume_checkpoint,
+            output=output,
+            hub_pulled=hub_pulled,
+            logger=logger,
+            hub_mode=bool(hub_resume),
+        )
+
+        # Layout migration (issue #163 WP2): only when nothing above supplied a
+        # checkpoint — and never in Hub-authoritative mode, where a legacy file
+        # under /outputs is just as untrusted as the canonical local one.
+        if resume is None and not hub_resume:
+            from artifacts import find_live_checkpoint
+
+            legacy = find_live_checkpoint("/outputs")
+            if legacy is not None:
+                resume = str(legacy)
+                logger.info(f"Resuming from pre-migration live checkpoint: {legacy}")
 
         # Setup training-specific logging (after auth validation)
         logger = setup_logging(log_file)
@@ -1079,21 +1138,39 @@ class DiTTrainer:
                 Path(output).parent / TRAINING_STATE_FILENAME
             )
             target_steps: int | None = None
+            pool_completed: int | None = None
+            # A converged run is finished for its target even though it
+            # trained fewer steps than requested: early stopping is the
+            # documented cost saver, so it still publishes. The step count in
+            # the state document stays honest, so this is an explicit
+            # allowance rather than a bumped counter (issue #163).
+            converged_run = bool(pool_state and pool_state.get("converged"))
             if (
                 pool_state is not None
                 and "completed_steps" in pool_state
                 and "target_steps" in pool_state
-                and int(pool_state["completed_steps"])
-                >= int(pool_state["target_steps"])
+                and (
+                    converged_run
+                    or int(pool_state["completed_steps"])
+                    >= int(pool_state["target_steps"])
+                )
             ):
                 target_steps = int(pool_state["target_steps"])
+                pool_completed = int(pool_state["completed_steps"])
             if target_steps is None:
                 logger.info(
                     "Global target not reached (or training state missing) — "
                     "skipping final artifact package for this slice."
                 )
             else:
-                logger.info("Global target reached — building final artifacts...")
+                if converged_run:
+                    logger.info(
+                        "Global target treated as reached via early stopping "
+                        f"(completed {pool_completed} of "
+                        f"{target_steps}) — building final artifacts..."
+                    )
+                else:
+                    logger.info("Global target reached — building final artifacts...")
                 try:
                     from artifacts import export_paths, package_final_artifacts
                     from export_dit_onnx import export_generator_onnx, load_model
@@ -1589,17 +1666,26 @@ def train_dit_local(
             group["lr"] = resumed_lr
         scheduler._last_lr = [resumed_lr for _ in optimizer.param_groups]
 
-    # Training state (best_loss/patience are restored so early stopping works
-    # across hub-resumed slices instead of restarting on every resume)
+    # Training state. `best_loss` is restored so "improved" is still measured
+    # against the true global best across hub-resumed slices, but the patience
+    # *counter* is deliberately not inherited. A run that stopped by early
+    # stopping persists a saturated counter (patience == the limit), so a
+    # resume that restored it tripped `patience_counter >= limit` on its very
+    # first evaluation and stopped after a single window: every pool slice
+    # after the first trained ~500 of its 25,000 steps and still reported the
+    # global target as reached (issue #163). Each slice now gets its own
+    # plateau window while still being judged against the global best.
     best_loss = float("inf")
     restored_best_loss = resume_state.get("best_loss")
     if restored_best_loss is not None and math.isfinite(float(restored_best_loss)):
         best_loss = float(restored_best_loss)
-    patience_counter = int(resume_state.get("patience_counter") or 0)
+    inherited_patience = int(resume_state.get("patience_counter") or 0)
+    patience_counter = 0
     if resume and math.isfinite(best_loss):
         logger.info(
-            f"Restored early-stopping state: best_loss={best_loss:.6e}, "
-            f"patience={patience_counter}"
+            f"Restored early-stopping state: best_loss={best_loss:.6e} "
+            f"(patience window reset for this slice, inherited "
+            f"counter={inherited_patience})"
         )
     shutdown_requested = False
 
@@ -1618,6 +1704,7 @@ def train_dit_local(
         is_best: bool = False,
         val_loss: float | None = None,
         val_loss_ema: float | None = None,
+        converged: bool = False,
     ) -> None:
         """Save the current step together with the early-stopping state."""
         save_checkpoint(
@@ -1638,6 +1725,7 @@ def train_dit_local(
             target_steps=steps,
             manifest=manifest,
             seed=seed,
+            converged=converged,
         )
 
     try:
@@ -1655,6 +1743,10 @@ def train_dit_local(
         last_val_loss_ema: float | None = None
         stop_training = False
         saved_on_shutdown = False
+        # Set when early stopping ends this run. The final save below rewrites
+        # training_state.json, so the flag has to survive it or a converged run
+        # would be persisted as an ordinary short one.
+        converged_early = False
 
         while step < steps and not stop_training:
             epoch += 1
@@ -1905,14 +1997,31 @@ def train_dit_local(
                                 best_loss,
                                 val_loss=last_val_loss,
                                 val_loss_ema=last_val_loss_ema,
+                                converged=True,
                             )
                             persist(
                                 ema_output,
                                 best_loss,
                                 val_loss=last_val_loss,
                                 val_loss_ema=last_val_loss_ema,
+                                converged=True,
                             )
-                            step = steps  # Break outer loop
+                            # Stop via the flag rather than `step = steps`: the
+                            # latter stamped the *target* onto a checkpoint that
+                            # never trained that far, so training_state.json
+                            # claimed completed_steps == target_steps and every
+                            # downstream gate (providers verify, artifacts
+                            # packaging) certified progress that never
+                            # happened. The converged flag records the honest
+                            # step and marks the run finished for its target
+                            # (issue #163).
+                            logger.info(
+                                f"Converged at step {step:,} before target "
+                                f"{steps:,} — recording completed_steps={step:,}, "
+                                "converged=true"
+                            )
+                            converged_early = True
+                            stop_training = True
                             break
 
                     # Generate samples
@@ -2008,12 +2117,14 @@ def train_dit_local(
                     best_loss,
                     val_loss=last_val_loss,
                     val_loss_ema=last_val_loss_ema,
+                    converged=converged_early,
                 )
                 persist(
                     ema_output,
                     best_loss,
                     val_loss=last_val_loss,
                     val_loss_ema=last_val_loss_ema,
+                    converged=converged_early,
                 )
 
             log_gpu_memory(logger, "Final | ")

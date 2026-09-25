@@ -19,6 +19,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from providers import (
     DEFAULT_EXPERIMENT_ID,
     EXIT_REASONS,
+    VERIFY_INVALID,
+    VERIFY_OK,
+    VERIFY_PARTIAL,
     ProviderReport,
     UnsupportedProviderError,
     build_launch_command,
@@ -27,6 +30,7 @@ from providers import (
     main,
     parse_slice_targets,
     resolve_exit_reason,
+    verify_checkpoint,
 )
 
 
@@ -158,6 +162,680 @@ class TestLaunchCommand:
         assert out.startswith("modal run src/train_dit.py")
         assert "--steps 60000" in out
 
+    def test_optional_training_knobs_only_when_requested(self) -> None:
+        baseline = build_launch_command("modal", 60_000)
+        assert "--warmup-steps" not in baseline
+        assert "--gradient-accumulation-steps" not in baseline
+        assert "--early-stopping-patience" not in baseline
+
+        tuned = build_launch_command(
+            "modal",
+            60_000,
+            warmup_steps="2000",
+            gradient_accumulation_steps="2",
+            early_stopping_patience="15",
+        )
+        joined = " ".join(tuned)
+        assert "--warmup-steps 2000" in joined
+        assert "--gradient-accumulation-steps 2" in joined
+        assert "--early-stopping-patience 15" in joined
+
+    def test_launch_cli_forwards_training_knobs(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        code = main(
+            [
+                "launch",
+                "--provider",
+                "modal",
+                "--target",
+                "60000",
+                "--warmup-steps",
+                "2000",
+                "--early-stopping-patience",
+                "15",
+            ]
+        )
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "--warmup-steps 2000" in out
+        assert "--early-stopping-patience 15" in out
+
+    def test_allow_experiment_mismatch_is_opt_in(self) -> None:
+        # The migration override must never be emitted by a default launch.
+        assert "--allow-experiment-mismatch" not in build_launch_command(
+            "modal", 60_000
+        )
+        migrated = build_launch_command("modal", 60_000, allow_experiment_mismatch=True)
+        assert "--allow-experiment-mismatch" in migrated
+
+    def test_launch_cli_forwards_allow_experiment_mismatch(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        code = main(
+            [
+                "launch",
+                "--provider",
+                "modal",
+                "--target",
+                "60000",
+                "--allow-experiment-mismatch",
+            ]
+        )
+        assert code == 0
+        assert "--allow-experiment-mismatch" in capsys.readouterr().out
+
+
+class TestCheckpointVerification:
+    """WP7: publication is gated on verified provider artifacts."""
+
+    def _state(self, tmp_path: Path, completed: int, target: int) -> Path:
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "experiment_id": "dit-breed-conditioned-v4",
+                    "completed_steps": completed,
+                    "target_steps": target,
+                }
+            )
+        )
+        return state_file
+
+    def _checkpoint(self, tmp_path: Path, *, valid: bool = True) -> Path:
+        import torch
+
+        path = tmp_path / "checkpoints" / "pool" / "dit_model.pt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if valid:
+            # A real torch checkpoint is itself a zip archive, which is exactly
+            # what providers.verify_checkpoint probes with zipfile.is_zipfile.
+            torch.save({"model_state_dict": {}}, path)
+        else:
+            path.write_bytes(b"not-a-zip")
+        return path
+
+    def test_target_reached_is_ok(self, tmp_path: Path) -> None:
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=60_000,
+        )
+        assert result.reached_target
+        assert result.checkpoint_valid
+        assert result.completed_steps == 60_000
+        assert result.experiment_id == "dit-breed-conditioned-v4"
+
+    def test_short_of_target_is_not_reached(self, tmp_path: Path) -> None:
+        # 45k checkpoint against a 60k target: valid artifact, target missed.
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 45_000, 60_000)),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=60_000,
+        )
+        assert result.checkpoint_valid
+        assert not result.reached_target
+
+    def test_corrupt_checkpoint_is_invalid(self, tmp_path: Path) -> None:
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(self._checkpoint(tmp_path, valid=False)),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+
+    def test_missing_checkpoint_is_invalid(self, tmp_path: Path) -> None:
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(tmp_path / "nope.pt"),
+            target=60_000,
+        )
+        assert not result.checkpoint_exists
+        assert not result.checkpoint_valid
+
+    def test_target_falls_back_to_state(self, tmp_path: Path) -> None:
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(self._checkpoint(tmp_path)),
+        )
+        assert result.target_steps == 60_000
+        assert result.reached_target
+
+    def test_verify_cli_exit_codes(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        state = str(self._state(tmp_path, 60_000, 60_000))
+        checkpoint = str(self._checkpoint(tmp_path))
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    state,
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "60000",
+                ]
+            )
+            == VERIFY_OK
+        )
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    state,
+                    "--checkpoint",
+                    str(tmp_path / "missing.pt"),
+                    "--target",
+                    "60000",
+                ]
+            )
+            == VERIFY_INVALID
+        )
+        short = self._state(tmp_path, 10, 20)
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(short),
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "20",
+                ]
+            )
+            == VERIFY_PARTIAL
+        )
+        assert "CHECKPOINT_VERIFY_JSON=" in capsys.readouterr().out
+
+    def test_verify_cli_appends_github_output(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        github_output = tmp_path / "gh_output"
+        code = main(
+            [
+                "verify",
+                "--state-file",
+                str(self._state(tmp_path, 45_000, 60_000)),
+                "--checkpoint",
+                str(self._checkpoint(tmp_path)),
+                "--target",
+                "60000",
+                "--github-output",
+                str(github_output),
+            ]
+        )
+        assert code == VERIFY_PARTIAL
+        text = github_output.read_text()
+        assert "reached=false" in text
+        assert "checkpoint_valid=true" in text
+        assert "completed_steps=45000" in text
+        assert "converged=false" in text
+        assert capsys.readouterr().out
+
+    def test_omitted_checkpoint_is_not_verified(self, tmp_path: Path) -> None:
+        # A readable state at the target must not pass the artifact gate when
+        # no checkpoint was supplied: the verifier validates artifacts.
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+        assert "no checkpoint supplied" in result.reason
+
+    def test_arbitrary_zip_is_not_a_checkpoint(self, tmp_path: Path) -> None:
+        import zipfile
+
+        path = tmp_path / "not-torch.pt"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("readme.txt", "not a torch payload")
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+
+    def test_data_pkl_that_is_not_a_pickle_is_rejected(self, tmp_path: Path) -> None:
+        # A CRC-clean zip holding arbitrary bytes under `data.pkl` is not a
+        # checkpoint. The probe walks the pickle opcodes without executing the
+        # payload, so this is rejected without unpickling.
+        import zipfile
+
+        path = tmp_path / "fake.pt"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("archive/data.pkl", b"not a pickle at all")
+
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+
+    def test_pickle_without_a_model_state_dict_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        # A well-formed pickle that is not a trainer checkpoint (no
+        # `model_state_dict` container key) must not pass the artifact gate.
+        import pickle
+        import zipfile
+
+        path = tmp_path / "other.pt"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(
+                "archive/data.pkl", pickle.dumps({"notes": "hi"}, protocol=2)
+            )
+
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+
+    def test_header_only_fake_archive_is_rejected(self, tmp_path: Path) -> None:
+        # A valid PROTO header followed by arbitrary bytes is not a serialized
+        # torch checkpoint: the opcode walk does not stop at the header.
+        import zipfile
+
+        path = tmp_path / "header-only.pt"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("archive/data.pkl", b"\x80\x02payload")
+
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+
+    def test_archive_validation_is_bounded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The probe decompresses the archive, so a crafted artifact must not be
+        # able to exhaust the runner: bound both the member count and the
+        # declared uncompressed size before testzip() runs.
+        import pickle
+        import zipfile
+
+        import providers
+
+        path = tmp_path / "bounded.pt"
+        with zipfile.ZipFile(path, "w") as archive:
+            # A structurally real payload (it names the model state dict) so the
+            # assertions below are about the bounds, not the payload.
+            archive.writestr(
+                "archive/data.pkl", pickle.dumps({"model_state_dict": None}, protocol=2)
+            )
+            archive.writestr("archive/extra.bin", b"x" * 64)
+
+        assert providers.verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        ).checkpoint_valid
+
+        monkeypatch.setattr(providers, "_MAX_ARCHIVE_MEMBERS", 1)
+        assert not providers.verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        ).checkpoint_valid
+
+        monkeypatch.setattr(providers, "_MAX_ARCHIVE_MEMBERS", 100_000)
+        monkeypatch.setattr(providers, "_MAX_ARCHIVE_UNCOMPRESSED_BYTES", 8)
+        assert not providers.verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        ).checkpoint_valid
+
+    def test_non_integer_progress_is_invalid_not_truncated(
+        self, tmp_path: Path
+    ) -> None:
+        # ``int()`` would round 60000.9 down to the target and certify progress
+        # the run never made, and would read ``true`` as step 1.
+        checkpoint = str(self._checkpoint(tmp_path))
+        for field, value in (("target_steps", 60_000.9), ("completed_steps", 60_000.5)):
+            state_file = tmp_path / f"state-{field}.json"
+            document: dict[str, Any] = {
+                "completed_steps": 60_000,
+                "target_steps": 60_000,
+            }
+            document[field] = value
+            state_file.write_text(json.dumps(document))
+            result = verify_checkpoint(
+                state_file=str(state_file), checkpoint=checkpoint, target=60_000
+            )
+            assert not result.state_valid, field
+            assert f"malformed {field}" in result.reason
+            assert not result.reached_target
+
+    def test_boolean_progress_is_invalid(self, tmp_path: Path) -> None:
+        # ``bool`` is an ``int`` subclass, so it must be excluded explicitly.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps({"completed_steps": True, "target_steps": 60_000})
+        )
+        result = verify_checkpoint(
+            state_file=str(state_file),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=60_000,
+        )
+        assert not result.state_valid
+        assert not result.reached_target
+        assert "malformed completed_steps" in result.reason
+
+    def test_malformed_target_in_state_is_invalid_not_a_crash(
+        self, tmp_path: Path
+    ) -> None:
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(json.dumps({"completed_steps": 5, "target_steps": "bad"}))
+        result = verify_checkpoint(
+            state_file=str(state_file),
+            checkpoint=str(self._checkpoint(tmp_path)),
+        )
+        assert not result.reached_target
+        assert not result.state_valid
+        assert "malformed target_steps" in result.reason
+
+        # The CLI must report the documented invalid result, not raise.
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(state_file),
+                    "--checkpoint",
+                    str(self._checkpoint(tmp_path)),
+                ]
+            )
+            == VERIFY_INVALID
+        )
+
+    def test_malformed_completed_steps_marks_state_invalid(
+        self, tmp_path: Path
+    ) -> None:
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(json.dumps({"completed_steps": "nope"}))
+        result = verify_checkpoint(
+            state_file=str(state_file),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=60_000,
+        )
+        assert not result.state_valid
+        assert not result.reached_target
+        assert "malformed completed_steps" in result.reason
+
+    def test_non_positive_target_is_rejected(self, tmp_path: Path) -> None:
+        checkpoint = str(self._checkpoint(tmp_path))
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 0, 60_000)),
+            checkpoint=checkpoint,
+            target=-1,
+        )
+        assert not result.reached_target
+        assert "target must be positive" in result.reason
+
+        # The CLI must not report OK for a nonsensical global target.
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(self._state(tmp_path, 0, 60_000)),
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "-1",
+                ]
+            )
+            == VERIFY_INVALID
+        )
+
+    def test_zero_target_in_state_is_invalid(self, tmp_path: Path) -> None:
+        # `target_steps: 0` is malformed, not absent: it must not slip past the
+        # verifier's positive-target requirement.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps({"completed_steps": 60_000, "target_steps": 0})
+        )
+        checkpoint = str(self._checkpoint(tmp_path))
+        result = verify_checkpoint(state_file=str(state_file), checkpoint=checkpoint)
+        assert not result.state_valid
+        assert not result.reached_target
+        assert "target must be positive" in result.reason
+        assert (
+            main(
+                ["verify", "--state-file", str(state_file), "--checkpoint", checkpoint]
+            )
+            == VERIFY_INVALID
+        )
+
+        # A positive --target override must not rescue a malformed manifest
+        # target: 60_000 completed would otherwise certify as reached.
+        overridden = verify_checkpoint(
+            state_file=str(state_file), checkpoint=checkpoint, target=60_000
+        )
+        assert not overridden.state_valid
+        assert not overridden.reached_target
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(state_file),
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "60000",
+                ]
+            )
+            == VERIFY_INVALID
+        )
+
+    def test_zip_with_corrupt_payload_is_invalid(self, tmp_path: Path) -> None:
+        import zipfile
+
+        path = tmp_path / "corrupt.pt"
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as archive:
+            archive.writestr("archive/data.pkl", b"\x80\x05not-a-real-pickle")
+        # Flip a byte inside the stored payload so the member CRC no longer
+        # matches: the zip framing is intact but the archive is corrupt.
+        data = bytearray(path.read_bytes())
+        data[data.index(b"not-a-real-pickle")] ^= 0xFF
+        path.write_bytes(bytes(data))
+
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+
+    def test_converged_run_short_of_target_is_accepted(self, tmp_path: Path) -> None:
+        # Early stopping is a recorded terminal state: the run is finished for
+        # its target even though it trained fewer steps, and the step count
+        # stays honest instead of being stamped with the target.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "experiment_id": "dit-breed-conditioned-v4",
+                    "completed_steps": 68_000,
+                    "target_steps": 75_000,
+                    "converged": True,
+                }
+            )
+        )
+        checkpoint = str(self._checkpoint(tmp_path))
+        result = verify_checkpoint(
+            state_file=str(state_file), checkpoint=checkpoint, target=75_000
+        )
+        assert result.converged
+        assert result.state_valid
+        assert result.completed_steps == 68_000
+        assert result.reached_target
+        assert "converged early at step 68000 of target 75000" in result.reason
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(state_file),
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "75000",
+                ]
+            )
+            == VERIFY_OK
+        )
+
+    def test_converged_for_a_smaller_target_is_not_reached(
+        self, tmp_path: Path
+    ) -> None:
+        # Early stopping finished the run for the target *it* recorded (75k).
+        # Converged is not evidence of progress toward a larger slice target,
+        # so a stale 75k state must not be certified as complete for 150k.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "completed_steps": 68_000,
+                    "target_steps": 75_000,
+                    "converged": True,
+                }
+            )
+        )
+        checkpoint = str(self._checkpoint(tmp_path))
+        result = verify_checkpoint(
+            state_file=str(state_file), checkpoint=checkpoint, target=150_000
+        )
+        assert result.converged
+        assert result.state_valid
+        assert not result.reached_target
+        assert "converged early for target 75000, not the requested 150000" in (
+            result.reason
+        )
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(state_file),
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "150000",
+                ]
+            )
+            == VERIFY_PARTIAL
+        )
+
+    def test_converged_without_a_recorded_target_is_not_reached(
+        self, tmp_path: Path
+    ) -> None:
+        # Convergence has to be anchored to a recorded target: a state that
+        # claims convergence without one cannot certify the requested target.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps({"completed_steps": 68_000, "converged": True})
+        )
+        result = verify_checkpoint(
+            state_file=str(state_file),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=75_000,
+        )
+        assert not result.reached_target
+
+    def test_non_boolean_converged_flag_is_invalid(self, tmp_path: Path) -> None:
+        # A stringified ``"false"`` is truthy in Python, so only a real boolean
+        # may claim that the run converged early.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "completed_steps": 68_000,
+                    "target_steps": 75_000,
+                    "converged": "true",
+                }
+            )
+        )
+        result = verify_checkpoint(
+            state_file=str(state_file),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=75_000,
+        )
+        assert not result.state_valid
+        assert not result.converged
+        assert not result.reached_target
+        assert "malformed converged" in result.reason
+
+    def test_converged_cannot_satisfy_a_non_positive_target(
+        self, tmp_path: Path
+    ) -> None:
+        # Convergence must not become a bypass for the positive-target rule.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "completed_steps": 68_000,
+                    "target_steps": 0,
+                    "converged": True,
+                }
+            )
+        )
+        result = verify_checkpoint(
+            state_file=str(state_file),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=0,
+        )
+        assert result.converged
+        assert not result.reached_target
+        assert "target must be positive" in result.reason
+
+    def test_malformed_state_target_is_invalid_even_with_override(
+        self, tmp_path: Path
+    ) -> None:
+        # The production gate always passes --target, so the state manifest's
+        # own target must still be validated.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps({"completed_steps": 60_000, "target_steps": "bad"})
+        )
+        checkpoint = str(self._checkpoint(tmp_path))
+        result = verify_checkpoint(
+            state_file=str(state_file), checkpoint=checkpoint, target=60_000
+        )
+        assert not result.state_valid
+        assert not result.reached_target
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(state_file),
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "60000",
+                ]
+            )
+            == VERIFY_INVALID
+        )
+
 
 class TestProviderReport:
     """WP5: every session reports the 9 required fields, machine-readably."""
@@ -228,6 +906,53 @@ class TestProviderReport:
         expected: str,
     ) -> None:
         assert resolve_exit_reason(outcome, completed, target) == expected
+
+    def test_converged_run_reports_completed_not_partial(self) -> None:
+        # A converged run is finished for its target even though the step count
+        # stayed short, so a provider report must not label it partial.
+        assert (
+            resolve_exit_reason("success", 68_000, 75_000, converged=True)
+            == "completed"
+        )
+        assert resolve_exit_reason("success", 68_000, 75_000) == "partial"
+
+    def test_report_cli_ignores_a_malformed_converged_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        # A stringified "false" is truthy in Python, so the report must not
+        # coerce it into a converged run and call a short slice completed.
+        state = {
+            "experiment_id": "exp-v9",
+            "target_steps": 60_000,
+            "completed_steps": 45_000,
+            "converged": "false",
+        }
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(json.dumps(state))
+        out = tmp_path / "provider_report.json"
+
+        code = main(
+            [
+                "report",
+                "--provider",
+                "modal",
+                "--job-id",
+                "run-1-slice-60000",
+                "--started-at",
+                "2026-09-23T10:00:00Z",
+                "--target",
+                "60000",
+                "--state-file",
+                str(state_file),
+                "--outcome",
+                "success",
+                "--out",
+                str(out),
+            ]
+        )
+        assert code == 0
+        assert json.loads(out.read_text())["exit_reason"] == "partial"
+        assert capsys.readouterr().out
 
     def test_report_cli_writes_file_and_status_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture

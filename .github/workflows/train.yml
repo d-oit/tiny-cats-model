@@ -1,7 +1,23 @@
 # .github/workflows/train.yml
-# CI pipeline: lint, test, and optional training proof
-# Triggers on push and pull_request to main
+# CI pipeline: lint, test, and optional Modal GPU training (issue #163 WP7).
+# Triggers on push and pull_request to main (CI only); training is dispatch-only.
 # ADR-016: Modern Python Code Quality (Ruff only)
+#
+# Failure-handling contract (ADR-066):
+#   - Training output is piped through `tee` under `set -o pipefail`, so a
+#     failing `modal run` fails the job instead of looking successful
+#     (ADR-059's silent-failure class).
+#   - `--steps` is a GLOBAL target (ADR-063); a run that resumes from 45k with
+#     `--steps 60000` performs exactly 15k more steps.
+#   - The provider's artifacts are verified before anything is published: a
+#     missing/corrupt checkpoint fails the job, and a partial (preempted or
+#     interrupted) run reports `partial` and skips publication entirely.
+#   - A "final model" is only published when the target checkpoint exists, is a
+#     valid torch zip, and ONNX inference succeeds; the Hub upload is verified
+#     afterwards.
+#   - GitHub-hosted runners hard-cap a job at 6h. Long horizons must therefore
+#     run as bounded slices via train-pool.yml (ADR-065) — a single dispatch job
+#     here is one bounded session, not the whole 400k run.
 
 name: Train
 
@@ -18,40 +34,54 @@ on:
         default: false
         type: boolean
       steps:
-        description: "Training steps (default: 100k with early stopping)"
+        description: "Global training target for this slice (never additive; resumable)"
         required: false
-        default: "100000"
+        default: "25000"
         type: string
       batch_size:
-        description: "Batch size (default: 128 for cost-optimized L4/T4)"
+        description: "Batch size (32 fits a 6h hosted-runner slice on T4)"
         required: false
-        default: "128"
+        default: "32"
         type: string
       lr:
-        description: "Learning rate (default: 5e-5)"
+        description: "DiT learning rate (default: 5e-5); the classifier keeps its own default"
         required: false
         default: "5e-5"
         type: string
-      gradient_accumulation_steps:
-        description: "Gradient accumulation steps (default: 1)"
-        required: false
-        default: "1"
-        type: string
+      # GitHub allows at most 10 workflow_dispatch inputs, so the remaining DiT
+      # knobs live in src/providers.py (single source of truth): gradient
+      # accumulation stays at the trainer default (1), `--hub-push-interval` is
+      # 5000, `--early-stopping-patience` is 15, and the reported GPU is T4.
       warmup_steps:
         description: "Warmup steps (default: 2000)"
         required: false
         default: "2000"
         type: string
       save_interval:
-        description: "Checkpoint save interval in steps (default: 500 - save more frequently for cost-optimized L4/T4 runs)"
+        description: "Checkpoint save interval in steps (default: 500)"
         required: false
         default: "500"
         type: string
-      early_stopping_patience:
-        description: "Early stopping patience in evaluations (default: 15)"
+      epochs:
+        description: "Classifier epochs (default: 20)"
         required: false
-        default: "15"
+        default: "20"
         type: string
+      hub_resume:
+        description: "Pull the newest checkpoint from HF Hub before training"
+        required: false
+        default: true
+        type: boolean
+      allow_experiment_mismatch:
+        description: "Explicit one-off migration: resume a checkpoint whose manifest differs (issue #163). Leave false."
+        required: false
+        default: false
+        type: boolean
+      push_to_hub:
+        description: "Publish the verified final package to HF Hub when the target is reached"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -154,6 +184,14 @@ jobs:
     environment:
       name: modal-training
     timeout-minutes: 180
+    # Job-level env makes the secret available to step `if` conditions: GitHub
+    # evaluates `if: env.X != ''` against the job/workflow env context, and the
+    # `secrets` context is not allowed there. Without this the publish step
+    # silently never ran (issue #163 WP7).
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -169,21 +207,51 @@ jobs:
         run: |
           pip install modal
           pip install -r requirements.txt
-      - name: Run training
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      - name: Run training (control plane)
+        id: train
         run: |
+          set -o pipefail
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          # `lr` is the DiT learning rate; the classifier keeps train.py's
+          # documented default instead of silently inheriting it.
           modal run src/train.py \
-            --data-dir /data/cats
-      - name: Download ONNX from Modal
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+            --data-dir /data/cats \
+            --epochs ${{ inputs.epochs }} \
+            --batch-size ${{ inputs.batch_size }} 2>&1 | tee classifier-training.log
+      - name: Download classifier artifacts from Modal
+        id: fetch
+        if: always()
         run: |
-          modal volume get cats-model-outputs cats_classifier.onnx ./cats_classifier.onnx
-          modal volume get cats-model-outputs cats_quantized.onnx ./cats_quantized.onnx || true
-          modal volume get cats-model-outputs best_cats_model.pt ./best_cats_model.pt || true
+          set -o pipefail
+          # Required artifact: a missing classifier ONNX is a job failure, not a
+          # warning (the previous `|| true` masked a broken training run).
+          modal volume get cats-model-outputs cats_classifier.onnx ./cats_classifier.onnx 2>&1 | tee -a classifier-training.log
+          # Optional artifacts: keep the newest checkpoint + quantized model
+          # when present, but never fail the run over them.
+          modal volume get cats-model-outputs cats_quantized.onnx ./cats_quantized.onnx 2>&1 | tee -a classifier-training.log || echo "::warning::cats_quantized.onnx not on volume"
+          modal volume get cats-model-outputs best_cats_model.pt ./best_cats_model.pt 2>&1 | tee -a classifier-training.log || echo "::warning::best_cats_model.pt not on volume"
+      - name: Verify classifier artifacts
+        id: verify
+        if: always()
+        run: |
+          python - <<'PY'
+          import os, sys
+          required = ['cats_classifier.onnx']
+          missing = [
+              name
+              for name in required
+              if not (os.path.exists(name) and os.path.getsize(name) > 0)
+          ]
+          if missing:
+              print(f'::error::required artifact missing or empty: {missing}')
+              sys.exit(1)
+          import onnx
+          import onnxruntime as ort
+          onnx.checker.check_model(onnx.load('cats_classifier.onnx'))
+          ort.InferenceSession('cats_classifier.onnx', providers=['CPUExecutionProvider'])
+          print('classifier ONNX verified')
+          PY
+          echo "verified=true" >> "$GITHUB_OUTPUT"
       - name: Upload training artifacts
         uses: actions/upload-artifact@v7
         if: always()
@@ -193,64 +261,29 @@ jobs:
             cats_classifier.onnx
             cats_quantized.onnx
             best_cats_model.pt
+            classifier-training.log
           retention-days: 7
           if-no-files-found: warn
-      - name: Upload to Hugging Face Hub
-        if: env.HF_TOKEN != ''
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      - name: Publish verified classifier to HF Hub
+        if: env.HF_TOKEN != '' && steps.verify.outputs.verified == 'true' && inputs.push_to_hub
         run: |
-          pip install huggingface_hub safetensors pillow
-          # Run evaluation if generator checkpoint exists
-          if [ -f "model.pt" ]; then
-            echo "Running evaluation..."
-            python src/evaluate_full.py --checkpoint model.pt \
-              --generate-samples --num-samples 16 --all-breeds \
-              --output-dir samples/evaluation \
-              --report-path evaluation_report.json || true
-          fi
-          # Run benchmarks if models exist
-          if [ -f "model.pt" ]; then
-            echo "Running benchmarks..."
-            python src/benchmark_inference.py --model model.pt \
-              --device cpu --num-warmup 5 --num-runs 20 \
-              --benchmark-throughput --batch-sizes 1,4,8 \
-              --report-path benchmark_report.json || true
-          fi
-          # Use comprehensive upload utility
+          set -o pipefail
+          pip install huggingface_hub 2>&1 | tail -1
           python src/upload_to_huggingface.py \
             --classifier best_cats_model.pt \
-            --generator model.pt \
             --onnx-classifier cats_classifier.onnx \
-            --onnx-generator generator.onnx \
             --quantized-classifier cats_quantized.onnx \
-            --quantized-generator generator_quantized.onnx \
-            --evaluation-report evaluation_report.json \
-            --benchmark-report benchmark_report.json \
-            --samples-dir samples/evaluation \
             --repo-id d4oit/tiny-cats-model \
-            --commit-message "Upload full model package from GitHub Actions" || \
-          python - <<'EOF'
-          from huggingface_hub import HfApi
-
-          api = HfApi()
-          repo_id = 'd4oit/tiny-cats-model'
-          # Fallback: upload individual files that are present.
+            --commit-message "Upload verified classifier from GitHub Actions" 2>&1 | tee -a classifier-training.log
+          python - <<'PY'
           import os
-          for local, remote in [
-              ('cats_classifier.onnx', 'classifier/model.onnx'),
-              ('cats_quantized.onnx', 'classifier/model_quantized.onnx'),
-              ('best_cats_model.pt', 'classifier/model.pt'),
-              ('generator.onnx', 'generator/model.onnx'),
-              ('generator_quantized.onnx', 'generator/model_quantized.onnx'),
-              ('model.pt', 'generator/model.pt'),
-          ]:
-              if os.path.exists(local):
-                  api.upload_file(
-                      path_or_fileobj=local, path_in_repo=remote, repo_id=repo_id
-                  )
-          print('Files uploaded successfully')
-          EOF
+          from huggingface_hub import HfApi
+          api = HfApi()
+          files = api.list_repo_files('d4oit/tiny-cats-model')
+          if 'classifier/model.onnx' not in files:
+              raise SystemExit('::error::classifier/model.onnx missing on the Hub after upload')
+          print('Hub upload verified: classifier/model.onnx')
+          PY
 
   train-dit:
     name: Train DiT (Modal)
@@ -259,7 +292,14 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: modal-training
-    timeout-minutes: 1440
+    # GitHub-hosted runners hard-cap a job at 6h (self-hosted can go longer).
+    # A DiT run is therefore ONE bounded slice, not the whole 400k horizon;
+    # continue the experiment with more slices via train-pool.yml (ADR-065).
+    timeout-minutes: 350
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -275,83 +315,176 @@ jobs:
         run: |
           pip install modal
           pip install -r requirements.txt
-      - name: Run DiT training
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      - name: Ensure Modal HuggingFace secret
         run: |
-          modal run src/train_dit.py \
-            --data-dir /data/cats \
-            --output /outputs/checkpoints/pool/dit_model.pt \
-            --ema-output /outputs/checkpoints/pool/dit_model_ema.pt \
-            --steps ${{ github.event.inputs.steps || '100000' }} \
-            --batch-size ${{ github.event.inputs.batch_size || '128' }} \
-            --lr ${{ github.event.inputs.lr || '5e-5' }} \
-            --warmup-steps ${{ github.event.inputs.warmup_steps || '2000' }} \
-            --save-interval ${{ github.event.inputs.save_interval || '500' }} \
-            --gradient-accumulation-steps ${{ github.event.inputs.gradient_accumulation_steps || '1' }} \
-            --early-stopping-patience ${{ github.event.inputs.early_stopping_patience || '10' }}
-      - name: Download ONNX from Modal
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::warning::HF_TOKEN is unset; Hub checkpoint sync will degrade gracefully"
+            exit 0
+          fi
+          # Always refresh the Modal secret from the current GitHub secret.
+          # Skipping when it already existed let a rotated/expired HF_TOKEN
+          # linger inside the container, silently breaking Hub pulls. `--force`
+          # overwrites an existing secret.
+          modal secret create --force huggingface-secret HF_TOKEN="$HF_TOKEN" \
+            || echo "::warning::Failed to sync Modal secret 'huggingface-secret'"
+      - name: Launch DiT slice (control plane)
+        id: train
         run: |
-          modal volume get dit-outputs generator.onnx ./generator.onnx || echo "No generator ONNX found"
-          modal volume get dit-outputs generator_quantized.onnx ./generator_quantized.onnx || echo "No quantized generator ONNX found"
-          modal volume get dit-outputs artifacts/generator/model.pt ./model.pt || echo "No generator checkpoint found"
-      - name: Upload training artifacts
+          # pipefail: a failing `modal run` must fail the job even though its
+          # output is piped through `tee` (ADR-059 regression guard, WP7).
+          set -o pipefail
+          HUBFLAGS=()
+          if [ "${{ inputs.hub_resume }}" = "true" ]; then
+            HUBFLAGS+=(--hub-resume)
+          fi
+          if [ "${{ inputs.push_to_hub }}" != "true" ]; then
+            HUBFLAGS+=(--no-hub-push)
+          fi
+          MIGRATEFLAGS=()
+          if [ "${{ inputs.allow_experiment_mismatch }}" = "true" ]; then
+            MIGRATEFLAGS+=(--allow-experiment-mismatch)
+          fi
+          CMD="$(python src/providers.py launch \
+            --provider modal \
+            --target ${{ inputs.steps }} \
+            --batch-size ${{ inputs.batch_size }} \
+            --lr ${{ inputs.lr }} \
+            --save-interval ${{ inputs.save_interval }} \
+            --hub-push-interval 5000 \
+            --warmup-steps ${{ inputs.warmup_steps }} \
+            --early-stopping-patience 15 \
+            --experiment-id dit-breed-conditioned-v4 \
+            "${HUBFLAGS[@]}" "${MIGRATEFLAGS[@]}")"
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "Launch: $CMD"
+          eval "$CMD" 2>&1 | tee modal-training.log
+      - name: Fetch live checkpoint state from Modal
+        if: always()
+        run: |
+          set -o pipefail
+          mkdir -p verify
+          modal volume get dit-outputs checkpoints/pool/training_state.json verify/training_state.json 2>&1 | tee -a modal-training.log \
+            || echo "::warning::training_state.json not on volume"
+          modal volume get dit-outputs checkpoints/pool/dit_model.pt verify/dit_model.pt 2>&1 | tee -a modal-training.log \
+            || echo "::warning::dit_model.pt not on volume"
+          modal volume get dit-outputs checkpoints/pool/dit_model_ema.pt verify/dit_model_ema.pt 2>&1 | tee -a modal-training.log \
+            || echo "::warning::dit_model_ema.pt not on volume"
+          modal volume get dit-outputs checkpoints/pool/training.log verify/training.log 2>&1 | tee -a modal-training.log || true
+      - name: Verify provider artifacts against the global target
+        id: verify
+        if: always()
+        run: |
+          set +e
+          python src/providers.py verify \
+            --state-file verify/training_state.json \
+            --checkpoint verify/dit_model.pt \
+            --target ${{ inputs.steps }} \
+            --out verify/checkpoint_verification.json \
+            --github-output "$GITHUB_OUTPUT"
+          rc=$?
+          set -e
+          echo "verify_exit_code=$rc" >> "$GITHUB_OUTPUT"
+          if [ "$rc" = "1" ]; then
+            echo "::error::provider artifacts failed verification (missing or corrupt checkpoint/state)"
+            exit 1
+          fi
+          if [ "$rc" = "3" ]; then
+            echo "::warning::partial run (preempted/interrupted) — checkpoint is resumable, publication skipped"
+          fi
+      - name: Write provider report
+        if: always()
+        run: |
+          python src/providers.py report \
+            --provider modal \
+            --gpu-model T4 \
+            --job-id "${{ github.run_id }}/${{ github.job }}" \
+            --started-at "${{ steps.train.outputs.started_at }}" \
+            --target ${{ inputs.steps }} \
+            --state-file verify/training_state.json \
+            --checkpoint-uri "hf://d4oit/tiny-cats-model/checkpoints/pool/dit-breed-conditioned-v4/latest" \
+            --outcome "${{ steps.train.outcome }}" \
+            --out verify/provider_report.json \
+            || echo "::warning::provider report could not be written"
+      - name: Upload training log, verification, and provider report
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: dit-outputs-${{ github.run_id }}
+          name: dit-training-${{ github.run_id }}
           path: |
-            generator.onnx
-            generator_quantized.onnx
-            model.pt
-          retention-days: 7
+            modal-training.log
+            verify/
+          retention-days: 14
           if-no-files-found: warn
-      - name: Upload to Hugging Face Hub
-        if: env.HF_TOKEN != ''
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      - name: Download and verify final artifact package
+        id: package
+        if: steps.verify.outputs.reached == 'true'
         run: |
-          pip install huggingface_hub safetensors pillow
-          # Run evaluation if generator checkpoint exists
-          if [ -f "model.pt" ]; then
-            echo "Running evaluation..."
-            python src/evaluate_full.py --checkpoint model.pt \
-              --generate-samples --num-samples 16 --all-breeds \
-              --output-dir samples/evaluation \
-              --report-path evaluation_report.json || true
-          fi
-          # Run benchmarks if models exist
-          if [ -f "model.pt" ] || [ -f "generator.onnx" ]; then
-            echo "Running benchmarks..."
-            python src/benchmark_inference.py --model model.pt \
-              --device cpu --num-warmup 5 --num-runs 20 \
-              --benchmark-throughput --batch-sizes 1,4,8 \
-              --report-path benchmark_report.json || true
-          fi
-          # Use comprehensive upload utility
+          set -o pipefail
+          # The trainer only builds artifacts/ when the global target was
+          # reached (ADR-064); a missing package means the run lied, so fail.
+          modal volume get dit-outputs artifacts ./artifacts 2>&1 | tee -a modal-training.log
+          for f in artifacts/generator/model.pt \
+                   artifacts/generator/model.onnx \
+                   artifacts/generator/model_quantized.onnx \
+                   artifacts/manifest.json; do
+            if [ ! -s "$f" ]; then
+              echo "::error::required final artifact missing or empty: $f"
+              exit 1
+            fi
+          done
+          # onnx/onnxruntime come from requirements.txt (pinned < 1.24 by the
+          # CI dependency guardrail) — never install them unpinned here.
+          # Checkpoint load + ONNX Runtime inference (WP8 export verification).
+          # --require-onnx is what makes a broken export fail the job instead
+          # of printing a warning and publishing anyway.
+          python src/verify_checkpoint.py \
+            --checkpoint artifacts/generator/model.pt \
+            --onnx artifacts/generator/model.onnx \
+            --require-onnx
+          echo "packaged=true" >> "$GITHUB_OUTPUT"
+      - name: Generate evaluation and benchmark reports
+        if: steps.package.outputs.packaged == 'true'
+        run: |
+          set -o pipefail
+          pip install huggingface_hub safetensors pillow 2>&1 | tail -1
+          # Required artifacts: fail loudly instead of publishing an
+          # incomplete package (the previous `|| true` hid broken runs).
+          python src/evaluate_full.py --checkpoint artifacts/generator/model.pt \
+            --generate-samples --num-samples 16 --all-breeds \
+            --output-dir artifacts/evaluation/samples \
+            --report-path artifacts/evaluation/evaluation_report.json
+          python src/benchmark_inference.py --model artifacts/generator/model.pt \
+            --device cpu --num-warmup 5 --num-runs 20 \
+            --benchmark-throughput --batch-sizes 1,4,8 \
+            --report-path artifacts/evaluation/benchmark_report.json
+      - name: Publish verified package to HF Hub
+        if: env.HF_TOKEN != '' && steps.package.outputs.packaged == 'true' && inputs.push_to_hub
+        run: |
+          set -o pipefail
           python src/upload_to_huggingface.py \
-            --generator model.pt \
-            --onnx-generator generator.onnx \
-            --quantized-generator generator_quantized.onnx \
-            --evaluation-report evaluation_report.json \
-            --benchmark-report benchmark_report.json \
-            --samples-dir samples/evaluation \
+            --generator artifacts/generator/model.pt \
+            --onnx-generator artifacts/generator/model.onnx \
+            --quantized-generator artifacts/generator/model_quantized.onnx \
+            --evaluation-report artifacts/evaluation/evaluation_report.json \
+            --benchmark-report artifacts/evaluation/benchmark_report.json \
+            --samples-dir artifacts/evaluation/samples \
             --repo-id d4oit/tiny-cats-model \
-            --commit-message "Upload DiT model package from GitHub Actions" || \
-          python -c "
+            --commit-message "Upload verified DiT package from GitHub Actions (${GITHUB_SHA:0:7})" \
+            2>&1 | tee -a modal-training.log
+      - name: Verify HF Hub publication
+        if: env.HF_TOKEN != '' && steps.package.outputs.packaged == 'true' && inputs.push_to_hub
+        run: |
+          python - <<'PY'
           from huggingface_hub import HfApi
-          api = HfApi()
-          # Fallback: upload individual files
-          import os
-          if os.path.exists('generator.onnx'):
-            api.upload_file('generator.onnx', 'generator/model.onnx', 'd4oit/tiny-cats-model')
-          if os.path.exists('generator_quantized.onnx'):
-            api.upload_file('generator_quantized.onnx', 'generator/model_quantized.onnx', 'd4oit/tiny-cats-model')
-          if os.path.exists('model.pt'):
-            api.upload_file('model.pt', 'generator/model.pt', 'd4oit/tiny-cats-model')
-          print('Files uploaded successfully')
-          "
+
+          files = set(HfApi().list_repo_files('d4oit/tiny-cats-model'))
+          required = [
+              'generator/model.pt',
+              'generator/model.onnx',
+              'generator/model_quantized.onnx',
+          ]
+          missing = [name for name in required if name not in files]
+          if missing:
+              raise SystemExit(f'::error::Hub publication incomplete, missing: {missing}')
+          print('Hub publication verified: ' + ', '.join(required))
+          PY

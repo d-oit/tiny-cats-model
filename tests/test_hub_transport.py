@@ -197,6 +197,29 @@ class TestRoundTrip:
         )
         assert pulled is not None
 
+    def test_pull_falls_back_to_primary_when_requested_name_absent(
+        self, fake_hub, tmp_path: Path
+    ) -> None:
+        # An older push uploaded only ``dit_model.pt``. A pull that asks for the
+        # EMA sibling must fall back to the primary checkpoint rather than
+        # refusing the whole snapshot (which sent pool slices to a stale local
+        # file that then failed the manifest gate).
+        assert push(fake_hub, tmp_path, "s10", 10) is True
+
+        pulled = pull_checkpoint_from_hub(
+            hub_repo="test/repo",
+            checkpoint_name="dit_model_ema.pt",
+            output_dir=tmp_path / "out",
+            experiment_id="exp-a",
+        )
+
+        assert pulled is not None
+        assert pulled.name == "dit_model.pt"
+        assert (
+            torch.load(pulled, map_location="cpu", weights_only=False)["step_marker"]
+            == "s10"
+        )
+
 
 class TestMissingAndCorrupt:
     def test_missing_returns_none(self, fake_hub, tmp_path: Path) -> None:

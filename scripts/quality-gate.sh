@@ -276,6 +276,22 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 9. End-to-End Training Pipeline Verification (issue #163 WP8)
+# ─────────────────────────────────────────────────────────────────────────────
+log_info "Verifying the end-to-end training pipeline (smoke/resume/export/package)..."
+
+if PIPE_OUTPUT=$(python scripts/verify_training_pipeline.py 2>&1); then
+    log_success "Training pipeline verification passed"
+else
+    log_error "Training pipeline verification failed"
+    echo "$PIPE_OUTPUT" | tail -30
+    FAILURES=$((FAILURES + 1))
+    if [[ "$STRICT" == true ]]; then
+        exit 1
+    fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
 section_header "Summary"

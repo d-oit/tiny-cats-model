@@ -189,6 +189,30 @@ class TestTrainingStateFile:
         assert state["schema_version"] == 1
         assert manifest_of(state) == manifest
 
+    def test_converged_defaults_false_and_round_trips(self, tmp_path: Path) -> None:
+        # Early stopping is recorded as its own field so completed_steps keeps
+        # reporting the steps that were actually trained (issue #163).
+        default_path = tmp_path / "default.json"
+        write_training_state(
+            default_path, manifest=make_manifest(), completed_steps=60_000
+        )
+        default_state = read_training_state(default_path)
+        assert default_state is not None
+        assert default_state["converged"] is False
+
+        converged_path = tmp_path / "converged.json"
+        write_training_state(
+            converged_path,
+            manifest=make_manifest(),
+            completed_steps=68_000,
+            converged=True,
+        )
+        converged_state = read_training_state(converged_path)
+        assert converged_state is not None
+        assert converged_state["converged"] is True
+        assert converged_state["completed_steps"] == 68_000
+        assert converged_state["target_steps"] == 400_000
+
     def test_write_is_atomic(self, tmp_path: Path) -> None:
         write_training_state(
             tmp_path / "training_state.json",

@@ -126,6 +126,7 @@ def run_train(
     save_interval: int = 5,
     allow_experiment_mismatch: bool = False,
     experiment_id: str = "resume-e2e",
+    early_stopping_patience: int = 0,
 ) -> float:
     """Drive ``train_dit_local`` with tiny, fast, deterministic settings."""
     return train_dit_local(
@@ -143,7 +144,7 @@ def run_train(
         log_interval=10_000,
         save_interval=save_interval,
         sample_interval=10_000,
-        early_stopping_patience=0,
+        early_stopping_patience=early_stopping_patience,
         seed=42,
         resume=str(resume) if resume is not None else None,
         no_hub_push=True,
@@ -264,6 +265,58 @@ class TestAlreadyComplete:
         state = read_training_state(other.parent / "training_state.json")
         assert state is not None
         assert state["completed_steps"] == 10
+
+
+class TestEarlyStoppingAcrossSlices:
+    """A resumed slice must not inherit a saturated early-stopping counter.
+
+    Every pool slice after the first used to restore ``patience == limit`` from
+    the checkpoint and stop on its very first evaluation (about 500 of its
+    25,000 steps) — while still reporting the global target as reached, because
+    the stop path stamped the target onto the step count. Both halves of that
+    failure are asserted here (issue #163).
+    """
+
+    def test_resume_starts_a_fresh_patience_window(
+        self, tiny_dataset: Path, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "ckpts" / "dit_model.pt"
+
+        # A short first run produces the checkpoint the next slice resumes from.
+        run_train(tiny_dataset, output, CountingModelFactory(), steps=3)
+
+        # Model a checkpoint written by a slice that already early-stopped: its
+        # global best is unbeatable and its counter sits at the limit.
+        checkpoint = load_ckpt(output)
+        checkpoint["best_loss"] = 0.0
+        checkpoint["patience_counter"] = 1
+        torch.save(checkpoint, output)
+
+        # patience=2 evaluates every 5 steps. A *fresh* window stops at step 10
+        # (two non-improving evaluations); an inherited counter of 1 would stop
+        # at the first evaluation, step 5.
+        factory = CountingModelFactory()
+        run_train(
+            tiny_dataset,
+            output,
+            factory,
+            steps=20,
+            save_interval=5,
+            resume=output,
+            early_stopping_patience=2,
+        )
+
+        assert factory.train_forwards == 7  # steps 4..10, not 4..5
+
+        state = read_training_state(output.parent / "training_state.json")
+        assert state is not None
+        # It records where training actually stopped...
+        assert state["completed_steps"] == 10
+        assert state["converged"] is True
+        # ...rather than stamping the global target onto the step count.
+        assert state["target_steps"] == 20
+        assert state["completed_steps"] < state["target_steps"]
+        assert load_ckpt(output)["step"] == 10
 
 
 class TestCorruptCheckpoint:

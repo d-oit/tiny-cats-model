@@ -278,8 +278,16 @@ def write_training_state(
     *,
     manifest: dict[str, Any],
     completed_steps: int,
+    converged: bool = False,
 ) -> None:
-    """Atomically write ``training_state.json`` beside a checkpoint."""
+    """Atomically write ``training_state.json`` beside a checkpoint.
+
+    ``converged`` records that early stopping ended the run: it is finished
+    for its target without having trained ``completed_steps == target_steps``.
+    It is deliberately a separate field rather than folded into
+    ``completed_steps``, so resume arithmetic and target verification keep
+    seeing the steps that were *actually* trained (issue #163).
+    """
     state_path = Path(state_path)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     document: dict[str, Any] = {
@@ -287,6 +295,7 @@ def write_training_state(
         "written_at": datetime.now(timezone.utc).isoformat(),
         **manifest,
         "completed_steps": int(completed_steps),
+        "converged": bool(converged),
     }
     tmp_path = state_path.with_name(state_path.name + ".tmp")
     with open(tmp_path, "w") as handle:

@@ -83,6 +83,12 @@ jobs:
           pytest tests/ -v --cov=. --cov-report=xml --cov-report=term-missing
           # test_gpu_pool.py is discovered automatically by pytest tests/
 
+      - name: End-to-end training pipeline verification (issue #163 WP8)
+        run: |
+          # CPU smoke + exact resume (10 -> 20) + ONNX export/runtime inference
+          # + quantized ONNX + final artifact package/refusal gates.
+          python scripts/verify_training_pipeline.py
+
       - name: GPU pool fallback chain simulation
         run: |
           python scripts/test_fallback_chain.py

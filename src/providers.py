@@ -13,22 +13,27 @@ plans bounded per-session slices (e.g. 0 → 60k → 120k → ... → 400k) and
 runs them as separate provider sessions, each resuming exactly from the
 Hub checkpoint (see ADR-065).
 
-CLI (used by .github/workflows/train-pool.yml):
+CLI (used by .github/workflows/train.yml and train-pool.yml):
 
     python src/providers.py plan   --steps 400000 --slice-size 60000
     python src/providers.py gate   --provider lightning --strict
     python src/providers.py launch --provider modal --target 60000 ...
+    python src/providers.py verify --state-file training_state.json \
+        --checkpoint checkpoints/pool/dit_model.pt --target 60000
     python src/providers.py report --provider modal --job-id ... --target 60000
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import itertools
 import json
+import pickletools
 import shlex
 import sys
 import time
+import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -44,6 +49,13 @@ VRAM_GB: dict[str, int] = {"T4": 16, "L4": 24, "P100": 16, "A10G": 24, "CPU": 0}
 EXIT_REASONS = frozenset(
     {"completed", "partial", "interrupted", "failed", "unsupported"}
 )
+
+
+# Exit codes for `providers.py verify` (WP7 post-provider verification).
+# Distinct codes let the workflow branch without parsing prose.
+VERIFY_OK = 0  # checkpoint valid and the global target was reached
+VERIFY_INVALID = 1  # checkpoint missing/unreadable or state unreadable
+VERIFY_PARTIAL = 3  # checkpoint valid but short of the requested target
 
 
 class UnsupportedProviderError(RuntimeError):
@@ -212,6 +224,10 @@ def build_launch_command(
     hub_push_interval: str = "5000",
     hub_resume: bool = False,
     no_hub_push: bool = False,
+    warmup_steps: str | None = None,
+    gradient_accumulation_steps: str | None = None,
+    early_stopping_patience: str | None = None,
+    allow_experiment_mismatch: bool = False,
     experiment_id: str = DEFAULT_EXPERIMENT_ID,
 ) -> list[str]:
     """Build the exact command that launches one bounded provider session.
@@ -250,10 +266,24 @@ def build_launch_command(
         "--experiment-id",
         experiment_id,
     ]
+    # Optional knobs: only emitted when explicitly requested so the default
+    # launch command stays byte-for-byte identical to the pinned test/ADR-065
+    # contract (train-pool passes none of these).
+    for flag, value in (
+        ("--warmup-steps", warmup_steps),
+        ("--gradient-accumulation-steps", gradient_accumulation_steps),
+        ("--early-stopping-patience", early_stopping_patience),
+    ):
+        if value is not None:
+            command.extend([flag, str(value)])
     if hub_resume:
         command.append("--hub-resume")
     if no_hub_push:
         command.append("--no-hub-push")
+    # Explicit, opt-in migration (issue #163): resume a checkpoint whose
+    # manifest differs (e.g. a stored warmup_steps). Never emitted by default.
+    if allow_experiment_mismatch:
+        command.append("--allow-experiment-mismatch")
     return command
 
 
@@ -327,20 +357,60 @@ class ProviderReport:
         return cls(**json.loads(Path(path).read_text()))
 
 
+@dataclass
+class CheckpointVerification:
+    """Result of control-plane checkpoint verification (issue #163 WP7).
+
+    GitHub Actions must not publish a "final model" on the strength of an exit
+    code alone, so the workflow verifies the *artifacts* the provider left
+    behind: the checkpoint is a real torch zip and ``training_state.json``
+    records progress at (or past) the requested global target.
+    """
+
+    checkpoint: str | None
+    state_file: str | None
+    checkpoint_exists: bool
+    checkpoint_valid: bool
+    completed_steps: int | None
+    target_steps: int | None
+    reached_target: bool
+    experiment_id: str | None
+    reason: str
+    # False when the state file is readable but semantically unusable (e.g. a
+    # malformed ``target_steps``). A verifier must report such a document as
+    # invalid rather than crashing with an unhandled ``ValueError``.
+    state_valid: bool = True
+    # True when early stopping ended the run: the checkpoint is this
+    # experiment's finished model even though ``completed_steps`` stopped short
+    # of ``target_steps``. Recorded explicitly by the trainer instead of
+    # stamping the target onto the step count (issue #163).
+    converged: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 def resolve_exit_reason(
-    outcome: str, completed_steps: int | None, target_steps: int | None
+    outcome: str,
+    completed_steps: int | None,
+    target_steps: int | None,
+    *,
+    converged: bool = False,
 ) -> str:
     """Map a session outcome to a WP5 exit reason.
 
     - cancelled → interrupted (a usable checkpoint must survive; WP6.8)
     - failure   → failed
-    - success   → completed when the target was reached, otherwise partial
-      (including the odd case of success with no readable training state).
+    - success   → completed when the target was reached (or the run converged
+      early and is finished for it), otherwise partial (including the odd case
+      of success with no readable training state).
     """
     if outcome == "cancelled":
         return "interrupted"
     if outcome != "success":
         return "failed"
+    if converged:
+        return "completed"
     if (
         completed_steps is not None
         and target_steps is not None
@@ -359,6 +429,276 @@ def _read_state(state_file: str | None) -> dict[str, Any] | None:
     from training_state import read_training_state  # src is on sys.path (CLI)
 
     return read_training_state(path)
+
+
+# Upper bounds for the archive probe. The real artifact is a ~530MB checkpoint
+# (~10^3 members), so these leave an order of magnitude of headroom while
+# keeping a crafted archive from exhausting the runner.
+_MAX_ARCHIVE_MEMBERS = 100_000
+_MAX_ARCHIVE_UNCOMPRESSED_BYTES = 8 * 1024**3
+# Bound the structural pickle walk: a real ``data.pkl`` is orders of
+# magnitude smaller, and a crafted archive must not be able to burn the runner
+# parsing opcodes.
+_MAX_PICKLE_BYTES = 64 * 1024**2
+_MAX_PICKLE_OPS = 1_000_000
+
+
+# The container key every trainer checkpoint carries (``save_checkpoint``) and
+# the deep validator requires (``verify_checkpoint.py``). A pickle that never
+# names it is not one of our checkpoints, however well formed it is.
+_MODEL_STATE_KEY = "model_state_dict"
+
+
+def _is_torch_payload(payload: bytes) -> bool:
+    """Whether ``payload`` is a complete pickle naming a model state dict.
+
+    ``pickletools.genops`` walks the opcodes *without executing any of them*,
+    so an archive whose ``data.pkl`` merely *starts* like a pickle (a valid
+    PROTO header followed by arbitrary bytes) is rejected, while a genuine
+    ``torch.save`` payload — which parses through to its terminating STOP —
+    passes. The payload must also name ``model_state_dict``, which is the
+    structural contract of a trainer checkpoint; an arbitrary well-formed
+    pickle (e.g. ``{"notes": ...}``) is not one. No opcode is ever
+    interpreted, so nothing in the artifact executes.
+    """
+    if len(payload) > _MAX_PICKLE_BYTES:
+        return False
+    ops = 0
+    names_model_state = False
+    try:
+        for _opcode, argument, _position in pickletools.genops(io.BytesIO(payload)):
+            ops += 1
+            if ops > _MAX_PICKLE_OPS:
+                return False
+            if isinstance(argument, str) and argument == _MODEL_STATE_KEY:
+                names_model_state = True
+    except Exception:
+        # Any malformed stream (unknown opcode, exhaustion before STOP, ...) is
+        # simply not a checkpoint; the probe must never raise at the caller.
+        return False
+    return ops > 0 and names_model_state
+
+
+def _is_torch_checkpoint(path: Path) -> bool:
+    """Whether ``path`` is a structurally valid torch checkpoint archive.
+
+    ``zipfile.is_zipfile`` alone only proves ZIP framing, so an arbitrary ZIP
+    would pass an "artifacts are valid" gate. A torch checkpoint is a ZIP that
+    carries a pickled ``data.pkl`` payload, so require that entry with intact
+    member CRCs, bounded in size and member count.
+
+    This deliberately does *not* deserialize the payload. The verifier runs on
+    a downloaded (mutable-volume / Hub) artifact and unpickling it with
+    ``weights_only=False`` would execute attacker-controlled code on the runner;
+    deep load-time validation lives in ``verify_checkpoint.py``, which runs on
+    artifacts the training job itself produced. Instead the payload is parsed
+    *structurally* (opcode walk via :func:`_is_torch_payload`), which rejects a
+    CRC-clean archive holding arbitrary bytes — even one whose first bytes
+    imitate a pickle PROTO header — and one that is well formed but is not a
+    model checkpoint, all without interpreting any opcode. A pickle that is
+    structurally right but semantically wrong is left to the deep validator,
+    not to code execution here.
+    """
+    if not zipfile.is_zipfile(path):
+        return False
+    try:
+        with zipfile.ZipFile(path) as archive:
+            infos = archive.infolist()
+            # Bound the work *before* testzip() decompresses every member: the
+            # central directory's declared uncompressed sizes cap a crafted
+            # archive's expansion, and the member count caps the CPU/disk cost.
+            if len(infos) > _MAX_ARCHIVE_MEMBERS:
+                return False
+            if sum(info.file_size for info in infos) > (
+                _MAX_ARCHIVE_UNCOMPRESSED_BYTES
+            ):
+                return False
+            pickle_members = [
+                info for info in infos if info.filename.endswith("data.pkl")
+            ]
+            if not pickle_members:
+                return False
+            member = pickle_members[0]
+            if member.file_size > _MAX_PICKLE_BYTES:
+                return False
+            with archive.open(member) as handle:
+                payload = handle.read(_MAX_PICKLE_BYTES + 1)
+            if not _is_torch_payload(payload):
+                return False
+            return archive.testzip() is None
+    except (zipfile.BadZipFile, OSError, RuntimeError):
+        # RuntimeError covers the encrypted/unsupported-compression paths that
+        # zipfile raises while reading a crafted member header.
+        return False
+
+
+def verify_checkpoint(
+    *,
+    state_file: str | None = None,
+    checkpoint: str | None = None,
+    target: int | None = None,
+) -> CheckpointVerification:
+    """Verify the artifacts a provider session left behind (issue #163 WP7).
+
+    Args:
+        state_file: ``training_state.json`` beside the live checkpoint.
+        checkpoint: The live checkpoint (``checkpoints/pool/dit_model.pt``).
+            When given it must exist and be a valid torch (zip) checkpoint.
+        target: Requested global target. Falls back to the state file's
+            ``target_steps`` when omitted.
+
+    Returns:
+        A :class:`CheckpointVerification`. ``checkpoint_valid`` is False (and
+        ``reached_target`` False) when the checkpoint is missing/corrupt, so
+        callers can gate publication on it.
+    """
+    state = _read_state(state_file)
+    completed: int | None = None
+    resolved_target = target
+    experiment_id: str | None = None
+    state_valid = True
+    converged = False
+    state_target: int | None = None
+    invalid_state_fields: list[str] = []
+    if state is not None:
+        raw_completed = state.get("completed_steps")
+        # Strictly an integer: ``int()`` would silently truncate ``60000.9``
+        # (or read ``true`` as 1) and certify progress the run never made.
+        # ``bool`` is an ``int`` subclass, so it is excluded explicitly.
+        if isinstance(raw_completed, bool) or not isinstance(raw_completed, int):
+            # A state document without a usable progress field is unusable, so
+            # report it invalid rather than emitting ``state_valid: true``.
+            completed = None
+            state_valid = False
+            invalid_state_fields.append("completed_steps")
+        else:
+            completed = raw_completed
+        # Presence, not truthiness: `target_steps: 0` is a malformed global
+        # target and must not be silently skipped by the verifier. The field is
+        # validated even when the caller supplies --target, because the state
+        # manifest's own target is part of the verification contract.
+        raw_target = state.get("target_steps")
+        if raw_target is not None:
+            # Same strictness as completed_steps: a float/string/bool target is
+            # malformed, never a truncation candidate, so a readable but
+            # malformed state fails verification instead of aborting the CLI
+            # (exit 2) or quietly rounding the target down.
+            if isinstance(raw_target, bool) or not isinstance(raw_target, int):
+                state_target = None
+                state_valid = False
+                invalid_state_fields.append("target_steps")
+            # A global target is strictly positive; a zero/negative one in the
+            # manifest is malformed even when --target overrides it, so a
+            # sufficient completed_steps cannot be certified as reached.
+            elif raw_target <= 0:
+                state_target = raw_target
+                state_valid = False
+                invalid_state_fields.append("target_steps")
+            else:
+                state_target = raw_target
+            if resolved_target is None:
+                resolved_target = state_target
+        # Early stopping is a recorded terminal state, not a step count: only a
+        # real boolean counts, so a stringified "false" cannot claim the run
+        # converged early.
+        raw_converged = state.get("converged", False)
+        if not isinstance(raw_converged, bool):
+            state_valid = False
+            invalid_state_fields.append("converged")
+        else:
+            converged = raw_converged
+        experiment_id = state.get("experiment_id")
+
+    # An omitted checkpoint is not verified: the verifier validates provider
+    # *artifacts*, so defaulting to valid would let a state file alone report
+    # ``reached_target`` with no checkpoint on disk.
+    checkpoint_exists = False
+    checkpoint_valid = False
+    if checkpoint is not None:
+        path = Path(checkpoint)
+        checkpoint_exists = path.exists()
+        checkpoint_valid = checkpoint_exists and _is_torch_checkpoint(path)
+
+    reasons: list[str] = []
+    if checkpoint is None:
+        reasons.append("no checkpoint supplied; artifact integrity unverified")
+    elif not checkpoint_exists:
+        reasons.append(f"checkpoint missing: {checkpoint}")
+    elif not checkpoint_valid:
+        reasons.append(f"checkpoint is not a valid torch checkpoint: {checkpoint}")
+    if state is None:
+        reasons.append(f"training state unreadable: {state_file}")
+    elif not state_valid:
+        reasons.append(
+            "training state has a malformed " + " and ".join(invalid_state_fields)
+        )
+    # A global target must be positive, matching parse_slice_targets and
+    # build_launch_command; otherwise `--target -1` would certify any
+    # nonnegative checkpoint as complete.
+    if target is not None and target <= 0:
+        reasons.append(f"target must be positive, got {target}")
+    elif resolved_target is not None and resolved_target <= 0:
+        reasons.append(f"target must be positive, got {resolved_target}")
+
+    # A converged run is finished for the target recorded in *its own* state
+    # document even though it stopped short: early stopping is a deliberate
+    # terminal state the trainer records. It only satisfies that same positive
+    # target — converged is not evidence of progress toward a *larger* target,
+    # so a stale/early-stopped state cannot be certified for a later slice's
+    # target (125.6 finding) and, like the completed_steps comparison, a
+    # negative target cannot be certified either.
+    converged_satisfies_target = bool(
+        converged
+        and state_target is not None
+        and resolved_target is not None
+        and state_target == resolved_target
+        and resolved_target > 0
+    )
+
+    reached_target = bool(
+        checkpoint_valid
+        and state_valid
+        and (
+            converged_satisfies_target
+            or (
+                completed is not None
+                and resolved_target is not None
+                and resolved_target > 0
+                and completed >= resolved_target
+            )
+        )
+    )
+    if not reasons:
+        if converged_satisfies_target:
+            reasons.append(
+                f"converged early at step {completed} of target "
+                f"{resolved_target} (early stopping ended the run)"
+            )
+        elif converged and state_target is not None and resolved_target is not None:
+            reasons.append(
+                f"converged early for target {state_target}, not the requested "
+                f"{resolved_target}"
+            )
+        elif resolved_target is None:
+            reasons.append("no target supplied; progress not evaluated")
+        elif reached_target:
+            reasons.append(f"completed {completed} >= target {resolved_target}")
+        else:
+            reasons.append(f"completed {completed} < target {resolved_target}")
+
+    return CheckpointVerification(
+        checkpoint=checkpoint,
+        state_file=state_file,
+        checkpoint_exists=checkpoint_exists,
+        checkpoint_valid=checkpoint_valid,
+        completed_steps=completed,
+        target_steps=resolved_target,
+        reached_target=reached_target,
+        experiment_id=experiment_id,
+        reason="; ".join(reasons),
+        state_valid=state_valid,
+        converged=converged,
+    )
 
 
 def _cmd_plan(args: argparse.Namespace) -> int:
@@ -423,10 +763,48 @@ def _cmd_launch(args: argparse.Namespace) -> int:
         hub_push_interval=args.hub_push_interval,
         hub_resume=args.hub_resume,
         no_hub_push=args.no_hub_push,
+        warmup_steps=args.warmup_steps,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        early_stopping_patience=args.early_stopping_patience,
+        allow_experiment_mismatch=args.allow_experiment_mismatch,
         experiment_id=args.experiment_id,
     )
     print(shlex.join(command))
     return 0
+
+
+def _cmd_verify(args: argparse.Namespace) -> int:
+    result = verify_checkpoint(
+        state_file=args.state_file,
+        checkpoint=args.checkpoint,
+        target=args.target,
+    )
+    # Machine-readable status line, mirroring PROVIDER_REPORT_JSON (WP6.10).
+    print(f"CHECKPOINT_VERIFY_JSON={json.dumps(result.to_dict(), sort_keys=True)}")
+    if args.out:
+        Path(args.out).write_text(
+            json.dumps(result.to_dict(), indent=2, sort_keys=True)
+        )
+    if args.github_output:
+        completed = "" if result.completed_steps is None else result.completed_steps
+        with open(args.github_output, "a") as handle:
+            handle.write(f"reached={'true' if result.reached_target else 'false'}\n")
+            handle.write(
+                f"checkpoint_valid={'true' if result.checkpoint_valid else 'false'}\n"
+            )
+            handle.write(f"completed_steps={completed}\n")
+            handle.write(f"converged={'true' if result.converged else 'false'}\n")
+    if result.target_steps is not None and result.target_steps <= 0:
+        print(
+            f"error: target must be positive, got {result.target_steps}",
+            file=sys.stderr,
+        )
+        return VERIFY_INVALID
+    if not result.checkpoint_valid or result.completed_steps is None:
+        return VERIFY_INVALID
+    if not result.state_valid:
+        return VERIFY_INVALID
+    return VERIFY_OK if result.reached_target else VERIFY_PARTIAL
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
@@ -437,7 +815,16 @@ def _cmd_report(args: argparse.Namespace) -> int:
         if state and state.get("target_steps")
         else args.target
     )
-    exit_reason = resolve_exit_reason(args.outcome, completed, target)
+    # Strictly boolean, mirroring verify_checkpoint: a stringified "false" is
+    # truthy in Python, so a report must not coerce a malformed flag into a
+    # converged run and relabel a partial slice as completed.
+    converged = bool(state and state.get("converged") is True)
+    exit_reason = resolve_exit_reason(
+        args.outcome,
+        completed,
+        target,
+        converged=converged,
+    )
 
     if args.gpu_model:
         gpu_model = args.gpu_model
@@ -505,8 +892,30 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument("--hub-push-interval", default="5000")
     launch.add_argument("--hub-resume", action="store_true")
     launch.add_argument("--no-hub-push", action="store_true")
+    launch.add_argument("--warmup-steps", default=None)
+    launch.add_argument("--gradient-accumulation-steps", default=None)
+    launch.add_argument("--early-stopping-patience", default=None)
+    launch.add_argument(
+        "--allow-experiment-mismatch",
+        action="store_true",
+        help="explicit one-off migration: resume a checkpoint whose manifest differs",
+    )
     launch.add_argument("--experiment-id", default=DEFAULT_EXPERIMENT_ID)
     launch.set_defaults(func=_cmd_launch)
+
+    verify = sub.add_parser(
+        "verify", help="verify provider artifacts against the global target"
+    )
+    verify.add_argument("--state-file", default=None)
+    verify.add_argument("--checkpoint", default=None)
+    verify.add_argument("--target", type=int, default=None)
+    verify.add_argument("--out", default=None)
+    verify.add_argument(
+        "--github-output",
+        default=None,
+        help="append reached/checkpoint_valid/completed_steps/converged to $GITHUB_OUTPUT",
+    )
+    verify.set_defaults(func=_cmd_verify)
 
     report = sub.add_parser("report", help="write the machine-readable session report")
     report.add_argument("--provider", required=True)

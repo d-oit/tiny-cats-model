@@ -103,41 +103,87 @@ export MODAL_TOKEN_ID=your_token_id
 export MODAL_TOKEN_SECRET=your_token_secret
 
 # Classifier training
-modal run src/train.py
+modal run src/train.py --data-dir /data/cats --epochs 20 --batch-size 64
 
-# DiT generator training (optimized)
-modal run src/train_dit.py --steps 100000 --batch-size 512
+# DiT generator: --steps is a GLOBAL target, not an additional-step count
+modal run src/train_dit.py --data-dir /data/cats --steps 60000 --batch-size 32
 ```
 
 > **Security**: Never commit secrets. Use environment variables or GitHub Secrets.
 
-## Free GPU Pool Training
+## Production 400k DiT Training
 
-Train across multiple free GPU providers with automatic checkpoint sync via HuggingFace Hub:
-
-| Provider | Free Tier | GPU Types | Max Session |
-|----------|-----------|-----------|-------------|
-| Modal | $30/mo credits | T4, L4 | 24h |
-| Lightning AI | 22h/day free | T4, L4, L40S | Unlimited |
-| Google Colab | Free GPU runtime | T4, V100 | 12h |
-| Kaggle | 30h/week free | P100, T4 | 9h |
-| HF Spaces | 16h/day GPU | T4-small | Unlimited |
+A 400k-step run is a sequence of **bounded, resumable slices**, not one job.
+`--steps` is always the *global* target, so every slice resumes exactly where
+HuggingFace Hub left off (`max(0, target − completed)`); a checkpoint at 45k run
+with `--steps 60000` performs exactly 15,000 more steps. GitHub Actions is the
+control plane: it plans slices, launches real GPU sessions and verifies the
+artifacts — it never trains on CPU.
 
 ```bash
-# Check which provider you're on
-python -c "from src.gpu_pool import detect_provider; print(detect_provider())"
+# 1. Local smoke test (CPU, seconds)
+python src/train_dit.py --data-dir data/cats --steps 100 --batch-size 8
 
-# Estimate cost across all providers
-python -c "from src.gpu_pool import estimate_cost; print(estimate_cost(50000))"
+# 2. One bounded Modal slice (<= 6h; continues the same experiment)
+modal run src/train_dit.py \
+  --data-dir /data/cats \
+  --steps 60000 \
+  --batch-size 32 \
+  --lr 5e-5 \
+  --warmup-steps 2000 \
+  --save-interval 5000 \
+  --hub-push-interval 5000 \
+  --hub-resume
 
-# Train on current provider with Hub sync
-python scripts/train_lightning.py --steps 20000 --hub-resume
-
-# Manual pool run via GitHub Actions
-gh workflow run train-pool.yml -f provider=all -f steps=20000
+# 3. Continue with INCREASING GLOBAL TARGETS (not additional steps)
+modal run src/train_dit.py --data-dir /data/cats --steps 120000 --batch-size 32 --hub-resume
+modal run src/train_dit.py --data-dir /data/cats --steps 400000 --batch-size 32 --hub-resume
 ```
 
-See `src/gpu_pool.py` for the full provider abstraction and `agents-docs/training.md` for detailed setup guides.
+Or let GitHub Actions orchestrate the whole run: every 6 hours `train-pool.yml`
+plans the remaining slices toward 400k and launches one bounded provider session
+per slice, each pushing `step-XXXXXX/` snapshots plus a `latest/` pointer to the
+Hub (resume is automatic and idempotent).
+
+```bash
+# Full 400k run as bounded slices (default 25k/session, sequential, fail-fast)
+gh workflow run train-pool.yml -f steps=400000 -f slice_size=60000
+
+# Single verified production run (one slice) through the main workflow
+gh workflow run train.yml -f steps=25000 -f batch_size=32
+
+# Unsupported providers FAIL CLEARLY instead of silently training on CPU
+gh workflow run train-pool.yml -f provider=kaggle   # exits 2 with instructions
+```
+
+A run only publishes a "final model" when its global target is reached *and* the
+checkpoint verifies: the workflow re-reads `training_state.json`, checks the
+checkpoint is a valid torch archive, runs ONNX Runtime inference, and verifies the
+Hub upload afterwards. A preempted slice reports `partial`, keeps a resumable
+checkpoint and publishes nothing.
+
+### Free GPU Pool Providers
+
+| Provider | Free Tier | GPU Types | Max Session | Control plane |
+|----------|-----------|-----------|-------------|---------------|
+| Modal | $30/mo credits | T4, L4 | 24h | ✅ launchable |
+| Lightning AI | 22h/day free | T4, L4, L40S | Unlimited | manual (`scripts/train_lightning.py`) |
+| Google Colab | Free GPU runtime | T4, V100 | 12h | manual (no headless API) |
+| Kaggle | 30h/week free | P100, T4 | 9h | manual (`scripts/train_kaggle.py`) |
+| HF Spaces | 16h/day GPU | T4-small | Unlimited | manual (`scripts/train_hf_spaces.py`) |
+
+```bash
+# Inspect the control plane without launching anything
+python src/providers.py gate   --provider all
+python src/providers.py gate   --provider lightning --strict   # exits 2
+python src/providers.py plan   --steps 400000 --slice-size 60000
+python src/providers.py launch --provider modal --target 60000
+python src/providers.py verify --state-file training_state.json --target 60000
+```
+
+See `src/gpu_pool.py` for the provider abstraction, `src/providers.py` for the
+control plane, and `agents-docs/training.md` for the full 400k runbook
+(including recovery from preemption, cancellation, and corrupt checkpoints).
 
 ## Development
 
@@ -151,6 +197,9 @@ pytest tests/test_train_chain.py -v    # Train chain & fallback
 
 # Fallback chain simulation (38 checks)
 python scripts/test_fallback_chain.py
+
+# End-to-end training pipeline (smoke + exact resume + ONNX + artifact package)
+python scripts/verify_training_pipeline.py
 
 # GPU hour estimation & calibration
 python scripts/benchmark_estimates.py
