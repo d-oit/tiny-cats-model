@@ -1,5 +1,43 @@
 # Training Guides
 
+## Issue #163 delivery status (WP1–WP9)
+
+All nine hardening work packages from
+[issue #163](https://github.com/d-oit/tiny-cats-model/issues/163) are merged:
+
+| WPs | PR | What landed |
+|-----|----|-------------|
+| WP1 + WP4 | #164 | Exact global-step resume, `training_state.json`, immutable experiment manifest |
+| WP2 + WP3 | #165 | Canonical checkpoint/artifact layout, HF Hub pool transport |
+| WP5 + WP6 | #166 | `providers.py` control plane (plan/gate/launch/verify), bounded resumable slices |
+| WP7–WP9 | #167 | Publication gates (`verify_checkpoint.py`), end-to-end pipeline verification, production 400k runbook |
+
+**Acceptance:** 17 of the 20 checklist items in issue #163 are verified by
+unit/integration tests and documentation; the quality gate is green on `main`
+(format, ruff, actionlint, yamllint, mypy, pytest, fallback-chain simulation,
+and `scripts/verify_training_pipeline.py` incl. quantized ONNX).
+
+**Production run (2026-09-25): the global 400k target is reached.** The
+scheduled pool slice reported a no-op at the target and `providers.py verify`
+returned `completed_steps=400000, reached_target=true, checkpoint_valid=true`
+(run `36160359407`); Modal executed the real GPU slices that got it there.
+The last two checklist items — generated evaluation/benchmark reports and a
+reproducible final artifact manifest — close with the completion chain, which
+packages the artifacts from the volume, verifies them (ONNX incl.), generates
+`evaluation_report.json` + `benchmark_report.json`, and publishes to the Hub.
+It no-ops training because the checkpoint is already at the target:
+
+```bash
+gh workflow run train.yml -f steps=400000 -f push_to_hub=true
+```
+
+A further training slice is started with the pool workflow (only needed for a
+*higher* target — an already-complete target is a successful no-op):
+
+```bash
+gh workflow run train-pool.yml -f steps=400000 -f slice_size=25000
+```
+
 ## Modal GPU Training (Class-based with @modal.enter())
 
 Training scripts now use the `@app.cls` + `@modal.enter()` pattern (ADR-025, ADR-057):

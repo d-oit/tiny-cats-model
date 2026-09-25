@@ -422,6 +422,12 @@ jobs:
           set -o pipefail
           # The trainer only builds artifacts/ when the global target was
           # reached (ADR-064); a missing package means the run lied, so fail.
+          # Pre-create the local destination: `modal volume get` of a *folder*
+          # into a non-existent path creates the destination and then fails
+          # with `Errno 21: Is a directory` (modal CLI 1.5.x regression,
+          # reproduced locally 2026-09-25). With an existing directory the
+          # remote folder's contents download into it as expected.
+          mkdir -p artifacts
           modal volume get dit-outputs artifacts ./artifacts 2>&1 | tee -a modal-training.log
           for f in artifacts/generator/model.pt \
                    artifacts/generator/model.onnx \

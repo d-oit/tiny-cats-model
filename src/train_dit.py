@@ -1249,7 +1249,15 @@ class DiTTrainer:
                 )
 
             logger.info("Training completed successfully")
-            return {"status": "completed", "output": output, "final_loss": final_loss}
+            # A no-op slice trains nothing, so a non-finite loss carries no
+            # information — report null instead of NaN/inf so the payload
+            # stays valid JSON for consumers (issue #163 reporting).
+            payload_loss = (
+                final_loss
+                if final_loss is not None and math.isfinite(final_loss)
+                else None
+            )
+            return {"status": "completed", "output": output, "final_loss": payload_loss}
 
         except Exception as e:
             logger.error(f"Training failed: {e}", exc_info=True)
@@ -2154,7 +2162,12 @@ def train_dit_local(
                 write_training_state(
                     state_path, manifest=manifest, completed_steps=step
                 )
-            best_loss = float("nan")
+            # Keep the early-stopping best restored above (the checkpoint's
+            # recorded validation loss) when there is one; only fall back to
+            # NaN when this invocation genuinely recorded nothing. Never `inf`
+            # — it formats badly and is as meaningless as NaN downstream.
+            if not math.isfinite(best_loss):
+                best_loss = float("nan")
 
         tracker.end_run()
 
