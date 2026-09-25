@@ -443,28 +443,40 @@ _MAX_PICKLE_BYTES = 64 * 1024**2
 _MAX_PICKLE_OPS = 1_000_000
 
 
-def _is_well_formed_pickle(payload: bytes) -> bool:
-    """Whether ``payload`` is a complete, parseable pickle opcode stream.
+# The container key every trainer checkpoint carries (``save_checkpoint``) and
+# the deep validator requires (``verify_checkpoint.py``). A pickle that never
+# names it is not one of our checkpoints, however well formed it is.
+_MODEL_STATE_KEY = "model_state_dict"
+
+
+def _is_torch_payload(payload: bytes) -> bool:
+    """Whether ``payload`` is a complete pickle naming a model state dict.
 
     ``pickletools.genops`` walks the opcodes *without executing any of them*,
     so an archive whose ``data.pkl`` merely *starts* like a pickle (a valid
     PROTO header followed by arbitrary bytes) is rejected, while a genuine
     ``torch.save`` payload — which parses through to its terminating STOP —
-    passes. No opcode is ever interpreted, so nothing in the artifact runs.
+    passes. The payload must also name ``model_state_dict``, which is the
+    structural contract of a trainer checkpoint; an arbitrary well-formed
+    pickle (e.g. ``{"notes": ...}``) is not one. No opcode is ever
+    interpreted, so nothing in the artifact executes.
     """
     if len(payload) > _MAX_PICKLE_BYTES:
         return False
     ops = 0
+    names_model_state = False
     try:
-        for _opcode, _argument, _position in pickletools.genops(io.BytesIO(payload)):
+        for _opcode, argument, _position in pickletools.genops(io.BytesIO(payload)):
             ops += 1
             if ops > _MAX_PICKLE_OPS:
                 return False
+            if isinstance(argument, str) and argument == _MODEL_STATE_KEY:
+                names_model_state = True
     except Exception:
         # Any malformed stream (unknown opcode, exhaustion before STOP, ...) is
         # simply not a checkpoint; the probe must never raise at the caller.
         return False
-    return ops > 0
+    return ops > 0 and names_model_state
 
 
 def _is_torch_checkpoint(path: Path) -> bool:
@@ -480,11 +492,12 @@ def _is_torch_checkpoint(path: Path) -> bool:
     ``weights_only=False`` would execute attacker-controlled code on the runner;
     deep load-time validation lives in ``verify_checkpoint.py``, which runs on
     artifacts the training job itself produced. Instead the payload is parsed
-    *structurally* (opcode walk via :func:`_is_well_formed_pickle`), which
-    rejects a CRC-clean archive holding arbitrary bytes — even one whose first
-    bytes imitate a pickle PROTO header — without interpreting any opcode. A
-    pickle that is well formed but semantically wrong is left to the deep
-    validator, not to code execution here.
+    *structurally* (opcode walk via :func:`_is_torch_payload`), which rejects a
+    CRC-clean archive holding arbitrary bytes — even one whose first bytes
+    imitate a pickle PROTO header — and one that is well formed but is not a
+    model checkpoint, all without interpreting any opcode. A pickle that is
+    structurally right but semantically wrong is left to the deep validator,
+    not to code execution here.
     """
     if not zipfile.is_zipfile(path):
         return False
@@ -510,7 +523,7 @@ def _is_torch_checkpoint(path: Path) -> bool:
                 return False
             with archive.open(member) as handle:
                 payload = handle.read(_MAX_PICKLE_BYTES + 1)
-            if not _is_well_formed_pickle(payload):
+            if not _is_torch_payload(payload):
                 return False
             return archive.testzip() is None
     except (zipfile.BadZipFile, OSError, RuntimeError):
@@ -548,34 +561,41 @@ def verify_checkpoint(
     state_target: int | None = None
     invalid_state_fields: list[str] = []
     if state is not None:
-        try:
-            completed = int(state["completed_steps"])
-        except (KeyError, TypeError, ValueError):
+        raw_completed = state.get("completed_steps")
+        # Strictly an integer: ``int()`` would silently truncate ``60000.9``
+        # (or read ``true`` as 1) and certify progress the run never made.
+        # ``bool`` is an ``int`` subclass, so it is excluded explicitly.
+        if isinstance(raw_completed, bool) or not isinstance(raw_completed, int):
             # A state document without a usable progress field is unusable, so
             # report it invalid rather than emitting ``state_valid: true``.
             completed = None
             state_valid = False
             invalid_state_fields.append("completed_steps")
+        else:
+            completed = raw_completed
         # Presence, not truthiness: `target_steps: 0` is a malformed global
         # target and must not be silently skipped by the verifier. The field is
         # validated even when the caller supplies --target, because the state
         # manifest's own target is part of the verification contract.
         raw_target = state.get("target_steps")
         if raw_target is not None:
-            try:
-                state_target = int(raw_target)
-            except (TypeError, ValueError):
-                # A readable but malformed state must fail verification, not
-                # abort the CLI with an unhandled exception (exit 2).
+            # Same strictness as completed_steps: a float/string/bool target is
+            # malformed, never a truncation candidate, so a readable but
+            # malformed state fails verification instead of aborting the CLI
+            # (exit 2) or quietly rounding the target down.
+            if isinstance(raw_target, bool) or not isinstance(raw_target, int):
                 state_target = None
                 state_valid = False
                 invalid_state_fields.append("target_steps")
             # A global target is strictly positive; a zero/negative one in the
             # manifest is malformed even when --target overrides it, so a
             # sufficient completed_steps cannot be certified as reached.
-            if state_target is not None and state_target <= 0:
+            elif raw_target <= 0:
+                state_target = raw_target
                 state_valid = False
                 invalid_state_fields.append("target_steps")
+            else:
+                state_target = raw_target
             if resolved_target is None:
                 resolved_target = state_target
         # Early stopping is a recorded terminal state, not a step count: only a

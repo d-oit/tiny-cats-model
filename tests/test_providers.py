@@ -420,6 +420,28 @@ class TestCheckpointVerification:
         assert not result.checkpoint_valid
         assert not result.reached_target
 
+    def test_pickle_without_a_model_state_dict_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        # A well-formed pickle that is not a trainer checkpoint (no
+        # `model_state_dict` container key) must not pass the artifact gate.
+        import pickle
+        import zipfile
+
+        path = tmp_path / "other.pt"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(
+                "archive/data.pkl", pickle.dumps({"notes": "hi"}, protocol=2)
+            )
+
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+
     def test_header_only_fake_archive_is_rejected(self, tmp_path: Path) -> None:
         # A valid PROTO header followed by arbitrary bytes is not a serialized
         # torch checkpoint: the opcode walk does not stop at the header.
@@ -443,15 +465,18 @@ class TestCheckpointVerification:
         # The probe decompresses the archive, so a crafted artifact must not be
         # able to exhaust the runner: bound both the member count and the
         # declared uncompressed size before testzip() runs.
+        import pickle
         import zipfile
 
         import providers
 
         path = tmp_path / "bounded.pt"
         with zipfile.ZipFile(path, "w") as archive:
-            # A minimal well-formed pickle (PROTO 2, NONE, STOP) so the bound
+            # A structurally real payload (it names the model state dict) so the
             # assertions below are about the bounds, not the payload.
-            archive.writestr("archive/data.pkl", b"\x80\x02N.")
+            archive.writestr(
+                "archive/data.pkl", pickle.dumps({"model_state_dict": None}, protocol=2)
+            )
             archive.writestr("archive/extra.bin", b"x" * 64)
 
         assert providers.verify_checkpoint(
@@ -474,6 +499,42 @@ class TestCheckpointVerification:
             checkpoint=str(path),
             target=60_000,
         ).checkpoint_valid
+
+    def test_non_integer_progress_is_invalid_not_truncated(
+        self, tmp_path: Path
+    ) -> None:
+        # ``int()`` would round 60000.9 down to the target and certify progress
+        # the run never made, and would read ``true`` as step 1.
+        checkpoint = str(self._checkpoint(tmp_path))
+        for field, value in (("target_steps", 60_000.9), ("completed_steps", 60_000.5)):
+            state_file = tmp_path / f"state-{field}.json"
+            document: dict[str, Any] = {
+                "completed_steps": 60_000,
+                "target_steps": 60_000,
+            }
+            document[field] = value
+            state_file.write_text(json.dumps(document))
+            result = verify_checkpoint(
+                state_file=str(state_file), checkpoint=checkpoint, target=60_000
+            )
+            assert not result.state_valid, field
+            assert f"malformed {field}" in result.reason
+            assert not result.reached_target
+
+    def test_boolean_progress_is_invalid(self, tmp_path: Path) -> None:
+        # ``bool`` is an ``int`` subclass, so it must be excluded explicitly.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps({"completed_steps": True, "target_steps": 60_000})
+        )
+        result = verify_checkpoint(
+            state_file=str(state_file),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=60_000,
+        )
+        assert not result.state_valid
+        assert not result.reached_target
+        assert "malformed completed_steps" in result.reason
 
     def test_malformed_target_in_state_is_invalid_not_a_crash(
         self, tmp_path: Path
