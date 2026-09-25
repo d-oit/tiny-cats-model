@@ -404,13 +404,30 @@ class TestCheckpointVerification:
 
     def test_data_pkl_that_is_not_a_pickle_is_rejected(self, tmp_path: Path) -> None:
         # A CRC-clean zip holding arbitrary bytes under `data.pkl` is not a
-        # checkpoint. The probe checks the pickle PROTO header without
-        # executing the payload, so this is rejected without unpickling.
+        # checkpoint. The probe walks the pickle opcodes without executing the
+        # payload, so this is rejected without unpickling.
         import zipfile
 
         path = tmp_path / "fake.pt"
         with zipfile.ZipFile(path, "w") as archive:
             archive.writestr("archive/data.pkl", b"not a pickle at all")
+
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+
+    def test_header_only_fake_archive_is_rejected(self, tmp_path: Path) -> None:
+        # A valid PROTO header followed by arbitrary bytes is not a serialized
+        # torch checkpoint: the opcode walk does not stop at the header.
+        import zipfile
+
+        path = tmp_path / "header-only.pt"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("archive/data.pkl", b"\x80\x02payload")
 
         result = verify_checkpoint(
             state_file=str(self._state(tmp_path, 60_000, 60_000)),
@@ -432,7 +449,9 @@ class TestCheckpointVerification:
 
         path = tmp_path / "bounded.pt"
         with zipfile.ZipFile(path, "w") as archive:
-            archive.writestr("archive/data.pkl", b"\x80\x02payload")
+            # A minimal well-formed pickle (PROTO 2, NONE, STOP) so the bound
+            # assertions below are about the bounds, not the payload.
+            archive.writestr("archive/data.pkl", b"\x80\x02N.")
             archive.writestr("archive/extra.bin", b"x" * 64)
 
         assert providers.verify_checkpoint(
