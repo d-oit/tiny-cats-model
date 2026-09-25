@@ -429,28 +429,63 @@ def _read_state(state_file: str | None) -> dict[str, Any] | None:
     return read_training_state(path)
 
 
+# Upper bounds for the archive probe. The real artifact is a ~530MB checkpoint
+# (~10^3 members), so these leave an order of magnitude of headroom while
+# keeping a crafted archive from exhausting the runner.
+_MAX_ARCHIVE_MEMBERS = 100_000
+_MAX_ARCHIVE_UNCOMPRESSED_BYTES = 8 * 1024**3
+# Length of the pickle PROTO header ``\x80`` + protocol number.
+_PICKLE_PROTO_LEN = 2
+_MAX_PICKLE_PROTOCOL = 5
+
+
 def _is_torch_checkpoint(path: Path) -> bool:
     """Whether ``path`` is a structurally valid torch checkpoint archive.
 
     ``zipfile.is_zipfile`` alone only proves ZIP framing, so an arbitrary ZIP
     would pass an "artifacts are valid" gate. A torch checkpoint is a ZIP that
     carries a pickled ``data.pkl`` payload, so require that entry with intact
-    member CRCs.
+    member CRCs, bounded in size and member count.
 
     This deliberately does *not* deserialize the payload. The verifier runs on
     a downloaded (mutable-volume / Hub) artifact and unpickling it with
     ``weights_only=False`` would execute attacker-controlled code on the runner;
     deep load-time validation lives in ``verify_checkpoint.py``, which runs on
-    artifacts the training job itself produced.
+    artifacts the training job itself produced. Instead the payload is
+    inspected only far enough to prove it *begins* like a pickle (the PROTO
+    opcode), which rejects a CRC-clean archive holding arbitrary bytes without
+    interpreting them. A pickle that starts correctly and is malformed deeper in
+    is left to the deep validator, not to code execution here.
     """
     if not zipfile.is_zipfile(path):
         return False
     try:
         with zipfile.ZipFile(path) as archive:
-            if not any(name.endswith("data.pkl") for name in archive.namelist()):
+            infos = archive.infolist()
+            # Bound the work *before* testzip() decompresses every member: the
+            # central directory's declared uncompressed sizes cap a crafted
+            # archive's expansion, and the member count caps the CPU/disk cost.
+            if len(infos) > _MAX_ARCHIVE_MEMBERS:
+                return False
+            if sum(info.file_size for info in infos) > (
+                _MAX_ARCHIVE_UNCOMPRESSED_BYTES
+            ):
+                return False
+            pickle_members = [
+                info for info in infos if info.filename.endswith("data.pkl")
+            ]
+            if not pickle_members:
+                return False
+            with archive.open(pickle_members[0]) as handle:
+                header = handle.read(_PICKLE_PROTO_LEN)
+            if len(header) < _PICKLE_PROTO_LEN or header[0] != 0x80:
+                return False
+            if header[1] > _MAX_PICKLE_PROTOCOL:
                 return False
             return archive.testzip() is None
-    except (zipfile.BadZipFile, OSError):
+    except (zipfile.BadZipFile, OSError, RuntimeError):
+        # RuntimeError covers the encrypted/unsupported-compression paths that
+        # zipfile raises while reading a crafted member header.
         return False
 
 

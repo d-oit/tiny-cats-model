@@ -402,6 +402,60 @@ class TestCheckpointVerification:
         assert not result.checkpoint_valid
         assert not result.reached_target
 
+    def test_data_pkl_that_is_not_a_pickle_is_rejected(self, tmp_path: Path) -> None:
+        # A CRC-clean zip holding arbitrary bytes under `data.pkl` is not a
+        # checkpoint. The probe checks the pickle PROTO header without
+        # executing the payload, so this is rejected without unpickling.
+        import zipfile
+
+        path = tmp_path / "fake.pt"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("archive/data.pkl", b"not a pickle at all")
+
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+
+    def test_archive_validation_is_bounded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The probe decompresses the archive, so a crafted artifact must not be
+        # able to exhaust the runner: bound both the member count and the
+        # declared uncompressed size before testzip() runs.
+        import zipfile
+
+        import providers
+
+        path = tmp_path / "bounded.pt"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("archive/data.pkl", b"\x80\x02payload")
+            archive.writestr("archive/extra.bin", b"x" * 64)
+
+        assert providers.verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        ).checkpoint_valid
+
+        monkeypatch.setattr(providers, "_MAX_ARCHIVE_MEMBERS", 1)
+        assert not providers.verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        ).checkpoint_valid
+
+        monkeypatch.setattr(providers, "_MAX_ARCHIVE_MEMBERS", 100_000)
+        monkeypatch.setattr(providers, "_MAX_ARCHIVE_UNCOMPRESSED_BYTES", 8)
+        assert not providers.verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        ).checkpoint_valid
+
     def test_malformed_target_in_state_is_invalid_not_a_crash(
         self, tmp_path: Path
     ) -> None:
