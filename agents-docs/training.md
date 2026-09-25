@@ -31,6 +31,18 @@ It no-ops training because the checkpoint is already at the target:
 gh workflow run train.yml -f steps=400000 -f push_to_hub=true
 ```
 
+**Completion chain result (run `36176647013`, 2026-09-25): all steps green.**
+The package verified (`model.pt` @ step 400,000 + ONNX + quantized ONNX via
+`verify_checkpoint.py --require-onnx`), both reports were generated and
+published to [`d4oit/tiny-cats-model`](https://huggingface.co/d4oit/tiny-cats-model)
+(`evaluation/evaluation_report.json`, `evaluation/benchmark_report.json`), and
+the Hub publication was verified. Benchmark (CPU, PyTorch):
+
+| Metric | batch=1 | batch=4 | batch=8 |
+|--------|---------|---------|---------|
+| Latency p50 / p95 / p99 | 34.67 / 35.60 / 42.95 ms | — | — |
+| Throughput | 28.1 img/s | 43.7 img/s | 49.4 img/s |
+
 A further training slice is started with the pool workflow (only needed for a
 *higher* target — an already-complete target is a successful no-op):
 

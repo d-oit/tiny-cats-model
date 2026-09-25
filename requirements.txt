@@ -3,7 +3,10 @@ torchvision>=0.15.0
 pillow>=10.0.0
 requests>=2.34.2
 tqdm>=4.65.0
-modal>=1.5.5
+# Pinned: the CLI's `volume get` behavior changed across 1.5.x (Errno 21 on a
+# fresh destination, folder nesting into an existing one). 1.5.5 is the version
+# the verified 400k completion chain ran green on; dependabot bumps it weekly.
+modal==1.5.5
 ruff==0.15.9  # Keep in lockstep with CI (ci.yml) + pre-commit; dependabot ignores it
 pytest>=7.4.0
 onnxruntime>=1.20.0,<1.24  # Upper bound blocks dependabot bumping to non-existent 1.24.x; drop when 1.24+ GA ships

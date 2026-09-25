@@ -84,7 +84,6 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
-          pip install modal
           modal volume get cats-model-outputs cats_classifier.onnx \
             ./cats_classifier.onnx || echo "No classifier ONNX found"
           modal volume get cats-model-outputs best_cats_model.pt \
@@ -96,7 +95,6 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
-          pip install modal
           modal volume get dit-outputs generator.onnx \
             ./generator.onnx || echo "No generator ONNX found"
           modal volume get dit-outputs artifacts/generator/model.pt \

@@ -191,7 +191,6 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install modal
           pip install -r requirements.txt
 
       - name: Ensure Modal HuggingFace secret
