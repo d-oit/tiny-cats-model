@@ -491,6 +491,7 @@ def save_checkpoint(
     target_steps: int | None = None,
     manifest: dict[str, Any] | None = None,
     seed: int | None = None,
+    converged: bool = False,
 ) -> None:
     """Save training checkpoint with EMA weights.
 
@@ -514,6 +515,8 @@ def save_checkpoint(
         manifest: Immutable experiment manifest; embedded in the checkpoint
             and mirrored into ``training_state.json`` beside it.
         seed: Training seed recorded for reproducibility.
+        converged: Early stopping ended this run, so it is finished for
+            ``target_steps`` without having trained that many steps.
     """
     from training_state import (
         TRAINING_STATE_FILENAME,
@@ -568,6 +571,7 @@ def save_checkpoint(
             path.parent / TRAINING_STATE_FILENAME,
             manifest=manifest,
             completed_steps=step,
+            converged=converged,
         )
 
     if is_best:
@@ -1134,21 +1138,39 @@ class DiTTrainer:
                 Path(output).parent / TRAINING_STATE_FILENAME
             )
             target_steps: int | None = None
+            pool_completed: int | None = None
+            # A converged run is finished for its target even though it
+            # trained fewer steps than requested: early stopping is the
+            # documented cost saver, so it still publishes. The step count in
+            # the state document stays honest, so this is an explicit
+            # allowance rather than a bumped counter (issue #163).
+            converged_run = bool(pool_state and pool_state.get("converged"))
             if (
                 pool_state is not None
                 and "completed_steps" in pool_state
                 and "target_steps" in pool_state
-                and int(pool_state["completed_steps"])
-                >= int(pool_state["target_steps"])
+                and (
+                    converged_run
+                    or int(pool_state["completed_steps"])
+                    >= int(pool_state["target_steps"])
+                )
             ):
                 target_steps = int(pool_state["target_steps"])
+                pool_completed = int(pool_state["completed_steps"])
             if target_steps is None:
                 logger.info(
                     "Global target not reached (or training state missing) — "
                     "skipping final artifact package for this slice."
                 )
             else:
-                logger.info("Global target reached — building final artifacts...")
+                if converged_run:
+                    logger.info(
+                        "Global target treated as reached via early stopping "
+                        f"(completed {pool_completed} of "
+                        f"{target_steps}) — building final artifacts..."
+                    )
+                else:
+                    logger.info("Global target reached — building final artifacts...")
                 try:
                     from artifacts import export_paths, package_final_artifacts
                     from export_dit_onnx import export_generator_onnx, load_model
@@ -1644,17 +1666,26 @@ def train_dit_local(
             group["lr"] = resumed_lr
         scheduler._last_lr = [resumed_lr for _ in optimizer.param_groups]
 
-    # Training state (best_loss/patience are restored so early stopping works
-    # across hub-resumed slices instead of restarting on every resume)
+    # Training state. `best_loss` is restored so "improved" is still measured
+    # against the true global best across hub-resumed slices, but the patience
+    # *counter* is deliberately not inherited. A run that stopped by early
+    # stopping persists a saturated counter (patience == the limit), so a
+    # resume that restored it tripped `patience_counter >= limit` on its very
+    # first evaluation and stopped after a single window: every pool slice
+    # after the first trained ~500 of its 25,000 steps and still reported the
+    # global target as reached (issue #163). Each slice now gets its own
+    # plateau window while still being judged against the global best.
     best_loss = float("inf")
     restored_best_loss = resume_state.get("best_loss")
     if restored_best_loss is not None and math.isfinite(float(restored_best_loss)):
         best_loss = float(restored_best_loss)
-    patience_counter = int(resume_state.get("patience_counter") or 0)
+    inherited_patience = int(resume_state.get("patience_counter") or 0)
+    patience_counter = 0
     if resume and math.isfinite(best_loss):
         logger.info(
-            f"Restored early-stopping state: best_loss={best_loss:.6e}, "
-            f"patience={patience_counter}"
+            f"Restored early-stopping state: best_loss={best_loss:.6e} "
+            f"(patience window reset for this slice, inherited "
+            f"counter={inherited_patience})"
         )
     shutdown_requested = False
 
@@ -1673,6 +1704,7 @@ def train_dit_local(
         is_best: bool = False,
         val_loss: float | None = None,
         val_loss_ema: float | None = None,
+        converged: bool = False,
     ) -> None:
         """Save the current step together with the early-stopping state."""
         save_checkpoint(
@@ -1693,6 +1725,7 @@ def train_dit_local(
             target_steps=steps,
             manifest=manifest,
             seed=seed,
+            converged=converged,
         )
 
     try:
@@ -1710,6 +1743,10 @@ def train_dit_local(
         last_val_loss_ema: float | None = None
         stop_training = False
         saved_on_shutdown = False
+        # Set when early stopping ends this run. The final save below rewrites
+        # training_state.json, so the flag has to survive it or a converged run
+        # would be persisted as an ordinary short one.
+        converged_early = False
 
         while step < steps and not stop_training:
             epoch += 1
@@ -1960,14 +1997,31 @@ def train_dit_local(
                                 best_loss,
                                 val_loss=last_val_loss,
                                 val_loss_ema=last_val_loss_ema,
+                                converged=True,
                             )
                             persist(
                                 ema_output,
                                 best_loss,
                                 val_loss=last_val_loss,
                                 val_loss_ema=last_val_loss_ema,
+                                converged=True,
                             )
-                            step = steps  # Break outer loop
+                            # Stop via the flag rather than `step = steps`: the
+                            # latter stamped the *target* onto a checkpoint that
+                            # never trained that far, so training_state.json
+                            # claimed completed_steps == target_steps and every
+                            # downstream gate (providers verify, artifacts
+                            # packaging) certified progress that never
+                            # happened. The converged flag records the honest
+                            # step and marks the run finished for its target
+                            # (issue #163).
+                            logger.info(
+                                f"Converged at step {step:,} before target "
+                                f"{steps:,} — recording completed_steps={step:,}, "
+                                "converged=true"
+                            )
+                            converged_early = True
+                            stop_training = True
                             break
 
                     # Generate samples
@@ -2063,12 +2117,14 @@ def train_dit_local(
                     best_loss,
                     val_loss=last_val_loss,
                     val_loss_ema=last_val_loss_ema,
+                    converged=converged_early,
                 )
                 persist(
                     ema_output,
                     best_loss,
                     val_loss=last_val_loss,
                     val_loss_ema=last_val_loss_ema,
+                    converged=converged_early,
                 )
 
             log_gpu_memory(logger, "Final | ")

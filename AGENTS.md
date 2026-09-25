@@ -60,6 +60,10 @@ python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.y
 > manifest differs fails clearly unless `--allow-experiment-mismatch` is
 > passed. Corrupt checkpoints quarantine to `*.corrupt` (ADR-058);
 > architecture-incompatible ones are rejected, never silently restarted.
+> Early stopping records `converged: true` alongside the step it *actually*
+> reached, so `completed_steps` is never inflated to the target; a converged
+> run still counts as finished for its target (publication proceeds), while a
+> resume from it continues toward a higher target.
 
 > **Modal paths:** use absolute container paths (`/data/cats`, `/outputs/...`) — relative
 > `data/cats` only exists on the local machine, and Modal 1.0+ requires `--data-dir`
@@ -70,6 +74,13 @@ python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.y
 ### Early Stopping
 
 Training automatically stops when loss plateaus for 3 consecutive evaluations (every 10k steps). This typically occurs at 50k-80k steps, saving 60-80% cost.
+
+A stopped run is written as `converged: true` plus the step it actually
+reached — `completed_steps` is never stamped with the target, so
+`providers.py verify` and the artifact gates see real progress. Resuming a
+converged checkpoint starts a **fresh** patience window (the counter is not
+inherited — inheriting a saturated one made every pool slice after the first
+stop after ~500 steps).
 
 ## GitHub Actions
 

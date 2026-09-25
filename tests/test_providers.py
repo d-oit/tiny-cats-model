@@ -374,6 +374,7 @@ class TestCheckpointVerification:
         assert "reached=false" in text
         assert "checkpoint_valid=true" in text
         assert "completed_steps=45000" in text
+        assert "converged=false" in text
         assert capsys.readouterr().out
 
     def test_omitted_checkpoint_is_not_verified(self, tmp_path: Path) -> None:
@@ -529,6 +530,91 @@ class TestCheckpointVerification:
         assert not result.checkpoint_valid
         assert not result.reached_target
 
+    def test_converged_run_short_of_target_is_accepted(self, tmp_path: Path) -> None:
+        # Early stopping is a recorded terminal state: the run is finished for
+        # its target even though it trained fewer steps, and the step count
+        # stays honest instead of being stamped with the target.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "experiment_id": "dit-breed-conditioned-v4",
+                    "completed_steps": 68_000,
+                    "target_steps": 75_000,
+                    "converged": True,
+                }
+            )
+        )
+        checkpoint = str(self._checkpoint(tmp_path))
+        result = verify_checkpoint(
+            state_file=str(state_file), checkpoint=checkpoint, target=75_000
+        )
+        assert result.converged
+        assert result.state_valid
+        assert result.completed_steps == 68_000
+        assert result.reached_target
+        assert "converged early at step 68000 of target 75000" in result.reason
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(state_file),
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "75000",
+                ]
+            )
+            == VERIFY_OK
+        )
+
+    def test_non_boolean_converged_flag_is_invalid(self, tmp_path: Path) -> None:
+        # A stringified ``"false"`` is truthy in Python, so only a real boolean
+        # may claim that the run converged early.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "completed_steps": 68_000,
+                    "target_steps": 75_000,
+                    "converged": "true",
+                }
+            )
+        )
+        result = verify_checkpoint(
+            state_file=str(state_file),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=75_000,
+        )
+        assert not result.state_valid
+        assert not result.converged
+        assert not result.reached_target
+        assert "malformed converged" in result.reason
+
+    def test_converged_cannot_satisfy_a_non_positive_target(
+        self, tmp_path: Path
+    ) -> None:
+        # Convergence must not become a bypass for the positive-target rule.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "completed_steps": 68_000,
+                    "target_steps": 0,
+                    "converged": True,
+                }
+            )
+        )
+        result = verify_checkpoint(
+            state_file=str(state_file),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=0,
+        )
+        assert result.converged
+        assert not result.reached_target
+        assert "target must be positive" in result.reason
+
     def test_malformed_state_target_is_invalid_even_with_override(
         self, tmp_path: Path
     ) -> None:
@@ -629,6 +715,15 @@ class TestProviderReport:
         expected: str,
     ) -> None:
         assert resolve_exit_reason(outcome, completed, target) == expected
+
+    def test_converged_run_reports_completed_not_partial(self) -> None:
+        # A converged run is finished for its target even though the step count
+        # stayed short, so a provider report must not label it partial.
+        assert (
+            resolve_exit_reason("success", 68_000, 75_000, converged=True)
+            == "completed"
+        )
+        assert resolve_exit_reason("success", 68_000, 75_000) == "partial"
 
     def test_report_cli_writes_file_and_status_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture

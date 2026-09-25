@@ -378,25 +378,37 @@ class CheckpointVerification:
     # malformed ``target_steps``). A verifier must report such a document as
     # invalid rather than crashing with an unhandled ``ValueError``.
     state_valid: bool = True
+    # True when early stopping ended the run: the checkpoint is this
+    # experiment's finished model even though ``completed_steps`` stopped short
+    # of ``target_steps``. Recorded explicitly by the trainer instead of
+    # stamping the target onto the step count (issue #163).
+    converged: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 def resolve_exit_reason(
-    outcome: str, completed_steps: int | None, target_steps: int | None
+    outcome: str,
+    completed_steps: int | None,
+    target_steps: int | None,
+    *,
+    converged: bool = False,
 ) -> str:
     """Map a session outcome to a WP5 exit reason.
 
     - cancelled → interrupted (a usable checkpoint must survive; WP6.8)
     - failure   → failed
-    - success   → completed when the target was reached, otherwise partial
-      (including the odd case of success with no readable training state).
+    - success   → completed when the target was reached (or the run converged
+      early and is finished for it), otherwise partial (including the odd case
+      of success with no readable training state).
     """
     if outcome == "cancelled":
         return "interrupted"
     if outcome != "success":
         return "failed"
+    if converged:
+        return "completed"
     if (
         completed_steps is not None
         and target_steps is not None
@@ -467,6 +479,7 @@ def verify_checkpoint(
     resolved_target = target
     experiment_id: str | None = None
     state_valid = True
+    converged = False
     invalid_state_fields: list[str] = []
     if state is not None:
         try:
@@ -499,6 +512,15 @@ def verify_checkpoint(
                 invalid_state_fields.append("target_steps")
             if resolved_target is None:
                 resolved_target = state_target
+        # Early stopping is a recorded terminal state, not a step count: only a
+        # real boolean counts, so a stringified "false" cannot claim the run
+        # converged early.
+        raw_converged = state.get("converged", False)
+        if not isinstance(raw_converged, bool):
+            state_valid = False
+            invalid_state_fields.append("converged")
+        else:
+            converged = raw_converged
         experiment_id = state.get("experiment_id")
 
     # An omitted checkpoint is not verified: the verifier validates provider
@@ -532,16 +554,34 @@ def verify_checkpoint(
     elif resolved_target is not None and resolved_target <= 0:
         reasons.append(f"target must be positive, got {resolved_target}")
 
+    # A converged run is finished for its target even though it stopped short:
+    # early stopping is a deliberate terminal state the trainer records. It only
+    # satisfies a *positive* target, exactly like the completed_steps
+    # comparison, so a suspicious manifest cannot use it to escape validation.
+    converged_satisfies_target = bool(
+        converged and resolved_target is not None and resolved_target > 0
+    )
+
     reached_target = bool(
         checkpoint_valid
         and state_valid
-        and completed is not None
-        and resolved_target is not None
-        and resolved_target > 0
-        and completed >= resolved_target
+        and (
+            converged_satisfies_target
+            or (
+                completed is not None
+                and resolved_target is not None
+                and resolved_target > 0
+                and completed >= resolved_target
+            )
+        )
     )
     if not reasons:
-        if resolved_target is None:
+        if converged_satisfies_target:
+            reasons.append(
+                f"converged early at step {completed} of target "
+                f"{resolved_target} (early stopping ended the run)"
+            )
+        elif resolved_target is None:
             reasons.append("no target supplied; progress not evaluated")
         elif reached_target:
             reasons.append(f"completed {completed} >= target {resolved_target}")
@@ -559,6 +599,7 @@ def verify_checkpoint(
         experiment_id=experiment_id,
         reason="; ".join(reasons),
         state_valid=state_valid,
+        converged=converged,
     )
 
 
@@ -654,6 +695,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
                 f"checkpoint_valid={'true' if result.checkpoint_valid else 'false'}\n"
             )
             handle.write(f"completed_steps={completed}\n")
+            handle.write(f"converged={'true' if result.converged else 'false'}\n")
     if result.target_steps is not None and result.target_steps <= 0:
         print(
             f"error: target must be positive, got {result.target_steps}",
@@ -675,7 +717,12 @@ def _cmd_report(args: argparse.Namespace) -> int:
         if state and state.get("target_steps")
         else args.target
     )
-    exit_reason = resolve_exit_reason(args.outcome, completed, target)
+    exit_reason = resolve_exit_reason(
+        args.outcome,
+        completed,
+        target,
+        converged=bool(state and state.get("converged")),
+    )
 
     if args.gpu_model:
         gpu_model = args.gpu_model
@@ -764,7 +811,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument(
         "--github-output",
         default=None,
-        help="append reached/checkpoint_valid/completed_steps to $GITHUB_OUTPUT",
+        help="append reached/checkpoint_valid/completed_steps/converged to $GITHUB_OUTPUT",
     )
     verify.set_defaults(func=_cmd_verify)
 

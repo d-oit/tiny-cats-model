@@ -238,6 +238,68 @@ class TestCheckpointState:
         for name, param in tiny_model.state_dict().items():
             assert torch.equal(param, fresh_model.state_dict()[name])
 
+    def test_converged_records_the_real_step_not_the_target(
+        self, tmp_path: Path, tiny_model: TinyDiT
+    ) -> None:
+        """Early stopping must not stamp the global target onto the step count.
+
+        The loop used to do ``step = steps`` on the early-stop path, so a
+        checkpoint that trained 68k steps claimed ``completed_steps == 75k`` —
+        and every downstream gate (``providers.py verify``, artifact
+        packaging) then certified progress that never happened (issue #163).
+        Convergence is now a separate, explicit field.
+        """
+        from training_state import (
+            TRAINING_STATE_FILENAME,
+            build_manifest,
+            read_training_state,
+        )
+
+        manifest = build_manifest(
+            experiment_id="exp-a",
+            data_dir="data/does-not-exist-in-tests",
+            image_size=8,
+            patch_size=4,
+            embed_dim=16,
+            depth=1,
+            num_heads=2,
+            num_classes=3,
+            batch_size=8,
+            gradient_accumulation_steps=1,
+            learning_rate=5e-5,
+            warmup_steps=2000,
+            augmentation_level="full",
+            seed=42,
+            target_steps=75_000,
+        )
+        path = tmp_path / "dit_model.pt"
+        optimizer = AdamW(tiny_model.parameters(), lr=1e-3)
+        ema = EMA(beta=0.9)
+        ema.init(tiny_model)
+
+        save_checkpoint(
+            model=tiny_model,
+            optimizer=optimizer,
+            ema=ema,
+            step=68_000,
+            loss=0.5922666,
+            path=path,
+            logger=logging.getLogger("test_train_dit"),
+            steps=75_000,
+            warmup_steps=2000,
+            target_steps=75_000,
+            manifest=manifest,
+            converged=True,
+        )
+
+        state = read_training_state(tmp_path / TRAINING_STATE_FILENAME)
+        assert state is not None
+        assert state["converged"] is True
+        assert state["completed_steps"] == 68_000
+        assert state["completed_steps"] < state["target_steps"]
+        saved = torch.load(path, map_location="cpu", weights_only=False)
+        assert saved["step"] == 68_000
+
 
 class TestTrainValSplit:
     """The generator must have a held-out, augmentation-free validation set."""
