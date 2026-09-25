@@ -504,6 +504,36 @@ class TestCheckpointVerification:
         assert not result.checkpoint_valid
         assert not result.reached_target
 
+    def test_malformed_state_target_is_invalid_even_with_override(
+        self, tmp_path: Path
+    ) -> None:
+        # The production gate always passes --target, so the state manifest's
+        # own target must still be validated.
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(
+            json.dumps({"completed_steps": 60_000, "target_steps": "bad"})
+        )
+        checkpoint = str(self._checkpoint(tmp_path))
+        result = verify_checkpoint(
+            state_file=str(state_file), checkpoint=checkpoint, target=60_000
+        )
+        assert not result.state_valid
+        assert not result.reached_target
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(state_file),
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "60000",
+                ]
+            )
+            == VERIFY_INVALID
+        )
+
 
 class TestProviderReport:
     """WP5: every session reports the 9 required fields, machine-readably."""

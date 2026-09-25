@@ -473,17 +473,21 @@ def verify_checkpoint(
             state_valid = False
             invalid_state_fields.append("completed_steps")
         # Presence, not truthiness: `target_steps: 0` is a malformed global
-        # target and must not be silently skipped by the verifier.
+        # target and must not be silently skipped by the verifier. The field is
+        # validated even when the caller supplies --target, because the state
+        # manifest's own target is part of the verification contract.
         raw_target = state.get("target_steps")
-        if resolved_target is None and raw_target is not None:
+        if raw_target is not None:
             try:
-                resolved_target = int(raw_target)
+                state_target = int(raw_target)
             except (TypeError, ValueError):
                 # A readable but malformed state must fail verification, not
                 # abort the CLI with an unhandled exception (exit 2).
-                resolved_target = None
+                state_target = None
                 state_valid = False
                 invalid_state_fields.append("target_steps")
+            if resolved_target is None:
+                resolved_target = state_target
         experiment_id = state.get("experiment_id")
 
     # An omitted checkpoint is not verified: the verifier validates provider
@@ -519,6 +523,7 @@ def verify_checkpoint(
 
     reached_target = bool(
         checkpoint_valid
+        and state_valid
         and completed is not None
         and resolved_target is not None
         and resolved_target > 0
