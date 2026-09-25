@@ -502,11 +502,19 @@ def verify_checkpoint(
         reasons.append(
             "training state has a malformed " + " and ".join(invalid_state_fields)
         )
+    # A global target must be positive, matching parse_slice_targets and
+    # build_launch_command; otherwise `--target -1` would certify any
+    # nonnegative checkpoint as complete.
+    if target is not None and target <= 0:
+        reasons.append(f"target must be positive, got {target}")
+    elif resolved_target is not None and resolved_target <= 0:
+        reasons.append(f"target must be positive, got {resolved_target}")
 
     reached_target = bool(
         checkpoint_valid
         and completed is not None
         and resolved_target is not None
+        and resolved_target > 0
         and completed >= resolved_target
     )
     if not reasons:
@@ -604,6 +612,9 @@ def _cmd_launch(args: argparse.Namespace) -> int:
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
+    if args.target is not None and args.target <= 0:
+        print(f"error: target must be positive, got {args.target}", file=sys.stderr)
+        return VERIFY_INVALID
     result = verify_checkpoint(
         state_file=args.state_file,
         checkpoint=args.checkpoint,

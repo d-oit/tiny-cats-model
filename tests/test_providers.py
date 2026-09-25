@@ -442,6 +442,32 @@ class TestCheckpointVerification:
         assert not result.reached_target
         assert "malformed completed_steps" in result.reason
 
+    def test_non_positive_target_is_rejected(self, tmp_path: Path) -> None:
+        checkpoint = str(self._checkpoint(tmp_path))
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 0, 60_000)),
+            checkpoint=checkpoint,
+            target=-1,
+        )
+        assert not result.reached_target
+        assert "target must be positive" in result.reason
+
+        # The CLI must not report OK for a nonsensical global target.
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(self._state(tmp_path, 0, 60_000)),
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "-1",
+                ]
+            )
+            == VERIFY_INVALID
+        )
+
 
 class TestProviderReport:
     """WP5: every session reports the 9 required fields, machine-readably."""
