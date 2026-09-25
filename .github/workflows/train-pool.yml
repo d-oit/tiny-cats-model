@@ -31,7 +31,10 @@ on:
       steps:
         description: "Global training target (slices resume toward this, never additive)"
         required: false
-        default: "400000"
+        # 400k was reached and released on 2026-09-25 (tag checkpoint-400k);
+        # the pool now trains toward the next milestone. Keep this fallback
+        # below in sync — scheduled runs read it, not `inputs.steps`.
+        default: "600000"
         type: string
       slice_size:
         description: "Max steps per provider session (bounded slice; fits the 6h schedule window)"
@@ -120,7 +123,7 @@ jobs:
             EXTRA+=(--remote-completed --token "$HF_TOKEN")
           fi
           MATRIX="$(python src/providers.py plan \
-            --steps ${{ github.event.inputs.steps || '400000' }} \
+            --steps ${{ github.event.inputs.steps || '600000' }} \
             --slice-size ${{ github.event.inputs.slice_size || '25000' }} \
             --experiment-id dit-breed-conditioned-v4 \
             --hub-repo d4oit/tiny-cats-model \
