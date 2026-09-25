@@ -68,6 +68,11 @@ on:
         required: false
         default: "5000"
         type: string
+      allow_experiment_mismatch:
+        description: "Explicit one-off migration: resume a checkpoint whose manifest differs (issue #163). Leave false."
+        required: false
+        default: false
+        type: boolean
   schedule:
     # Run pool training every 6 hours to maximize free GPU usage.
     # On schedule, defaults to modal provider (first in chain).
@@ -224,6 +229,10 @@ jobs:
              [ "${{ github.event.inputs.push_to_hub }}" != "true" ]; then
             HUBFLAGS+=(--no-hub-push)
           fi
+          MIGRATEFLAGS=()
+          if [ "${{ github.event.inputs.allow_experiment_mismatch }}" = "true" ]; then
+            MIGRATEFLAGS+=(--allow-experiment-mismatch)
+          fi
           CMD="$(python src/providers.py launch \
             --provider modal \
             --target ${{ matrix.target }} \
@@ -232,7 +241,7 @@ jobs:
             --save-interval 500 \
             --hub-push-interval ${{ github.event.inputs.hub_push_interval || '5000' }} \
             --experiment-id dit-breed-conditioned-v4 \
-            "${HUBFLAGS[@]}")"
+            "${HUBFLAGS[@]}" "${MIGRATEFLAGS[@]}")"
           echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           echo "Launch: $CMD"
           eval "$CMD" 2>&1 | tee modal-training.log

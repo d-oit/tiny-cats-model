@@ -201,6 +201,30 @@ class TestLaunchCommand:
         assert "--warmup-steps 2000" in out
         assert "--early-stopping-patience 15" in out
 
+    def test_allow_experiment_mismatch_is_opt_in(self) -> None:
+        # The migration override must never be emitted by a default launch.
+        assert "--allow-experiment-mismatch" not in build_launch_command(
+            "modal", 60_000
+        )
+        migrated = build_launch_command("modal", 60_000, allow_experiment_mismatch=True)
+        assert "--allow-experiment-mismatch" in migrated
+
+    def test_launch_cli_forwards_allow_experiment_mismatch(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        code = main(
+            [
+                "launch",
+                "--provider",
+                "modal",
+                "--target",
+                "60000",
+                "--allow-experiment-mismatch",
+            ]
+        )
+        assert code == 0
+        assert "--allow-experiment-mismatch" in capsys.readouterr().out
+
 
 class TestCheckpointVerification:
     """WP7: publication is gated on verified provider artifacts."""

@@ -72,6 +72,11 @@ on:
         required: false
         default: true
         type: boolean
+      allow_experiment_mismatch:
+        description: "Explicit one-off migration: resume a checkpoint whose manifest differs (issue #163). Leave false."
+        required: false
+        default: false
+        type: boolean
       push_to_hub:
         description: "Publish the verified final package to HF Hub when the target is reached"
         required: false
@@ -335,6 +340,10 @@ jobs:
           if [ "${{ inputs.push_to_hub }}" != "true" ]; then
             HUBFLAGS+=(--no-hub-push)
           fi
+          MIGRATEFLAGS=()
+          if [ "${{ inputs.allow_experiment_mismatch }}" = "true" ]; then
+            MIGRATEFLAGS+=(--allow-experiment-mismatch)
+          fi
           CMD="$(python src/providers.py launch \
             --provider modal \
             --target ${{ inputs.steps }} \
@@ -345,7 +354,7 @@ jobs:
             --warmup-steps ${{ inputs.warmup_steps }} \
             --early-stopping-patience 15 \
             --experiment-id dit-breed-conditioned-v4 \
-            "${HUBFLAGS[@]}")"
+            "${HUBFLAGS[@]}" "${MIGRATEFLAGS[@]}")"
           echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           echo "Launch: $CMD"
           eval "$CMD" 2>&1 | tee modal-training.log

@@ -224,6 +224,7 @@ def build_launch_command(
     warmup_steps: str | None = None,
     gradient_accumulation_steps: str | None = None,
     early_stopping_patience: str | None = None,
+    allow_experiment_mismatch: bool = False,
     experiment_id: str = DEFAULT_EXPERIMENT_ID,
 ) -> list[str]:
     """Build the exact command that launches one bounded provider session.
@@ -276,6 +277,10 @@ def build_launch_command(
         command.append("--hub-resume")
     if no_hub_push:
         command.append("--no-hub-push")
+    # Explicit, opt-in migration (issue #163): resume a checkpoint whose
+    # manifest differs (e.g. a stored warmup_steps). Never emitted by default.
+    if allow_experiment_mismatch:
+        command.append("--allow-experiment-mismatch")
     return command
 
 
@@ -547,6 +552,7 @@ def _cmd_launch(args: argparse.Namespace) -> int:
         warmup_steps=args.warmup_steps,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         early_stopping_patience=args.early_stopping_patience,
+        allow_experiment_mismatch=args.allow_experiment_mismatch,
         experiment_id=args.experiment_id,
     )
     print(shlex.join(command))
@@ -657,6 +663,11 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument("--warmup-steps", default=None)
     launch.add_argument("--gradient-accumulation-steps", default=None)
     launch.add_argument("--early-stopping-patience", default=None)
+    launch.add_argument(
+        "--allow-experiment-mismatch",
+        action="store_true",
+        help="explicit one-off migration: resume a checkpoint whose manifest differs",
+    )
     launch.add_argument("--experiment-id", default=DEFAULT_EXPERIMENT_ID)
     launch.set_defaults(func=_cmd_launch)
 
