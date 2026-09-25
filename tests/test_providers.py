@@ -376,6 +376,58 @@ class TestCheckpointVerification:
         assert "completed_steps=45000" in text
         assert capsys.readouterr().out
 
+    def test_omitted_checkpoint_is_not_verified(self, tmp_path: Path) -> None:
+        # A readable state at the target must not pass the artifact gate when
+        # no checkpoint was supplied: the verifier validates artifacts.
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+        assert "no checkpoint supplied" in result.reason
+
+    def test_arbitrary_zip_is_not_a_checkpoint(self, tmp_path: Path) -> None:
+        import zipfile
+
+        path = tmp_path / "not-torch.pt"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("readme.txt", "not a torch payload")
+        result = verify_checkpoint(
+            state_file=str(self._state(tmp_path, 60_000, 60_000)),
+            checkpoint=str(path),
+            target=60_000,
+        )
+        assert not result.checkpoint_valid
+        assert not result.reached_target
+
+    def test_malformed_target_in_state_is_invalid_not_a_crash(
+        self, tmp_path: Path
+    ) -> None:
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(json.dumps({"completed_steps": 5, "target_steps": "bad"}))
+        result = verify_checkpoint(
+            state_file=str(state_file),
+            checkpoint=str(self._checkpoint(tmp_path)),
+        )
+        assert not result.reached_target
+        assert not result.state_valid
+        assert "malformed target_steps" in result.reason
+
+        # The CLI must report the documented invalid result, not raise.
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(state_file),
+                    "--checkpoint",
+                    str(self._checkpoint(tmp_path)),
+                ]
+            )
+            == VERIFY_INVALID
+        )
+
 
 class TestProviderReport:
     """WP5: every session reports the 9 required fields, machine-readably."""

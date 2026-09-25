@@ -18,7 +18,8 @@ CLI (used by .github/workflows/train.yml and train-pool.yml):
     python src/providers.py plan   --steps 400000 --slice-size 60000
     python src/providers.py gate   --provider lightning --strict
     python src/providers.py launch --provider modal --target 60000 ...
-    python src/providers.py verify --state-file training_state.json --target 60000
+    python src/providers.py verify --state-file training_state.json \
+        --checkpoint checkpoints/pool/dit_model.pt --target 60000
     python src/providers.py report --provider modal --job-id ... --target 60000
 """
 
@@ -373,6 +374,10 @@ class CheckpointVerification:
     reached_target: bool
     experiment_id: str | None
     reason: str
+    # False when the state file is readable but semantically unusable (e.g. a
+    # malformed ``target_steps``). A verifier must report such a document as
+    # invalid rather than crashing with an unhandled ``ValueError``.
+    state_valid: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -412,6 +417,22 @@ def _read_state(state_file: str | None) -> dict[str, Any] | None:
     return read_training_state(path)
 
 
+def _is_torch_checkpoint(path: Path) -> bool:
+    """Whether ``path`` is a torch checkpoint archive.
+
+    ``zipfile.is_zipfile`` alone only proves ZIP framing, so an arbitrary ZIP
+    would pass an "artifacts are valid" gate. A torch checkpoint is a ZIP that
+    carries a pickled ``data.pkl`` payload, which we require as well.
+    """
+    if not zipfile.is_zipfile(path):
+        return False
+    try:
+        with zipfile.ZipFile(path) as archive:
+            return any(name.endswith("data.pkl") for name in archive.namelist())
+    except (zipfile.BadZipFile, OSError):
+        return False
+
+
 def verify_checkpoint(
     *,
     state_file: str | None = None,
@@ -436,29 +457,43 @@ def verify_checkpoint(
     completed: int | None = None
     resolved_target = target
     experiment_id: str | None = None
+    state_valid = True
     if state is not None:
         try:
             completed = int(state["completed_steps"])
         except (KeyError, TypeError, ValueError):
             completed = None
         if resolved_target is None and state.get("target_steps"):
-            resolved_target = int(state["target_steps"])
+            try:
+                resolved_target = int(state["target_steps"])
+            except (TypeError, ValueError):
+                # A readable but malformed state must fail verification, not
+                # abort the CLI with an unhandled exception (exit 2).
+                resolved_target = None
+                state_valid = False
         experiment_id = state.get("experiment_id")
 
-    checkpoint_exists = True
-    checkpoint_valid = True
+    # An omitted checkpoint is not verified: the verifier validates provider
+    # *artifacts*, so defaulting to valid would let a state file alone report
+    # ``reached_target`` with no checkpoint on disk.
+    checkpoint_exists = False
+    checkpoint_valid = False
     if checkpoint is not None:
         path = Path(checkpoint)
         checkpoint_exists = path.exists()
-        checkpoint_valid = checkpoint_exists and zipfile.is_zipfile(path)
+        checkpoint_valid = checkpoint_exists and _is_torch_checkpoint(path)
 
     reasons: list[str] = []
-    if checkpoint is not None and not checkpoint_exists:
+    if checkpoint is None:
+        reasons.append("no checkpoint supplied; artifact integrity unverified")
+    elif not checkpoint_exists:
         reasons.append(f"checkpoint missing: {checkpoint}")
-    elif checkpoint is not None and not checkpoint_valid:
-        reasons.append(f"checkpoint is not a valid torch zip: {checkpoint}")
+    elif not checkpoint_valid:
+        reasons.append(f"checkpoint is not a valid torch checkpoint: {checkpoint}")
     if state is None:
         reasons.append(f"training state unreadable: {state_file}")
+    elif not state_valid:
+        reasons.append("training state has a malformed target_steps")
 
     reached_target = bool(
         checkpoint_valid
@@ -484,6 +519,7 @@ def verify_checkpoint(
         reached_target=reached_target,
         experiment_id=experiment_id,
         reason="; ".join(reasons),
+        state_valid=state_valid,
     )
 
 
@@ -580,6 +616,8 @@ def _cmd_verify(args: argparse.Namespace) -> int:
             )
             handle.write(f"completed_steps={completed}\n")
     if not result.checkpoint_valid or result.completed_steps is None:
+        return VERIFY_INVALID
+    if not result.state_valid:
         return VERIFY_INVALID
     return VERIFY_OK if result.reached_target else VERIFY_PARTIAL
 

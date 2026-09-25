@@ -12,13 +12,17 @@ Every stage runs on CPU with no network and no paid GPU:
     Drives the *real* ``train_dit_local`` loop through the ``model_fn`` seam for
     ``0 -> 10`` and then ``10 -> 20``, asserting the second invocation performs
     exactly 10 additional global steps (the WP1 acceptance rule, not 9 or 11).
+    Steps are counted from grad-enabled forwards, so the assertion cannot pass
+    on a fresh 20-step run that never resumed.
 ``export``
     Exports the generator to ONNX, runs ONNX Runtime inference, applies dynamic
-    quantization and runs inference on the quantized model.
+    quantization and runs inference on the quantized model. Under ``all``/
+    ``package`` the exported model is the trained checkpoint, not a random one.
 ``package``
     Builds the canonical ``artifacts/`` package, asserts the manifest lists the
     generator files, and asserts the *refusal* path: a checkpoint short of the
-    required completed step must raise ``ArtifactPackageError``.
+    required completed step must raise ``ArtifactPackageError``. Selecting
+    ``package`` on its own runs its ``resume``/``export`` prerequisites first.
 
 The provider-boundary simulation (Modal -> HF Hub -> Lightning -> HF Hub ->
 Modal) lives in the pytest suites this script runs alongside in CI
@@ -189,7 +193,39 @@ def stage_smoke(work: Path) -> None:
     check("model_state_dict" in reloaded, "checkpoint round trip lost its state dict")
 
 
-def train_slice(data: Path, output: Path, target: int) -> dict[str, Any]:
+class _CountingModelFactory:
+    """Builds the tiny DiT and counts grad-enabled forwards.
+
+    Validation/sampling passes run under ``torch.no_grad()``, and
+    ``gradient_accumulation_steps`` is 1, so one counted forward is exactly one
+    optimizer step. Without this the ``resume`` stage could pass on a run that
+    silently restarted from step 0.
+    """
+
+    def __init__(self) -> None:
+        self.train_forwards = 0
+
+    def __call__(self) -> TinyDiT:
+        model = tiny_model()
+        original_forward = model.forward
+
+        def counting_forward(*args: object, **kwargs: object) -> object:
+            if torch.is_grad_enabled():
+                self.train_forwards += 1
+            return original_forward(*args, **kwargs)  # type: ignore[operator]
+
+        model.forward = counting_forward  # type: ignore[method-assign]
+        return model
+
+
+def train_slice(
+    data: Path,
+    output: Path,
+    target: int,
+    *,
+    resume: Path | None = None,
+    model_fn: Callable[[], TinyDiT] | None = None,
+) -> dict[str, Any]:
     train_dit_local(
         data_dir=str(data),
         steps=target,
@@ -209,7 +245,8 @@ def train_slice(data: Path, output: Path, target: int) -> dict[str, Any]:
         seed=42,
         no_hub_push=True,
         experiment_id=EXPERIMENT_ID,
-        model_fn=tiny_model,
+        resume=str(resume) if resume is not None else None,
+        model_fn=model_fn or tiny_model,
     )
     state = read_training_state(output.parent / "training_state.json")
     if state is None:
@@ -222,7 +259,8 @@ def stage_resume(work: Path) -> Path:
     data = build_dataset(work / "data")
     output = work / "checkpoints" / "pool" / "dit_model.pt"
 
-    state = train_slice(data, output, RESUME_SLICE)
+    first = _CountingModelFactory()
+    state = train_slice(data, output, RESUME_SLICE, model_fn=first)
     check(
         int(state["completed_steps"]) == RESUME_SLICE,
         f"slice 1 completed {state['completed_steps']}, expected {RESUME_SLICE}",
@@ -231,9 +269,15 @@ def stage_resume(work: Path) -> Path:
         int(state["target_steps"]) == RESUME_SLICE,
         "slice 1 recorded the wrong global target",
     )
+    check(
+        first.train_forwards == RESUME_SLICE,
+        f"slice 1 ran {first.train_forwards} steps, expected {RESUME_SLICE}",
+    )
 
-    # Same experiment, raised global target: `--steps` is never additive.
-    state = train_slice(data, output, RESUME_TARGET)
+    # Same experiment, raised global target, *resumed from the checkpoint*:
+    # `--steps` is a global target, so 10 -> 20 is exactly 10 more steps.
+    second = _CountingModelFactory()
+    state = train_slice(data, output, RESUME_TARGET, resume=output, model_fn=second)
     check(
         int(state["completed_steps"]) == RESUME_TARGET,
         f"slice 2 completed {state['completed_steps']}, expected {RESUME_TARGET}",
@@ -242,25 +286,36 @@ def stage_resume(work: Path) -> Path:
         int(state["target_steps"]) == RESUME_TARGET,
         "slice 2 did not raise the recorded global target",
     )
-    # 10 -> 20 must be exactly 10 additional steps: the manifest's step delta is
-    # the arithmetic the workflow relies on, so assert it explicitly.
+    # The manifest's step delta is the arithmetic the workflow relies on: a
+    # fresh restart would run RESUME_TARGET steps instead of the difference.
     check(
-        RESUME_TARGET - RESUME_SLICE == 10,
-        "resume acceptance rule is no longer 10 -> 20 performs exactly 10",
+        second.train_forwards == RESUME_TARGET - RESUME_SLICE,
+        f"slice 2 ran {second.train_forwards} steps, "
+        f"expected {RESUME_TARGET - RESUME_SLICE}",
     )
     return output
 
 
-def stage_export(work: Path) -> tuple[Path, Path]:
-    """ONNX export + ONNX Runtime inference + dynamic quantization."""
+def stage_export(work: Path, checkpoint: Path | None = None) -> tuple[Path, Path]:
+    """ONNX export + ONNX Runtime inference + dynamic quantization.
+
+    Exports the *trained* checkpoint when one is available, so packaging cannot
+    pair an unrelated random generator with a real checkpoint. A standalone
+    ``--stage export`` (no checkpoint yet) falls back to a fresh model.
+    """
     import numpy as np
     import onnxruntime as ort
 
     export_dir = work / "export"
     export_dir.mkdir(parents=True, exist_ok=True)
 
+    model = tiny_model().eval()
+    if checkpoint is not None and checkpoint.exists():
+        payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        model.load_state_dict(payload["model_state_dict"])
+
     onnx_path = export_dir / "model.onnx"
-    export_generator_onnx(tiny_model().eval(), onnx_path)
+    export_generator_onnx(model, onnx_path)
     check(onnx_path.exists() and onnx_path.stat().st_size > 0, "ONNX export empty")
     verify_onnx_model(onnx_path)
 
@@ -390,14 +445,15 @@ def main(argv: list[str] | None = None) -> int:
         onnx = quantized = None
         if args.stage in ("all", "smoke"):
             run_stage("smoke", lambda: stage_smoke(work))
-        if args.stage in ("all", "resume"):
+        # `package` runs its resume/export prerequisites, so it is usable
+        # standalone instead of silently packaging an empty temp directory.
+        if args.stage in ("all", "resume", "package"):
             checkpoint = run_stage("resume", lambda: stage_resume(work))
-        if args.stage in ("all", "export"):
-            onnx, quantized = run_stage("export", lambda: stage_export(work))
+        if args.stage in ("all", "export", "package"):
+            onnx, quantized = run_stage(
+                "export", lambda: stage_export(work, checkpoint)
+            )
         if args.stage in ("all", "package"):
-            checkpoint = checkpoint or work / "checkpoints" / "pool" / "dit_model.pt"
-            onnx = onnx or work / "export" / "model.onnx"
-            quantized = quantized or work / "export" / "generator_quantized.onnx"
             run_stage(
                 "package",
                 lambda: stage_package(work, checkpoint, onnx, quantized),  # type: ignore[arg-type]
