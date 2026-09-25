@@ -779,6 +779,44 @@ class TestProviderReport:
         )
         assert resolve_exit_reason("success", 68_000, 75_000) == "partial"
 
+    def test_report_cli_ignores_a_malformed_converged_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        # A stringified "false" is truthy in Python, so the report must not
+        # coerce it into a converged run and call a short slice completed.
+        state = {
+            "experiment_id": "exp-v9",
+            "target_steps": 60_000,
+            "completed_steps": 45_000,
+            "converged": "false",
+        }
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(json.dumps(state))
+        out = tmp_path / "provider_report.json"
+
+        code = main(
+            [
+                "report",
+                "--provider",
+                "modal",
+                "--job-id",
+                "run-1-slice-60000",
+                "--started-at",
+                "2026-09-23T10:00:00Z",
+                "--target",
+                "60000",
+                "--state-file",
+                str(state_file),
+                "--outcome",
+                "success",
+                "--out",
+                str(out),
+            ]
+        )
+        assert code == 0
+        assert json.loads(out.read_text())["exit_reason"] == "partial"
+        assert capsys.readouterr().out
+
     def test_report_cli_writes_file_and_status_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture
     ) -> None:

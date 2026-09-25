@@ -752,11 +752,15 @@ def _cmd_report(args: argparse.Namespace) -> int:
         if state and state.get("target_steps")
         else args.target
     )
+    # Strictly boolean, mirroring verify_checkpoint: a stringified "false" is
+    # truthy in Python, so a report must not coerce a malformed flag into a
+    # converged run and relabel a partial slice as completed.
+    converged = bool(state and state.get("converged") is True)
     exit_reason = resolve_exit_reason(
         args.outcome,
         completed,
         target,
-        converged=bool(state and state.get("converged")),
+        converged=converged,
     )
 
     if args.gpu_model:
