@@ -219,13 +219,14 @@ class TestCheckpointVerification:
         return state_file
 
     def _checkpoint(self, tmp_path: Path, *, valid: bool = True) -> Path:
-        import zipfile
+        import torch
 
         path = tmp_path / "checkpoints" / "pool" / "dit_model.pt"
         path.parent.mkdir(parents=True, exist_ok=True)
         if valid:
-            with zipfile.ZipFile(path, "w") as archive:
-                torch.save({"model_state_dict": {}}, path)
+            # A real torch checkpoint is itself a zip archive, which is exactly
+            # what providers.verify_checkpoint probes with zipfile.is_zipfile.
+            torch.save({"model_state_dict": {}}, path)
         else:
             path.write_bytes(b"not-a-zip")
         return path
