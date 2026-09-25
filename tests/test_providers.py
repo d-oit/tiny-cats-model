@@ -472,14 +472,39 @@ class TestCheckpointVerification:
         # `target_steps: 0` is malformed, not absent: it must not slip past the
         # verifier's positive-target requirement.
         state_file = tmp_path / "training_state.json"
-        state_file.write_text(json.dumps({"completed_steps": 5, "target_steps": 0}))
+        state_file.write_text(
+            json.dumps({"completed_steps": 60_000, "target_steps": 0})
+        )
         checkpoint = str(self._checkpoint(tmp_path))
         result = verify_checkpoint(state_file=str(state_file), checkpoint=checkpoint)
+        assert not result.state_valid
         assert not result.reached_target
         assert "target must be positive" in result.reason
         assert (
             main(
                 ["verify", "--state-file", str(state_file), "--checkpoint", checkpoint]
+            )
+            == VERIFY_INVALID
+        )
+
+        # A positive --target override must not rescue a malformed manifest
+        # target: 60_000 completed would otherwise certify as reached.
+        overridden = verify_checkpoint(
+            state_file=str(state_file), checkpoint=checkpoint, target=60_000
+        )
+        assert not overridden.state_valid
+        assert not overridden.reached_target
+        assert (
+            main(
+                [
+                    "verify",
+                    "--state-file",
+                    str(state_file),
+                    "--checkpoint",
+                    checkpoint,
+                    "--target",
+                    "60000",
+                ]
             )
             == VERIFY_INVALID
         )

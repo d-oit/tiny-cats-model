@@ -491,6 +491,12 @@ def verify_checkpoint(
                 state_target = None
                 state_valid = False
                 invalid_state_fields.append("target_steps")
+            # A global target is strictly positive; a zero/negative one in the
+            # manifest is malformed even when --target overrides it, so a
+            # sufficient completed_steps cannot be certified as reached.
+            if state_target is not None and state_target <= 0:
+                state_valid = False
+                invalid_state_fields.append("target_steps")
             if resolved_target is None:
                 resolved_target = state_target
         experiment_id = state.get("experiment_id")
