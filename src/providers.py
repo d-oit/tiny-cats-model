@@ -418,14 +418,18 @@ def _read_state(state_file: str | None) -> dict[str, Any] | None:
 
 
 def _is_torch_checkpoint(path: Path) -> bool:
-    """Whether ``path`` is a loadable torch checkpoint.
+    """Whether ``path`` is a structurally valid torch checkpoint archive.
 
     ``zipfile.is_zipfile`` alone only proves ZIP framing, so an arbitrary ZIP
     would pass an "artifacts are valid" gate. A torch checkpoint is a ZIP that
     carries a pickled ``data.pkl`` payload, so require that entry with intact
-    member CRCs and then, when torch is importable, confirm the archive really
-    deserializes. The zip probe stays as the fallback for a torch-free control
-    plane (the training/reporting runners all install torch).
+    member CRCs.
+
+    This deliberately does *not* deserialize the payload. The verifier runs on
+    a downloaded (mutable-volume / Hub) artifact and unpickling it with
+    ``weights_only=False`` would execute attacker-controlled code on the runner;
+    deep load-time validation lives in ``verify_checkpoint.py``, which runs on
+    artifacts the training job itself produced.
     """
     if not zipfile.is_zipfile(path):
         return False
@@ -433,20 +437,9 @@ def _is_torch_checkpoint(path: Path) -> bool:
         with zipfile.ZipFile(path) as archive:
             if not any(name.endswith("data.pkl") for name in archive.namelist()):
                 return False
-            if archive.testzip() is not None:
-                return False
+            return archive.testzip() is None
     except (zipfile.BadZipFile, OSError):
         return False
-
-    try:
-        import torch
-    except ImportError:  # pragma: no cover - torch is a project dependency
-        return True
-    try:
-        torch.load(path, map_location="cpu", weights_only=False)
-    except Exception:
-        return False
-    return True
 
 
 def verify_checkpoint(

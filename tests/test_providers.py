@@ -484,22 +484,6 @@ class TestCheckpointVerification:
             == VERIFY_INVALID
         )
 
-    def test_zip_with_bogus_data_pkl_is_invalid(self, tmp_path: Path) -> None:
-        # A CRC-valid ZIP carrying a non-deserializable data.pkl must not count
-        # as a checkpoint just because the entry name looks right.
-        import zipfile
-
-        path = tmp_path / "bogus.pt"
-        with zipfile.ZipFile(path, "w") as archive:
-            archive.writestr("archive/data.pkl", b"not-a-pickle")
-        result = verify_checkpoint(
-            state_file=str(self._state(tmp_path, 60_000, 60_000)),
-            checkpoint=str(path),
-            target=60_000,
-        )
-        assert not result.checkpoint_valid
-        assert not result.reached_target
-
     def test_zip_with_corrupt_payload_is_invalid(self, tmp_path: Path) -> None:
         import zipfile
 
