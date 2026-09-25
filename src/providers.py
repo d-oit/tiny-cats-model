@@ -458,6 +458,7 @@ def verify_checkpoint(
     resolved_target = target
     experiment_id: str | None = None
     state_valid = True
+    invalid_state_fields: list[str] = []
     if state is not None:
         try:
             completed = int(state["completed_steps"])
@@ -466,6 +467,7 @@ def verify_checkpoint(
             # report it invalid rather than emitting ``state_valid: true``.
             completed = None
             state_valid = False
+            invalid_state_fields.append("completed_steps")
         if resolved_target is None and state.get("target_steps"):
             try:
                 resolved_target = int(state["target_steps"])
@@ -474,6 +476,7 @@ def verify_checkpoint(
                 # abort the CLI with an unhandled exception (exit 2).
                 resolved_target = None
                 state_valid = False
+                invalid_state_fields.append("target_steps")
         experiment_id = state.get("experiment_id")
 
     # An omitted checkpoint is not verified: the verifier validates provider
@@ -496,7 +499,9 @@ def verify_checkpoint(
     if state is None:
         reasons.append(f"training state unreadable: {state_file}")
     elif not state_valid:
-        reasons.append("training state has a malformed target_steps")
+        reasons.append(
+            "training state has a malformed " + " and ".join(invalid_state_fields)
+        )
 
     reached_target = bool(
         checkpoint_valid

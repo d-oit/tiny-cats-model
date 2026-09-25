@@ -440,6 +440,7 @@ class TestCheckpointVerification:
         )
         assert not result.state_valid
         assert not result.reached_target
+        assert "malformed completed_steps" in result.reason
 
 
 class TestProviderReport:
