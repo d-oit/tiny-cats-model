@@ -462,7 +462,10 @@ def verify_checkpoint(
         try:
             completed = int(state["completed_steps"])
         except (KeyError, TypeError, ValueError):
+            # A state document without a usable progress field is unusable, so
+            # report it invalid rather than emitting ``state_valid: true``.
             completed = None
+            state_valid = False
         if resolved_target is None and state.get("target_steps"):
             try:
                 resolved_target = int(state["target_steps"])

@@ -428,6 +428,19 @@ class TestCheckpointVerification:
             == VERIFY_INVALID
         )
 
+    def test_malformed_completed_steps_marks_state_invalid(
+        self, tmp_path: Path
+    ) -> None:
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(json.dumps({"completed_steps": "nope"}))
+        result = verify_checkpoint(
+            state_file=str(state_file),
+            checkpoint=str(self._checkpoint(tmp_path)),
+            target=60_000,
+        )
+        assert not result.state_valid
+        assert not result.reached_target
+
 
 class TestProviderReport:
     """WP5: every session reports the 9 required fields, machine-readably."""
