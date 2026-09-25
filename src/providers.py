@@ -418,11 +418,14 @@ def _read_state(state_file: str | None) -> dict[str, Any] | None:
 
 
 def _is_torch_checkpoint(path: Path) -> bool:
-    """Whether ``path`` is a torch checkpoint archive.
+    """Whether ``path`` is a loadable torch checkpoint.
 
     ``zipfile.is_zipfile`` alone only proves ZIP framing, so an arbitrary ZIP
     would pass an "artifacts are valid" gate. A torch checkpoint is a ZIP that
-    carries a pickled ``data.pkl`` payload, which we require as well.
+    carries a pickled ``data.pkl`` payload, so require that entry with intact
+    member CRCs and then, when torch is importable, confirm the archive really
+    deserializes. The zip probe stays as the fallback for a torch-free control
+    plane (the training/reporting runners all install torch).
     """
     if not zipfile.is_zipfile(path):
         return False
@@ -430,11 +433,20 @@ def _is_torch_checkpoint(path: Path) -> bool:
         with zipfile.ZipFile(path) as archive:
             if not any(name.endswith("data.pkl") for name in archive.namelist()):
                 return False
-            # Verify every member's CRC so a truncated/corrupt archive is
-            # rejected here instead of passing the publication gate.
-            return archive.testzip() is None
+            if archive.testzip() is not None:
+                return False
     except (zipfile.BadZipFile, OSError):
         return False
+
+    try:
+        import torch
+    except ImportError:  # pragma: no cover - torch is a project dependency
+        return True
+    try:
+        torch.load(path, map_location="cpu", weights_only=False)
+    except Exception:
+        return False
+    return True
 
 
 def verify_checkpoint(
