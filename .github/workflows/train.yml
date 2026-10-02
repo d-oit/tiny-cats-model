@@ -58,9 +58,12 @@ on:
         default: "2000"
         type: string
       save_interval:
-        description: "Checkpoint save interval in steps (default: 500)"
+        # 500 wrote 2x530MB per save (~every 7 min of training) and dominated
+        # billed GPU time via I/O; 2500 bounds crash-loss to ~2500 steps while
+        # the 5000-step hub push still syncs checkpoints off-box.
+        description: "Checkpoint save interval in steps (default: 2500)"
         required: false
-        default: "500"
+        default: "2500"
         type: string
       epochs:
         description: "Classifier epochs (default: 20)"
