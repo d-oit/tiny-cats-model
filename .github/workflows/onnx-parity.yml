@@ -1,0 +1,76 @@
+name: ONNX Parity Check
+
+# Confirms the sampling-step default chosen from the PyTorch sweep also holds
+# on the quantized ONNX generator the demos actually run. Manual only — it
+# pulls the published artifact from the Modal volume and spends CPU minutes on
+# generation, so it is never wired into a push/PR trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      step_settings:
+        description: "Sampling-step settings to compare (comma-separated)"
+        required: false
+        default: "50,100"
+        type: string
+      samples_per_breed:
+        description: "Samples per breed per setting"
+        required: false
+        default: "13"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    name: Sampling-step parity (quantized ONNX)
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # FID needs real images; the dataset is gitignored. Best effort — the
+      # check still reports Inception Score when this fails.
+      - name: Fetch dataset
+        continue-on-error: true
+        run: bash data/download.sh
+
+      - name: Download quantized generator from Modal volume
+        run: |
+          modal volume get dit-outputs \
+            artifacts/generator/model_quantized.onnx \
+            artifacts/generator/model_quantized.onnx
+
+      - name: Run parity check
+        run: |
+          python scripts/onnx_parity_check.py \
+            --onnx artifacts/generator/model_quantized.onnx \
+            --step-settings "${{ inputs.step_settings }}" \
+            --samples-per-breed ${{ inputs.samples_per_breed }} \
+            --real-dir data/cats/cat \
+            --out-dir artifacts/onnx-parity
+
+      - name: Upload samples and report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: onnx-parity
+          path: artifacts/onnx-parity
+          retention-days: 7
+          if-no-files-found: warn
