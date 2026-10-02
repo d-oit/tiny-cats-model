@@ -146,6 +146,15 @@ class TestLaunchCommand:
         assert "--hub-resume" in command
         assert "--no-hub-push" in command
 
+    def test_min_lr_is_opt_in(self) -> None:
+        """--min-lr must only appear when requested (default command unchanged)."""
+        default_command = build_launch_command("modal", 60_000)
+        assert "--min-lr" not in default_command
+
+        raised = build_launch_command("modal", 60_000, min_lr="2e-5")
+        assert "--min-lr" in raised
+        assert raised[raised.index("--min-lr") + 1] == "2e-5"
+
     def test_unsupported_provider_cannot_launch(self) -> None:
         with pytest.raises(UnsupportedProviderError):
             build_launch_command("kaggle", 60_000)

@@ -225,6 +225,7 @@ def build_launch_command(
     hub_resume: bool = False,
     no_hub_push: bool = False,
     warmup_steps: str | None = None,
+    min_lr: str | None = None,
     gradient_accumulation_steps: str | None = None,
     early_stopping_patience: str | None = None,
     allow_experiment_mismatch: bool = False,
@@ -273,6 +274,10 @@ def build_launch_command(
         ("--warmup-steps", warmup_steps),
         ("--gradient-accumulation-steps", gradient_accumulation_steps),
         ("--early-stopping-patience", early_stopping_patience),
+        # LR floor (docs/LR-PLATEAU-DIAGNOSIS-2026-10-02.md): not part of the
+        # experiment manifest, so raising it on a resume lifts the floor
+        # without tripping the manifest gate.
+        ("--min-lr", min_lr),
     ):
         if value is not None:
             command.extend([flag, str(value)])
@@ -764,6 +769,7 @@ def _cmd_launch(args: argparse.Namespace) -> int:
         hub_resume=args.hub_resume,
         no_hub_push=args.no_hub_push,
         warmup_steps=args.warmup_steps,
+        min_lr=args.min_lr,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         early_stopping_patience=args.early_stopping_patience,
         allow_experiment_mismatch=args.allow_experiment_mismatch,
@@ -893,6 +899,7 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument("--hub-resume", action="store_true")
     launch.add_argument("--no-hub-push", action="store_true")
     launch.add_argument("--warmup-steps", default=None)
+    launch.add_argument("--min-lr", default=None)
     launch.add_argument("--gradient-accumulation-steps", default=None)
     launch.add_argument("--early-stopping-patience", default=None)
     launch.add_argument(

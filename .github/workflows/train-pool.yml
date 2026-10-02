@@ -240,6 +240,14 @@ jobs:
           if [ "${{ github.event.inputs.allow_experiment_mismatch }}" = "true" ]; then
             MIGRATEFLAGS+=(--allow-experiment-mismatch)
           fi
+          LRFLAGS=()
+          # Optional LR floor (docs/LR-PLATEAU-DIAGNOSIS-2026-10-02.md): unset
+          # repo variable = trainer default 1e-6, i.e. byte-for-byte the same
+          # command as before. Set it with `gh variable set MIN_LR -b 2e-5` to
+          # lift the cosine floor when resuming a run past its decay.
+          if [ -n "${{ vars.MIN_LR }}" ]; then
+            LRFLAGS+=(--min-lr "${{ vars.MIN_LR }}")
+          fi
           CMD="$(python src/providers.py launch \
             --provider modal \
             --target ${{ matrix.target }} \
@@ -248,7 +256,7 @@ jobs:
             --save-interval 2500 \
             --hub-push-interval ${{ github.event.inputs.hub_push_interval || '5000' }} \
             --experiment-id dit-breed-conditioned-v4 \
-            "${HUBFLAGS[@]}" "${MIGRATEFLAGS[@]}")"
+            "${HUBFLAGS[@]}" "${MIGRATEFLAGS[@]}" "${LRFLAGS[@]}")"
           echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           echo "Launch: $CMD"
           eval "$CMD" 2>&1 | tee modal-training.log
