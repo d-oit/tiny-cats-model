@@ -1,0 +1,80 @@
+name: Stop Training
+
+# Emergency kill switch for pool training.
+#
+# Why this exists (2026-10-01): `gh run cancel` was submitted twice against a
+# train-pool run whose slice was training, but the request silently no-oped —
+# the run kept launching new slices for ~24h until the Modal app itself was
+# stopped with `modal app stop`. Stopping the Modal app is the reliable kill
+# path: the in-flight `modal run` client exits non-zero, fail-fast cancels the
+# slice matrix, and this workflow's run-cancel step clears anything queued in
+# the concurrency group.
+#
+# Note: the `schedule:` trigger on train-pool.yml re-arms training at the next
+# cron. Pass disable_schedule: true for a full stop (re-enable afterwards with
+# `gh workflow enable train-pool.yml`).
+
+on:
+  workflow_dispatch:
+    inputs:
+      disable_schedule:
+        description: "Also disable the train-pool.yml schedule so the next cron does not restart training"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  stop:
+    name: Stop Modal training
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Install pinned Modal CLI
+        run: pip install "modal==1.5.5"
+
+      # The reliable part: terminate the GPU containers. The running slice
+      # job then fails and fail-fast cancels the rest of the matrix.
+      - name: Stop running training apps
+        run: |
+          set -o pipefail
+          APPS=$(modal app list --json | python -c "
+          import json, sys
+          for app in json.load(sys.stdin):
+              desc = app.get('description') or ''
+              if app.get('state') == 'ephemeral' and desc.startswith(
+                  ('tiny-dit-training', 'tiny-cats-model')
+              ):
+                  print(app['app_id'])
+          ")
+          if [ -z "$APPS" ]; then
+            echo "No running training apps."
+          else
+            for id in $APPS; do
+              echo "Stopping $id"
+              modal app stop --yes "$id"
+            done
+          fi
+
+      # Belt and braces: clear queued/in-progress pool runs so nothing behind
+      # the concurrency group relaunches training right after the stop.
+      - name: Cancel train-pool runs
+        run: |
+          gh run list --workflow train-pool.yml \
+            --json databaseId,status \
+            --jq '.[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested") | .databaseId' \
+            | while read -r id; do
+                echo "Cancelling run $id"
+                gh run cancel "$id" || true
+              done
+
+      - name: Disable schedule (optional)
+        if: ${{ inputs.disable_schedule }}
+        run: gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/train-pool.yml/disable"
