@@ -67,7 +67,7 @@ export const GENERATOR_CONFIG: GeneratorConfig = {
   localFallback: "/models/generator_quantized.onnx",
   imgDims: [128, 128],
   numBreeds: 13,
-  defaultSteps: 50,
+  defaultSteps: 100,
   minSteps: 10,
   maxSteps: 100,
   defaultCfgScale: 1.5,

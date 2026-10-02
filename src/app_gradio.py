@@ -128,7 +128,7 @@ def classify_cat(image):
     )
 
 
-def generate_cat(breed_name, cfg_scale=1.5, steps=50):
+def generate_cat(breed_name, cfg_scale=1.5, steps=100):
     """Generate cat image for a given breed."""
     session = get_session("generator")
     if session is None:
@@ -208,7 +208,7 @@ with gr.Blocks(title="Tiny Cats Model Demo") as demo:
                     minimum=1.0, maximum=5.0, step=0.1, value=1.5, label="CFG Scale"
                 )
                 input_steps = gr.Slider(
-                    minimum=10, maximum=100, step=10, value=50, label="Sampling Steps"
+                    minimum=10, maximum=100, step=10, value=100, label="Sampling Steps"
                 )
                 btn_generate = gr.Button("Generate")
             output_gen = gr.Image(label="Generated Cat")
