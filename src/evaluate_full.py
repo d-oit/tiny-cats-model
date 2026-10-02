@@ -383,63 +383,69 @@ def compute_fid(
     print("Computing Inception features for fake images...")
     fake_features = get_features(fake_images)
 
-    # Compute statistics
-    real_mean = real_features.mean(dim=0)
-    real_cov = torch.cov(real_features.T)
+    # Compute statistics (float64: the FID cancellation needs the precision)
+    real_mean = real_features.mean(dim=0).double()
+    real_cov = torch.cov(real_features.double().T)
 
-    fake_mean = fake_features.mean(dim=0)
-    fake_cov = torch.cov(fake_features.T)
+    fake_mean = fake_features.mean(dim=0).double()
+    fake_cov = torch.cov(fake_features.double().T)
 
     # Compute FID
-    diff = real_mean - fake_mean
-
-    # Covariance term: trace(real_cov + fake_cov - 2*sqrt(real_cov @ fake_cov))
-    # Use eigendecomposition for numerical stability
-    try:
-        cov_mean = _sqrtm_newton_schulz(real_cov @ fake_cov, device=device)
-        cov_term = torch.trace(real_cov + fake_cov - 2 * cov_mean)
-    except Exception as e:
-        print(f"Warning: Covariance computation failed: {e}")
-        cov_term = torch.tensor(0.0, device=device)
-
-    fid = diff.dot(diff) + cov_term
-
-    return float(fid.cpu())
+    return _frechet_distance(real_mean, real_cov, fake_mean, fake_cov)
 
 
-def _sqrtm_newton_schulz(
-    matrix: torch.Tensor,
-    device: torch.device,
-    num_iters: int = 100,
-) -> torch.Tensor:
-    """Compute matrix square root using Newton-Schulz iteration.
+def _sqrtm_psd(matrix: torch.Tensor) -> torch.Tensor:
+    """Symmetric positive-semidefinite matrix square root.
+
+    Uses an eigendecomposition with clamping of tiny negative eigenvalues,
+    which stays finite for singular covariances (fewer samples than feature
+    dimensions) where the previous Newton-Schulz iteration diverged to NaN.
 
     Args:
-        matrix: Input matrix.
-        device: Device to run on.
-        num_iters: Number of iterations.
+        matrix: Symmetric positive-semidefinite matrix.
 
     Returns:
-        Matrix square root.
+        Matrix square root, same shape as the input.
     """
-    A = matrix.to(device)
-    n = A.size(0)
+    symmetric = 0.5 * (matrix + matrix.T)
+    eigvals, eigvecs = torch.linalg.eigh(symmetric)
+    return (eigvecs * eigvals.clamp(min=0.0).sqrt()) @ eigvecs.T
 
-    # Normalize
-    norm = A.norm()
-    A = A / norm
 
-    # Newton-Schulz iteration
-    Y = torch.eye(n, device=device)
-    Z = torch.eye(n, device=device)
+def _frechet_distance(
+    mean1: torch.Tensor,
+    cov1: torch.Tensor,
+    mean2: torch.Tensor,
+    cov2: torch.Tensor,
+) -> float:
+    """Fréchet distance between two Gaussian distributions.
 
-    for _ in range(num_iters):
-        T = 0.5 * (3.0 * torch.eye(n, device=device) - Z @ A)
-        Y = Y @ T
-        Z = T @ Z
+    Computes ``|mu1 - mu2|^2 + tr(C1 + C2 - 2*sqrt(C1 @ C2))`` with the
+    covariance product evaluated as the symmetric sandwich
+    ``sqrt(C1) @ C2 @ sqrt(C1)``, so the outer square root is taken of a
+    symmetric PSD matrix. Identical distributions score 0 even when both
+    covariances are rank-deficient.
 
-    # Denormalize
-    return Y * torch.sqrt(norm)
+    Args:
+        mean1: Mean of the first distribution, shape (D,).
+        cov1: Covariance of the first distribution, shape (D, D).
+        mean2: Mean of the second distribution, shape (D,).
+        cov2: Covariance of the second distribution, shape (D, D).
+
+    Returns:
+        Fréchet distance (lower is better).
+    """
+    # The statistic involves a near-exact cancellation for similar
+    # distributions, so accumulate it in float64 (as pytorch-fid does).
+    mean1 = mean1.double()
+    mean2 = mean2.double()
+    cov1 = cov1.double()
+    cov2 = cov2.double()
+    diff = mean1 - mean2
+    sqrt1 = _sqrtm_psd(cov1)
+    cov_mean = _sqrtm_psd(sqrt1 @ cov2 @ sqrt1)
+    cov_term = torch.trace(cov1) + torch.trace(cov2) - 2 * torch.trace(cov_mean)
+    return float((diff.dot(diff) + cov_term).cpu())
 
 
 def compute_inception_score(
