@@ -37,9 +37,14 @@ on:
         default: "600000"
         type: string
       slice_size:
+        # 25000 never fit: at the measured T4 rate of 1.16 steps/s it is 5.99h of
+        # pure training, so setup + checkpoint saves + hub pushes always pushed a
+        # slice past the 360-minute job cap and it was killed mid-work (2026-10-01:
+        # three full 6h slices only moved the pool 406k -> 434k). 15000 leaves
+        # headroom so a slice exits cleanly with verified progress.
         description: "Max steps per provider session (bounded slice; fits the 6h schedule window)"
         required: false
-        default: "25000"
+        default: "15000"
         type: string
       batch_size:
         description: "Batch size"
@@ -124,7 +129,7 @@ jobs:
           fi
           MATRIX="$(python src/providers.py plan \
             --steps ${{ github.event.inputs.steps || '600000' }} \
-            --slice-size ${{ github.event.inputs.slice_size || '25000' }} \
+            --slice-size ${{ github.event.inputs.slice_size || '15000' }} \
             --experiment-id dit-breed-conditioned-v4 \
             --hub-repo d4oit/tiny-cats-model \
             "${EXTRA[@]}")"
@@ -240,7 +245,7 @@ jobs:
             --target ${{ matrix.target }} \
             --batch-size ${{ github.event.inputs.batch_size || '32' }} \
             --lr ${{ github.event.inputs.lr || '5e-5' }} \
-            --save-interval 500 \
+            --save-interval 2500 \
             --hub-push-interval ${{ github.event.inputs.hub_push_interval || '5000' }} \
             --experiment-id dit-breed-conditioned-v4 \
             "${HUBFLAGS[@]}" "${MIGRATEFLAGS[@]}")"

@@ -220,7 +220,7 @@ def build_launch_command(
     *,
     batch_size: str = "32",
     lr: str = "5e-5",
-    save_interval: str = "500",
+    save_interval: str = "2500",
     hub_push_interval: str = "5000",
     hub_resume: bool = False,
     no_hub_push: bool = False,

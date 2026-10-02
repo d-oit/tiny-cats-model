@@ -43,12 +43,12 @@ Best-practice audit against the live Modal docs (July 2026):
 | **Volumes**: Use `modal.Volume.from_name(name, create_if_missing=True)`; call `volume.commit()` after writes; **write-once, read-many** is the optimized pattern | Both scripts use `modal.Volume.from_name(..., create_if_missing=True)` and commit after training | ✅ |
 | **Volumes v2 (Beta)**: Higher throughput + concurrent writes from hundreds of containers | We use v1 | ⚠️ Optional upgrade — v2 is Beta |
 | **Checkpoint resume (reentrant)**: On function start, check the volume for the latest checkpoint and call it `last.ckpt`; resume from there | Both scripts auto-resume from `checkpoints/<name>/current/*.pt` | ✅ |
-| **Retries**: Wrap with `modal.Retries(max_retries=N, ...)`. Use **`single_use_containers=True`** when training has dirty in-memory state | We use `modal.Retries`, do **not** use `single_use_containers=True` | ⚠️ See "Followups" |
+| **Retries**: Wrap with `modal.Retries(max_retries=N, ...)`. Use **`single_use_containers=True`** when training has dirty in-memory state | We use `modal.Retries`; `src/train_dit.py` sets `single_use_containers=True` (2026-10-02, PR #175) | ✅ |
 | **Secrets**: Prefer `modal.Secret.from_dict({...})` over env-vars for HF_TOKEN etc. | We pass HF_TOKEN as a GH-Actions secret via env var on the action step | ⚠️ Acceptable for our use, but `modal.Secret` is the recommended pattern |
 | **Timeout limit**: 24h per function call | `train_on_gpu` → 3600s (1h), `train_dit_on_gpu` → 86400s (24h) | ✅ At the limit |
 | **Long runs (>24h)**: Use `--detach` + retry-orchestrator pattern, design as **reentrant** | We cap at 24h + rely on early stopping | ✅ But stay within budget — see "Slow Training" below |
-| **Cold start**: Move heavy work to **`@modal.enter`** or global scope (runs once per container, not per call). Warm up CUDA in `@enter` | Both scripts have a free-standing `_initialize_container()` called from the function body | ❌ **Should be `@modal.enter` per ADR-025** (full migration is a code change — see Followups) |
-| **Container warm-up**: `min_containers=N`, `scaledown_window=N seconds` keep containers alive between runs | Not set | ⚠️ Could cut cold start for re-runs |
+| **Cold start**: Move heavy work to **`@modal.enter`** or global scope (runs once per container, not per call). Warm up CUDA in `@enter` | Both scripts run container init in `@modal.enter()` with CUDA warm-up (ADR-025 migration completed earlier; this row was stale) | ✅ |
+| **Container warm-up**: `min_containers=N`, `scaledown_window=N seconds` keep containers alive between runs | `scaledown_window=300` on both trainers; `min_containers` deliberately unset (billed idle GPU) | ✅ |
 | **Memory Snapshots** (experimental): Capture GPU memory state for instant resume | Not enabled | ⚠️ Optional — Modal experimental feature |
 | **Image optimization**: Bake deps with `uv_pip_install` / `pip_install` in the image; minimize `add_local_file` footprint | Both scripts use `debian_slim` + `uv_pip_install` + `add_local_file` for only needed files | ✅ |
 | **Gh-Actions integration**: Use `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` GH secrets | `train.yml`, `upload-hub.yml` both wire these via `secrets:` env vars | ✅ |
@@ -146,11 +146,11 @@ These are real best-practice upgrades worth a follow-up ADR once implemented:
 
 | Upgrade | Effort | Why |
 |---|---|---|
-| Migrate `_initialize_container()` → `@modal.enter()` (ADR-025) | ~1h | Move CUDA warm-up out of the function body; matches ADR-025 spec |
-| Add `single_use_containers=True` to `@app.function(gpu=...)` | ~15 min | Ensures fresh container on every Modal retry — prevents stale state |
+| Migrate `_initialize_container()` → `@modal.enter()` (ADR-025) | ~1h | ✅ Done — both trainers use `@modal.enter()` |
+| Add `single_use_containers=True` to `@app.function(gpu=...)` | ~15 min | ✅ Done for `DiTTrainer` (PR #175) — fresh container per retry, no stale optimizer/EMA state |
 | Switch `modal.Volume` → `modal.Volume.from_name(name, version=2)` | ~15 min | Higher throughput for concurrent checkpoint writes |
-| Bump `save_interval` from 10_000 → 50_000 in `train.yml` defaults | ~1 min | Cuts I/O in half for 100k-step runs |
-| Add `scaledown_window=300` to `@app.function(gpu=...)` | ~1 min | Keep container warm for retry within 5 min |
+| Bump `save_interval` in workflow defaults | ~1 min | ✅ Done (PR #173): 500 → 2500 — interval 500 wrote 2×530MB every ~7 min of training |
+| Add `scaledown_window=300` to `@app.function(gpu=...)` | ~1 min | ✅ Done — both trainers keep containers warm 5 min for retries |
 
 ## Consequences
 
@@ -164,7 +164,9 @@ These are real best-practice upgrades worth a follow-up ADR once implemented:
 ### Negative
 - ⚠️ A handful of historical/narrative files still say `modal token set` —
    they don't break anything but they're confusing.
-- ⚠️ We are not yet using `@modal.enter` (ADR-025 plan) or `single_use_containers=True`.
+- ⚠️ ~~We are not yet using `@modal.enter` (ADR-025 plan) or `single_use_containers=True`.~~
+  Resolved 2026-10-02: `@modal.enter` migration was already complete (this ADR
+  was stale), and `DiTTrainer` now sets `single_use_containers=True` (PR #175).
 
 ### Neutral
 - ℹ️ No code changes; no test impact; no behavior change.
