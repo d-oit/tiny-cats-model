@@ -51,6 +51,12 @@ diversity at 436k steps — consistent with a model mid-training after the
 recent root-cause fixes (#159 conditioning, #160 positional embeddings and
 unpatchify). Not releaseable; the 600k target is justified.
 
+## Re-measuring at 600k
+
+Run `bash scripts/eval_checkpoint.sh` — it reproduces this exact protocol
+(988 samples vs `data/cats/cat`, checkpoint pulled from the Modal volume if
+missing locally) and prints every score against the 436k baseline above.
+
 ## Caveats
 
 - FID/IS at n=26 were high-variance; superseded the same day by the n=988
