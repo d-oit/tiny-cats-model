@@ -12,7 +12,7 @@
 #
 # Defaults: checkpoints/pool/dit_model_ema.pt (pulled from the Modal volume
 # if missing locally) and eval_out/samples-<checkpoint-name>.
-# Takes ~2h on CPU (generation ~100min, Inception featurization ~20min).
+# Takes ~40 min on CPU (generation ~26min, Inception featurization ~10min).
 set -euo pipefail
 
 CKPT="${1:-checkpoints/pool/dit_model_ema.pt}"
