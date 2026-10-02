@@ -837,6 +837,11 @@ image = (
         initial_delay=0.0,  # Immediate retry on preemption
     ),
     scaledown_window=300,  # ADR-057: keep container warm 5 min for retries
+    # ADR-057: never reuse a container after a retry. Training keeps dirty
+    # in-memory state (optimizer moments, EMA, RNG), so a retry must re-enter
+    # via @modal.enter and resume from the last checkpoint + manifest instead
+    # of re-running against stale state.
+    single_use_containers=True,
 )
 class DiTTrainer:
     """Modal container class for DiT GPU training (ADR-025, ADR-057).
