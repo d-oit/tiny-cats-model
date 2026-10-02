@@ -5,6 +5,7 @@ Loads models from HuggingFace Hub and runs inference via ONNX Runtime.
 """
 
 import os
+from typing import Any
 
 import gradio as gr
 import numpy as np
@@ -128,11 +129,46 @@ def classify_cat(image):
     )
 
 
+def _generator_feed_keys(session: Any) -> tuple[str, str, str]:
+    """Map our tensors onto the ONNX graph's declared input names.
+
+    The exporter writes ``noise``/``timestep``/``breed`` (see
+    ``src/export_dit_onnx.py``), while this module originally fed
+    ``x``/``t``/``breeds`` — which fails at ``session.run`` with the published
+    artifact. Deriving the keys from the session keeps the demo working with
+    either convention.
+
+    Args:
+        session: An ``onnxruntime.InferenceSession`` (duck-typed).
+
+    Returns:
+        Tuple of (state, timestep, breed) input names.
+
+    Raises:
+        ValueError: If the graph does not declare a recognizable input set.
+    """
+    names = {spec.name for spec in session.get_inputs()}
+    picked = (
+        ("noise", next((k for k in ("x", "noise") if k in names), None)),
+        ("timestep", next((k for k in ("t", "timestep") if k in names), None)),
+        ("breed", next((k for k in ("breeds", "breed") if k in names), None)),
+    )
+    missing = [label for label, key in picked if key is None]
+    if missing:
+        raise ValueError(
+            f"generator graph is missing expected inputs {missing}; "
+            f"declared inputs: {sorted(names)}"
+        )
+    return (picked[0][1], picked[1][1], picked[2][1])  # type: ignore[return-value]
+
+
 def generate_cat(breed_name, cfg_scale=1.5, steps=100):
     """Generate cat image for a given breed."""
     session = get_session("generator")
     if session is None:
         return None
+
+    x_key, t_key, breed_key = _generator_feed_keys(session)
 
     # Preprocess
     breed_idx = BREED_NAMES.index(breed_name)
@@ -155,14 +191,14 @@ def generate_cat(breed_name, cfg_scale=1.5, steps=100):
 
             # Predict cond and uncond
             # Note: Inputs order might vary depending on export
-            inputs_cond = {"x": x, "t": t_tensor, "breeds": breed_tensor}
-            inputs_uncond = {"x": x, "t": t_tensor, "breeds": uncond_breed}
+            inputs_cond = {x_key: x, t_key: t_tensor, breed_key: breed_tensor}
+            inputs_uncond = {x_key: x, t_key: t_tensor, breed_key: uncond_breed}
 
             v_cond = session.run(None, inputs_cond)[0]
             v_uncond = session.run(None, inputs_uncond)[0]
             v = v_uncond + cfg_scale * (v_cond - v_uncond)
         else:
-            inputs = {"x": x, "t": t_tensor, "breeds": breed_tensor}
+            inputs = {x_key: x, t_key: t_tensor, breed_key: breed_tensor}
             v = session.run(None, inputs)[0]
 
         x = x + v * dt
