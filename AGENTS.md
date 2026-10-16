@@ -97,8 +97,14 @@ gh workflow run train.yml -f steps=25000 -f batch_size=32
 # Full 400k run as bounded slices (sequential, fail-fast, resumable)
 gh workflow run train-pool.yml -f steps=400000 -f slice_size=60000
 
-# Unsupported providers (kaggle/lightning/colab/hf_spaces) fail clearly at the gate
+# Fallback chain (ADR-067): Modal first, Kaggle when Modal is launch-blocked
+gh workflow run train-pool.yml -f provider=auto
+
+# Kaggle only (needs KAGGLE_KERNEL_ID + KAGGLE_HF_TOKEN_DATASET, see ADR-067)
 gh workflow run train-pool.yml -f provider=kaggle
+
+# Gated providers (lightning/colab/hf_spaces) fail clearly at the gate
+gh workflow run train-pool.yml -f provider=lightning
 
 # Control plane without launching anything
 python src/providers.py gate   --provider all
@@ -114,6 +120,13 @@ gh run watch
 # Check secrets
 gh secret list
 ```
+
+> **Provider fallback (ADR-067):** scheduled runs use `provider=auto` — Modal
+> first, then Kaggle (packaged as a private script kernel) when Modal is
+> blocked on billing/quota. Kaggle requires the `KAGGLE_API_TOKEN` secret and
+> the `KAGGLE_KERNEL_ID` / `KAGGLE_HF_TOKEN_DATASET` repo variables (setup in
+> the ADR). Fallback happens **only** on launch preconditions: a slice that
+> started and then failed never switches providers.
 
 > **Note:** The `Speed: X steps/s` log line reports the current logging interval, not
 > wall-clock throughput. Measured T4 throughput on 2026-09-12 was 1.16 steps/s at batch 32,
@@ -145,6 +158,20 @@ gh secret set HF_TOKEN --body "hf_xxx"
 ```
 
 Generate token: https://huggingface.co/settings/tokens (write permission)
+
+### Kaggle (provider fallback)
+```bash
+export KAGGLE_API_TOKEN=xxx   # kaggle.com → Settings → API → Generate New Token
+
+# GitHub Secrets / variables used by the pool (ADR-067)
+gh secret set KAGGLE_API_TOKEN --body "xxx"
+gh variable set KAGGLE_KERNEL_ID -b "d-oit/tiny-cats-dit-slice"
+gh variable set KAGGLE_HF_TOKEN_DATASET -b "d-oit/tiny-cats-hf-token"
+```
+
+Kaggle cannot attach secrets at kernel-push time (kaggle-api#582), so the
+kernel reads `HF_TOKEN` from the private dataset
+(`/kaggle/input/<dataset>/HF_TOKEN`), the environment, or Kaggle Secrets.
 
 ## Code Style
 

@@ -29,9 +29,13 @@ import argparse
 import io
 import itertools
 import json
+import os
 import pickletools
 import shlex
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 from dataclasses import asdict, dataclass, field
@@ -114,13 +118,9 @@ ADAPTERS: dict[str, ProviderAdapter] = {
     ),
     "kaggle": ProviderAdapter(
         name="kaggle",
-        supported=False,
+        supported=True,
         gpu_models=["T4", "P100"],
         session_limit_minutes=540,
-        launch_hint=(
-            "run manually as a Kaggle notebook/kernel: "
-            "python scripts/train_kaggle.py --hub-resume"
-        ),
     ),
     "hf_spaces": ProviderAdapter(
         name="hf_spaces",
@@ -214,6 +214,67 @@ def parse_slice_targets(
     return remaining or [steps]
 
 
+def _build_auto_command(
+    *,
+    target: int,
+    batch_size: str,
+    lr: str,
+    save_interval: str,
+    hub_push_interval: str,
+    hub_resume: bool,
+    no_hub_push: bool,
+    warmup_steps: str | None,
+    min_lr: str | None,
+    schedule_steps: str | None,
+    allow_experiment_mismatch: bool,
+    experiment_id: str,
+    hub_repo: str,
+    kernel_id: str | None,
+    hf_token_dataset: str | None,
+) -> list[str]:
+    """Command for ``--provider auto``: the modal→kaggle fallback dispatcher.
+
+    The dispatcher walks the chain and only falls back on a *launch
+    precondition* failure (e.g. an exhausted Modal spend limit), never on a
+    training failure — a slice that ran and broke stays visible (ADR-067).
+    """
+    command = [
+        "python",
+        "src/provider_auto.py",
+        "--target",
+        str(target),
+        "--hub-repo",
+        hub_repo,
+        "--experiment-id",
+        experiment_id,
+        "--batch-size",
+        str(batch_size),
+        "--lr",
+        str(lr),
+        "--save-interval",
+        str(save_interval),
+        "--hub-push-interval",
+        str(hub_push_interval),
+    ]
+    for flag, value in (
+        ("--warmup-steps", warmup_steps),
+        ("--min-lr", min_lr),
+        ("--schedule-steps", schedule_steps),
+        ("--kernel-id", kernel_id),
+        ("--hf-token-dataset", hf_token_dataset),
+    ):
+        if value is not None and value != "":
+            command.extend([flag, str(value)])
+    for flag, enabled in (
+        ("--hub-resume", hub_resume),
+        ("--no-hub-push", no_hub_push),
+        ("--allow-experiment-mismatch", allow_experiment_mismatch),
+    ):
+        if enabled:
+            command.append(flag)
+    return command
+
+
 def build_launch_command(
     provider: str,
     target: int,
@@ -231,19 +292,87 @@ def build_launch_command(
     early_stopping_patience: str | None = None,
     allow_experiment_mismatch: bool = False,
     experiment_id: str = DEFAULT_EXPERIMENT_ID,
+    hub_repo: str = DEFAULT_HUB_REPO,
+    kernel_id: str | None = None,
+    hf_token_dataset: str | None = None,
 ) -> list[str]:
     """Build the exact command that launches one bounded provider session.
 
-    Currently only the Modal adapter can be launched headlessly; every other
-    provider raises :class:`UnsupportedProviderError` (WP5: fail clearly).
+    Modal runs the trainer directly in a container; Kaggle packages a private
+    script kernel and polls it to completion (ADR-067). Providers with no
+    headless adapter raise :class:`UnsupportedProviderError` — the control
+    plane never falls back to CPU simulation (WP5).
     """
+    if provider.strip().lower() == "auto":
+        return _build_auto_command(
+            target=target,
+            batch_size=batch_size,
+            lr=lr,
+            save_interval=save_interval,
+            hub_push_interval=hub_push_interval,
+            hub_resume=hub_resume,
+            no_hub_push=no_hub_push,
+            warmup_steps=warmup_steps,
+            min_lr=min_lr,
+            schedule_steps=schedule_steps,
+            allow_experiment_mismatch=allow_experiment_mismatch,
+            experiment_id=experiment_id,
+            hub_repo=hub_repo,
+            kernel_id=kernel_id,
+            hf_token_dataset=hf_token_dataset,
+        )
+
     adapter = get_adapter(provider)
+    if target <= 0:
+        raise ValueError(f"target must be positive, got {target}")
+
+    if adapter.name == "kaggle":
+        if not kernel_id:
+            raise ValueError(
+                "the kaggle provider needs --kernel-id owner/slug (the private "
+                "kernel its slices are pushed to)"
+            )
+        kaggle_command = [
+            "python",
+            "src/kaggle_provider.py",
+            "--target",
+            str(target),
+            "--kernel-id",
+            kernel_id,
+            "--hub-repo",
+            hub_repo,
+            "--experiment-id",
+            experiment_id,
+            "--batch-size",
+            str(batch_size),
+            "--lr",
+            str(lr),
+            "--save-interval",
+            str(save_interval),
+            "--hub-push-interval",
+            str(hub_push_interval),
+        ]
+        for flag, value in (
+            ("--warmup-steps", warmup_steps),
+            ("--min-lr", min_lr),
+            ("--schedule-steps", schedule_steps),
+        ):
+            if value is not None:
+                kaggle_command.extend([flag, str(value)])
+        if hf_token_dataset:
+            kaggle_command.extend(["--hf-token-dataset", hf_token_dataset])
+        if hub_resume:
+            kaggle_command.append("--hub-resume")
+        if no_hub_push:
+            kaggle_command.append("--no-hub-push")
+        if allow_experiment_mismatch:
+            kaggle_command.append("--allow-experiment-mismatch")
+        return kaggle_command
+
     if adapter.name != "modal":
         raise UnsupportedProviderError(
             f"No launch recipe for provider {adapter.name!r} yet. {adapter.launch_hint}"
         )
-    if target <= 0:
-        raise ValueError(f"target must be positive, got {target}")
 
     command = [
         "modal",
@@ -294,6 +423,74 @@ def build_launch_command(
     if allow_experiment_mismatch:
         command.append("--allow-experiment-mismatch")
     return command
+
+
+def fetch_artifact(
+    *,
+    provider: str,
+    name: str,
+    dest_dir: str | Path,
+    hub_repo: str = DEFAULT_HUB_REPO,
+    experiment_id: str = DEFAULT_EXPERIMENT_ID,
+    token: str | None = None,
+) -> Path | None:
+    """Materialise one pool artifact locally, provider-agnostically (ADR-067).
+
+    Modal keeps the pool on its ``dit-outputs`` volume; every other provider's
+    slices travel through the HF Hub canonical layout (ADR-064). This hides
+    that difference from the workflow, which needs fixed local paths for the
+    provider report and the checkpoint verifier.
+
+    Args:
+        provider: Provider that ran the slice (``modal`` or ``kaggle``).
+        name: Artifact file name, e.g. ``dit_model.pt``.
+        dest_dir: Directory to materialise ``name`` into.
+        hub_repo: HF Hub repo for Hub-backed providers.
+        experiment_id: Experiment whose pointer resolves the Hub snapshot.
+        token: HF token (defaults to ``HF_TOKEN`` in the environment).
+
+    Returns:
+        The local path when fetched, ``None`` when the artifact does not exist
+        yet (callers warn and continue, matching the previous inline shell).
+
+    Raises:
+        UnsupportedProviderError: For providers without an artifact source.
+    """
+    dest = Path(dest_dir) / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    if provider.strip().lower() == "modal":
+        result = subprocess.run(
+            ["modal", "volume", "get", "dit-outputs", f"{POOL_ROOT}/{name}", str(dest)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return None
+        return dest
+
+    adapter = get_adapter(provider)  # rejects unsupported providers loudly
+    if adapter.name != "kaggle":
+        raise UnsupportedProviderError(
+            f"No artifact source for provider {adapter.name!r}; "
+            "supported: modal (volume), kaggle (Hub)."
+        )
+
+    from gpu_pool import pull_checkpoint_from_hub
+
+    token = token or os.environ.get("HF_TOKEN")
+    with tempfile.TemporaryDirectory() as tmp:
+        pulled = pull_checkpoint_from_hub(
+            hub_repo=hub_repo,
+            checkpoint_name=name,
+            output_dir=tmp,
+            token=token,
+            experiment_id=experiment_id,
+        )
+        if pulled is None or not Path(pulled).is_file():
+            return None
+        shutil.copy2(pulled, dest)
+    return dest
 
 
 def fetch_remote_completed(
@@ -738,6 +935,19 @@ def _cmd_plan(args: argparse.Namespace) -> int:
 
 
 def _cmd_gate(args: argparse.Namespace) -> int:
+    if args.provider.strip().lower() == "auto":
+        # `auto` walks the launchable chain; the gate confirms every member
+        # has a real adapter, so a fallback can never land on a CPU simulation.
+        for adapter in ADAPTERS.values():
+            if adapter.supported:
+                print(
+                    f"supported: {adapter.name} gpu={adapter.gpu_model} "
+                    f"vram={adapter.vram_gb}GB "
+                    f"session_limit={adapter.session_limit_minutes}min"
+                )
+        chain = " -> ".join(a.name for a in ADAPTERS.values() if a.supported)
+        print(f"auto chain: {chain}")
+        return 0
     requested = (
         sorted(ADAPTERS) if args.provider == "all" else [args.provider.strip().lower()]
     )
@@ -763,24 +973,48 @@ def _cmd_gate(args: argparse.Namespace) -> int:
 
 
 def _cmd_launch(args: argparse.Namespace) -> int:
-    command = build_launch_command(
-        args.provider,
-        args.target,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        save_interval=args.save_interval,
-        hub_push_interval=args.hub_push_interval,
-        hub_resume=args.hub_resume,
-        no_hub_push=args.no_hub_push,
-        warmup_steps=args.warmup_steps,
-        min_lr=args.min_lr,
-        schedule_steps=args.schedule_steps,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        early_stopping_patience=args.early_stopping_patience,
-        allow_experiment_mismatch=args.allow_experiment_mismatch,
+    try:
+        command = build_launch_command(
+            args.provider,
+            args.target,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            save_interval=args.save_interval,
+            hub_push_interval=args.hub_push_interval,
+            hub_resume=args.hub_resume,
+            no_hub_push=args.no_hub_push,
+            warmup_steps=args.warmup_steps,
+            min_lr=args.min_lr,
+            schedule_steps=args.schedule_steps,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
+            early_stopping_patience=args.early_stopping_patience,
+            allow_experiment_mismatch=args.allow_experiment_mismatch,
+            experiment_id=args.experiment_id,
+            hub_repo=args.hub_repo,
+            kernel_id=args.kernel_id,
+            hf_token_dataset=args.hf_token_dataset,
+        )
+    except (ValueError, UnsupportedProviderError) as exc:
+        # Configuration problems (missing --kernel-id, unknown provider) must
+        # be actionable in the workflow log, not an argparse traceback.
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(shlex.join(command))
+    return 0
+
+
+def _cmd_fetch_artifact(args: argparse.Namespace) -> int:
+    path = fetch_artifact(
+        provider=args.provider,
+        name=args.name,
+        dest_dir=args.dest,
+        hub_repo=args.hub_repo,
         experiment_id=args.experiment_id,
     )
-    print(shlex.join(command))
+    if path is None:
+        print(f"artifact not available: {args.name} (provider={args.provider})")
+        return 1
+    print(f"fetched {args.name} -> {path}")
     return 0
 
 
@@ -906,6 +1140,17 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument("--warmup-steps", default=None)
     launch.add_argument("--min-lr", default=None)
     launch.add_argument("--schedule-steps", default=None)
+    launch.add_argument("--hub-repo", default=DEFAULT_HUB_REPO)
+    launch.add_argument(
+        "--kernel-id",
+        default=None,
+        help="owner/slug of the Kaggle slice kernel (required for --provider kaggle)",
+    )
+    launch.add_argument(
+        "--hf-token-dataset",
+        default=None,
+        help="private Kaggle dataset (owner/slug) holding the HF_TOKEN file",
+    )
     launch.add_argument("--gradient-accumulation-steps", default=None)
     launch.add_argument("--early-stopping-patience", default=None)
     launch.add_argument(
@@ -915,6 +1160,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     launch.add_argument("--experiment-id", default=DEFAULT_EXPERIMENT_ID)
     launch.set_defaults(func=_cmd_launch)
+
+    fetch = sub.add_parser(
+        "fetch-artifacts",
+        help="materialise a pool artifact for the provider that ran the slice",
+    )
+    fetch.add_argument("--provider", required=True)
+    fetch.add_argument("--name", required=True, help="artifact file name")
+    fetch.add_argument("--dest", required=True, help="destination directory")
+    fetch.add_argument("--hub-repo", default=DEFAULT_HUB_REPO)
+    fetch.add_argument("--experiment-id", default=DEFAULT_EXPERIMENT_ID)
+    fetch.set_defaults(func=_cmd_fetch_artifact)
 
     verify = sub.add_parser(
         "verify", help="verify provider artifacts against the global target"

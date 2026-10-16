@@ -139,7 +139,7 @@ def setup_kaggle_dirs() -> tuple[Path, Path]:
     return data_dir, checkpoint_dir
 
 
-def prepare_kaggle_data(data_dir: str | Path) -> bool:
+def prepare_kaggle_data(data_dir: str | Path, *, force_download: bool = False) -> bool:
     """Prepare dataset for Kaggle training.
 
     Tries in order:
@@ -149,6 +149,11 @@ def prepare_kaggle_data(data_dir: str | Path) -> bool:
 
     Args:
         data_dir: Target data directory.
+        force_download: Skip mounted datasets and always materialise the data
+            with ``data/download.py``. The control-plane slices use this so the
+            ``relpath:size`` dataset fingerprint matches the Modal runs' —
+            a mounted/repacked copy would otherwise fail the resume manifest
+            gate (ADR-063/ADR-067) even when the images are identical.
 
     Returns:
         True if data is ready.
@@ -167,19 +172,24 @@ def prepare_kaggle_data(data_dir: str | Path) -> bool:
         Path("/kaggle/input/oxford-iiit-pet"),
     ]
 
-    for kaggle_ds in kaggle_inputs:
-        if kaggle_ds.exists() and list(kaggle_ds.iterdir()):
-            logger.info(f"Using Kaggle dataset: {kaggle_ds}")
-            # Symlink or copy
-            for item in kaggle_ds.iterdir():
-                dest = data_path / item.name
-                if item.is_dir() and not item.name.startswith("."):
-                    if not dest.exists():
-                        shutil.copytree(str(item), str(dest))
-                elif item.is_file():
-                    shutil.copy2(str(item), str(dest))
-            logger.info(f"Copied dataset to {data_dir}")
-            return True
+    if force_download:
+        logger.info(
+            "--force-download: skipping mounted datasets for fingerprint parity"
+        )
+    else:
+        for kaggle_ds in kaggle_inputs:
+            if kaggle_ds.exists() and list(kaggle_ds.iterdir()):
+                logger.info(f"Using Kaggle dataset: {kaggle_ds}")
+                # Symlink or copy
+                for item in kaggle_ds.iterdir():
+                    dest = data_path / item.name
+                    if item.is_dir() and not item.name.startswith("."):
+                        if not dest.exists():
+                            shutil.copytree(str(item), str(dest))
+                    elif item.is_file():
+                        shutil.copy2(str(item), str(dest))
+                logger.info(f"Copied dataset to {data_dir}")
+                return True
 
     # Download fresh
     logger.info("No Kaggle dataset found — downloading fresh...")
@@ -311,7 +321,102 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--num-workers", type=int, default=2, help="DataLoader workers")
 
+    # Campaign contract (ADR-063/ADR-067): control-plane slices must stay
+    # manifest-identical to the Modal runs — same experiment identity, LR floor
+    # and horizon, seed — or the resume manifest gate rejects the checkpoint.
+    parser.add_argument(
+        "--experiment-id",
+        type=str,
+        default="dit-breed-conditioned-v4",
+        help="Manifest identity; resumes must match",
+    )
+    parser.add_argument(
+        "--min-lr", type=float, default=1e-6, help="LR floor for the cosine decay"
+    )
+    parser.add_argument(
+        "--schedule-steps",
+        type=int,
+        default=None,
+        help="Campaign-wide LR horizon (global target) so slices cannot shorten the cosine",
+    )
+    parser.add_argument(
+        "--hub-push-interval",
+        type=int,
+        default=5_000,
+        help="Canonical mid-run Hub push cadence in steps (0 disables)",
+    )
+    parser.add_argument(
+        "--allow-experiment-mismatch",
+        action="store_true",
+        help="Resume despite a manifest mismatch (explicit migration only)",
+    )
+    parser.add_argument(
+        "--force-download",
+        action="store_true",
+        help="Materialise the dataset with data/download.py even if a Kaggle dataset is mounted (fingerprint parity)",
+    )
+
     return parser.parse_args()
+
+
+def push_progress_backstop(
+    *,
+    checkpoint_dir: Path,
+    hub_repo: str,
+    experiment_id: str,
+    hub_push_interval: int,
+    token: str | None = None,
+) -> None:
+    """Canonical Hub safety push for a run that ended between intervals.
+
+    ``train_dit_local`` pushes the canonical layout (immutable ``step-XXXXXX``
+    snapshots + the ``latest/manifest.json`` pointer, ADR-064) every
+    ``--hub-push-interval`` steps. A crash or early stop *between* boundaries
+    would otherwise leave the newest checkpoint local-only; pushing on a
+    boundary again would only re-upload an identical snapshot, so this skips
+    that case.
+    """
+    if hub_push_interval <= 0:
+        return
+    try:
+        from gpu_pool import push_checkpoint_to_hub
+        from training_state import TRAINING_STATE_FILENAME, read_training_state
+    except Exception as exc:  # pragma: no cover - import environment issue
+        logger.warning(f"Canonical backstop push unavailable: {exc}")
+        return
+
+    state_path = checkpoint_dir / TRAINING_STATE_FILENAME
+    state = read_training_state(state_path)
+    completed = state.get("completed_steps") if state else None
+    if not isinstance(completed, int) or completed <= 0:
+        logger.warning("No completed_steps in the training state; backstop skipped")
+        return
+    if completed % hub_push_interval == 0:
+        logger.info(
+            f"Step {completed:,} sits on a Hub push boundary; no backstop needed"
+        )
+        return
+
+    pushed = 0
+    for name in ("dit_model.pt", "dit_model_ema.pt"):
+        path = checkpoint_dir / name
+        if not path.is_file():
+            continue
+        try:
+            push_checkpoint_to_hub(
+                checkpoint_path=path,
+                hub_repo=hub_repo,
+                checkpoint_name=name,
+                token=token,
+                experiment_id=experiment_id,
+                completed_steps=completed,
+                training_state_path=state_path,
+            )
+            pushed += 1
+        except Exception as exc:
+            logger.warning(f"Backstop push failed for {name}: {exc}")
+    if pushed:
+        logger.info(f"Backstop push complete at step {completed:,}")
 
 
 def main() -> int:
@@ -359,7 +464,7 @@ def main() -> int:
         return 0
 
     # Prepare dataset
-    if not prepare_kaggle_data(data_dir):
+    if not prepare_kaggle_data(data_dir, force_download=args.force_download):
         logger.error("Cannot proceed without dataset")
         return 1
 
@@ -424,11 +529,18 @@ def main() -> int:
             mixed_precision=True,
             gradient_clip=args.gradient_clip,
             warmup_steps=args.warmup_steps,
+            min_lr=args.min_lr,
+            schedule_steps=args.schedule_steps,
             save_interval=args.save_interval,
             sample_interval=args.sample_interval,
             early_stopping_patience=args.early_stopping_patience,
             early_stopping_min_delta=0.001,
             augmentation_level=args.augmentation_level,
+            hub_push_interval=args.hub_push_interval,
+            no_hub_push=args.no_hub_push,
+            hub_repo=args.hub_repo,
+            experiment_id=args.experiment_id,
+            allow_experiment_mismatch=args.allow_experiment_mismatch,
             seed=args.seed,
             resume=resume_from,
         )
@@ -437,22 +549,18 @@ def main() -> int:
         logger.info(f"Training completed in {elapsed:.0f}s ({elapsed / 3600:.1f}h)")
         logger.info(f"Final loss: {final_loss:.6e}")
 
-        # Push to Hub
-        if not args.no_hub_push:
-            from gpu_pool import push_checkpoint_to_hub
-
-            for ckpt_name, ckpt_path in [
-                ("dit_model.pt", output),
-                ("dit_model_ema.pt", ema_output),
-            ]:
-                if Path(ckpt_path).exists():
-                    push_checkpoint_to_hub(
-                        checkpoint_path=ckpt_path,
-                        hub_repo=args.hub_repo,
-                        checkpoint_name=ckpt_name,
-                        token=args.hub_token,
-                    )
-            logger.info("Checkpoints synced to Hub from Kaggle")
+        # Hub sync is canonical now (ADR-064): train_dit_local pushes immutable
+        # step-XXXXXX snapshots + the latest/manifest.json pointer every
+        # --hub-push-interval steps, which is what the control plane reads.
+        # The legacy flat pushes that used to live here wrote a parallel layout
+        # nothing consumes.
+        if args.no_hub_push or args.hub_push_interval <= 0:
+            logger.info("Hub sync disabled (--no-hub-push / --hub-push-interval 0)")
+        else:
+            logger.info(
+                f"Canonical Hub sync performed by the trainer every "
+                f"{args.hub_push_interval} steps"
+            )
 
         # Save to Kaggle output
         kaggle_output = Path("/kaggle/working")
@@ -471,20 +579,16 @@ def main() -> int:
         logger.error(f"Training failed: {e}", exc_info=True)
         return 1
     finally:
-        # Push partial checkpoint
-        partial_ema = checkpoint_dir / "dit_model_ema.pt"
-        if partial_ema.exists() and not args.no_hub_push:
-            try:
-                from gpu_pool import push_checkpoint_to_hub
-
-                push_checkpoint_to_hub(
-                    checkpoint_path=partial_ema,
-                    hub_repo=args.hub_repo,
-                    checkpoint_name="partial_dit_model_ema.pt",
-                    token=args.hub_token,
-                )
-            except Exception:
-                pass
+        # Canonical safety net: covers a run that died between push intervals
+        # (the trainer's own pushes are interval-boundary only).
+        if not args.no_hub_push:
+            push_progress_backstop(
+                checkpoint_dir=checkpoint_dir,
+                hub_repo=args.hub_repo,
+                experiment_id=args.experiment_id,
+                hub_push_interval=args.hub_push_interval,
+                token=args.hub_token,
+            )
 
 
 if __name__ == "__main__":
