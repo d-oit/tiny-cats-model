@@ -80,3 +80,19 @@ the 400k release tag (2026-09-25). This is therefore not specific to the
 600k stretch: any run that reached its horizon through slices is suspect, and
 the late-stage 400k slices most likely sat at the floor too (unverified —
 that would need the 400k-era checkpoints, which were superseded).
+
+## Implemented 2026-10-16
+
+- **Horizon (item 1).** The effective cosine horizon is now
+  `max(slice target, --schedule-steps, recorded checkpoint horizon)` and is
+  persisted under its own key (`schedule_steps`; `steps` stays as the legacy
+  alias for pre-fix checkpoints). The control plane passes the campaign goal
+  (`train-pool.yml` → `providers.py launch --schedule-steps 600000`), so a
+  slice target can no longer shorten the decay. `schedule_steps` is not part
+  of the experiment manifest, so no migration flag was needed.
+- **Floor guard (item 3).** A resume whose cosine decay term has fallen to or
+  below `min_lr_ratio` now logs an explicit warning, including the effective
+  LR as a percentage of nominal; otherwise the resume logs the LR it
+  materialised.
+- **EMA (item 2) is deliberately untouched** — the beta 0.999 stage-2 choice
+  is a training-recipe decision, not a state-consistency fix.

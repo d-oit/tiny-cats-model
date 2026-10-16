@@ -155,6 +155,14 @@ class TestLaunchCommand:
         assert "--min-lr" in raised
         assert raised[raised.index("--min-lr") + 1] == "2e-5"
 
+    def test_schedule_steps_is_opt_in(self) -> None:
+        """--schedule-steps (campaign LR horizon) is opt-in."""
+        default_command = build_launch_command("modal", 60_000)
+        assert "--schedule-steps" not in default_command
+
+        horizon = build_launch_command("modal", 60_000, schedule_steps="600000")
+        assert horizon[horizon.index("--schedule-steps") + 1] == "600000"
+
     def test_unsupported_provider_cannot_launch(self) -> None:
         with pytest.raises(UnsupportedProviderError):
             build_launch_command("kaggle", 60_000)
