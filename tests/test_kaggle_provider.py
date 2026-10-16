@@ -427,7 +427,6 @@ class TestCli:
             "_load_api",
             lambda: FakeApi(statuses=["RUNNING", "COMPLETE"]),
         )
-        monkeypatch.setattr(kaggle_provider.time, "sleep", lambda _s: None)
         code = main(
             [
                 "--target",
@@ -436,6 +435,11 @@ class TestCli:
                 "d-oit/slice",
                 "--workspace",
                 str(tmp_path / "kernel"),
+                # Interval 0 keeps the real poll loop instant (the CLI path
+                # uses wait_for_kernel's bound defaults, so patching
+                # `time.sleep` here would not take effect).
+                "--poll-interval-seconds",
+                "0",
                 "--download-dir",
                 str(tmp_path / "out"),
                 "--log-file",
@@ -471,9 +475,6 @@ class TestCli:
     ) -> None:
         api = FakeApi(statuses=["RUNNING"] * 5)
         monkeypatch.setattr(kaggle_provider, "_load_api", lambda: api)
-        ticks = iter([0.0, 100.0] * 5)
-        monkeypatch.setattr(kaggle_provider.time, "monotonic", lambda: next(ticks))
-        monkeypatch.setattr(kaggle_provider.time, "sleep", lambda _s: None)
         code = main(
             [
                 "--target",
@@ -482,8 +483,12 @@ class TestCli:
                 "d-oit/slice",
                 "--workspace",
                 str(tmp_path / "kernel"),
+                # Zero deadline: the first non-terminal poll is already past
+                # it, so the TIMEOUT mapping is exercised without sleeping.
                 "--poll-timeout-seconds",
-                "10",
+                "0",
+                "--poll-interval-seconds",
+                "0",
                 "--download-dir",
                 str(tmp_path / "out"),
                 "--log-file",
