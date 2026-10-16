@@ -226,6 +226,7 @@ def build_launch_command(
     no_hub_push: bool = False,
     warmup_steps: str | None = None,
     min_lr: str | None = None,
+    schedule_steps: str | None = None,
     gradient_accumulation_steps: str | None = None,
     early_stopping_patience: str | None = None,
     allow_experiment_mismatch: bool = False,
@@ -278,6 +279,9 @@ def build_launch_command(
         # experiment manifest, so raising it on a resume lifts the floor
         # without tripping the manifest gate.
         ("--min-lr", min_lr),
+        # Campaign LR horizon (docs/LR-PLATEAU-DIAGNOSIS-2026-10-02.md): keeps
+        # the cosine from being shortened to each slice's own target.
+        ("--schedule-steps", schedule_steps),
     ):
         if value is not None:
             command.extend([flag, str(value)])
@@ -770,6 +774,7 @@ def _cmd_launch(args: argparse.Namespace) -> int:
         no_hub_push=args.no_hub_push,
         warmup_steps=args.warmup_steps,
         min_lr=args.min_lr,
+        schedule_steps=args.schedule_steps,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         early_stopping_patience=args.early_stopping_patience,
         allow_experiment_mismatch=args.allow_experiment_mismatch,
@@ -900,6 +905,7 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument("--no-hub-push", action="store_true")
     launch.add_argument("--warmup-steps", default=None)
     launch.add_argument("--min-lr", default=None)
+    launch.add_argument("--schedule-steps", default=None)
     launch.add_argument("--gradient-accumulation-steps", default=None)
     launch.add_argument("--early-stopping-patience", default=None)
     launch.add_argument(

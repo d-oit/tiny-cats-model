@@ -256,6 +256,7 @@ jobs:
             --save-interval 2500 \
             --hub-push-interval ${{ github.event.inputs.hub_push_interval || '5000' }} \
             --experiment-id dit-breed-conditioned-v4 \
+            --schedule-steps ${{ github.event.inputs.steps || '600000' }} \
             "${HUBFLAGS[@]}" "${MIGRATEFLAGS[@]}" "${LRFLAGS[@]}")"
           echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           echo "Launch: $CMD"

@@ -35,6 +35,7 @@ from train_dit import (
     build_lr_lambda,
     load_checkpoint,
     parse_args,
+    resolve_schedule_horizon,
     save_checkpoint,
 )
 
@@ -169,6 +170,18 @@ class TestLrSchedule:
 
         assert at_end == pytest.approx(0.0)
         assert past_end == pytest.approx(0.0)
+
+    def test_horizon_is_the_largest_known_bound(self) -> None:
+        """The campaign horizon must survive slices and stale checkpoints."""
+        assert resolve_schedule_horizon(540_000) == 540_000
+        assert resolve_schedule_horizon(480_000, requested=600_000) == 600_000
+        # A stale recorded horizon (a 525k target from a killed run) must not
+        # shorten a longer slice target.
+        assert resolve_schedule_horizon(540_000, recorded=525_000) == 540_000
+        assert (
+            resolve_schedule_horizon(480_000, requested=600_000, recorded=525_000)
+            == 600_000
+        )
 
 
 class TestCheckpointState:
