@@ -262,6 +262,16 @@ jobs:
           echo "Launch: $CMD"
           eval "$CMD" 2>&1 | tee modal-training.log
 
+      - name: Annotate launch failure
+        # Surface the provider's own error on the run page: the 2026-10-03 ->
+        # 2026-10-16 stall was a one-line "Workspace ... has exceeded its
+        # spend limit" buried in the launch step log.
+        if: steps.train.outcome == 'failure'
+        run: |
+          ERR="$(grep -aiE 'exceeded its spend limit|error' modal-training.log 2>/dev/null \
+            | head -3 | tr '\n' ' ' || true)"
+          echo "::error title=Slice ${{ matrix.target }} launch failed::${ERR:-see launch step log}"
+
       - name: Write provider report
         if: always()
         env:
@@ -346,6 +356,11 @@ jobs:
     needs: [plan-slices, train-slice, provider-gate]
     if: always()
     timeout-minutes: 5
+    # Only this job may write issues: it maintains the campaign-stall tracker
+    # (see "Sync campaign-stall issue" below).
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v7
 
@@ -399,6 +414,75 @@ jobs:
               # here instead of reporting a vacuous success.
               print('❌ One or more slices failed (see provider-report-* artifacts)')
           "
+
+      - name: Sync campaign-stall issue
+        # An unattended stall must reach a human: from 2026-10-03 to 2026-10-16
+        # every scheduled run failed on a Modal spend limit (~50 in a row) and
+        # nothing surfaced it. Healthy runs close the tracker issue; unhealthy
+        # ones open or update it, and GitHub notifies the subscribers.
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SLICE_RESULT: ${{ needs.train-slice.result }}
+          PLAN_RESULT: ${{ needs.plan-slices.result }}
+          GATE_RESULT: ${{ needs.provider-gate.result }}
+          MATRIX: ${{ needs.plan-slices.outputs.matrix }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          LABEL="campaign-stall"
+          TITLE="Campaign stalled: GPU pool training is not advancing"
+
+          SLICES="$(python3 -c "import json, os; m = os.environ.get('MATRIX') or '{}'; print(len(json.loads(m).get('include', [])))")"
+
+          close_tracker() {
+            # Best-effort cleanup: a hiccup here must not turn a green run red.
+            local numbers
+            numbers="$(gh issue list --state open --label "$LABEL" --json number --jq '.[].number')" || return 0
+            local number
+            for number in $numbers; do
+              gh issue close "$number" \
+                --comment "Recovered: ${RUN_URL} finished healthy (slices=${SLICES}, slice result=${SLICE_RESULT})." \
+                || echo "::warning::could not close stale tracker issue #${number}"
+            done
+          }
+
+          # An explicit dispatch with an unsupported provider is a *deliberate*
+          # gate rejection, not a stall.
+          if [ "$GATE_RESULT" = "failed" ]; then
+            echo "Provider gate rejected this dispatch; no stall signal."
+            exit 0
+          fi
+
+          # Healthy: every slice completed, or the plan found nothing left to
+          # train (global target already reached -> no-op slice).
+          if [ "$SLICE_RESULT" = "success" ] || \
+             { [ "$PLAN_RESULT" = "success" ] && [ "$SLICES" = "0" ]; }; then
+            close_tracker
+            echo "Campaign healthy (planned slices=${SLICES}); tracker issue cleared if any."
+            exit 0
+          fi
+
+          BODY="$(printf '%s\n' \
+            "The unattended pool run finished without a successful slice." \
+            "" \
+            "- run: ${RUN_URL}" \
+            "- planned slices: ${SLICES} (plan job: ${PLAN_RESULT})" \
+            "- slice result: ${SLICE_RESULT}" \
+            "" \
+            "Inspect the failing slice job for the launch/verify error; the raw" \
+            "provider output is attached as the modal-training-log-* artifact." \
+          )"
+
+          gh label create "$LABEL" --color b60205 \
+            --description "Unattended GPU-pool campaign is stalled" --force >/dev/null
+          EXISTING="$(gh issue list --state open --label "$LABEL" --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "Updated tracker issue #${EXISTING}"
+          else
+            gh issue create --title "$TITLE" --label "$LABEL" --body "$BODY"
+          fi
 
       - name: Verify Hub checkpoints
         # Only meaningful when the run was supposed to push: schedule always
