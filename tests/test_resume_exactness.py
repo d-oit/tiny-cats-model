@@ -475,3 +475,21 @@ class TestScheduleHorizon:
         checkpoint = load_ckpt(output)
         assert checkpoint["step"] == 30
         assert checkpoint["schedule_steps"] == 60
+
+    def test_resume_with_zero_lr_does_not_crash(
+        self, tiny_dataset: Path, tmp_path: Path
+    ) -> None:
+        """lr=0 must survive the resume LR logging (no 0/0 ratio).
+
+        The resume logs the effective LR as a percentage of nominal; with
+        ``--lr 0`` the nominal LR is 0 and the ratio must be skipped rather
+        than raising ZeroDivisionError.
+        """
+        output = tmp_path / "ckpts" / "dit_model.pt"
+        factory = CountingModelFactory()
+
+        run_train(tiny_dataset, output, factory, steps=10, lr=0.0)
+        run_train(tiny_dataset, output, factory, steps=20, lr=0.0, resume=output)
+
+        # 10 steps + a 10-step resume; the resume must complete, not die on 0/0.
+        assert factory.train_forwards == 20

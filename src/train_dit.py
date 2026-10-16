@@ -1756,20 +1756,25 @@ def train_dit_local(
         cosine_decay = 0.5 * (
             1.0 + math.cos(math.pi * min(max(cosine_progress, 0.0), 1.0))
         )
+        # A zero --lr leaves no ratio to report (and 0/0 would raise); fall
+        # back to the absolute LR instead of dividing.
+        lr_share = (
+            f"{100 * resumed_lr / base_lr_resume:.1f}% of nominal"
+            if base_lr_resume > 0
+            else "nominal LR is 0"
+        )
         if min_lr_ratio_resume > 0 and cosine_decay <= min_lr_ratio_resume:
             logger.warning(
                 f"LR is pinned at the --min-lr floor: cosine decay "
                 f"{cosine_decay:.4f} <= floor {min_lr_ratio_resume:.4f}; "
-                f"effective LR {resumed_lr:.3e} "
-                f"({100 * resumed_lr / base_lr_resume:.1f}% of nominal). "
+                f"effective LR {resumed_lr:.3e} ({lr_share}). "
                 "The cosine ran out before the target — raise --min-lr or "
                 "extend --schedule-steps if more progress is expected."
             )
         else:
             logger.info(
                 f"Resumed LR: {resumed_lr:.3e} "
-                f"({100 * resumed_lr / base_lr_resume:.1f}% of nominal, "
-                f"horizon={schedule_horizon:,} steps)"
+                f"({lr_share}, horizon={schedule_horizon:,} steps)"
             )
 
     # Training state. `best_loss` is restored so "improved" is still measured
