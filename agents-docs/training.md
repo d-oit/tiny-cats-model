@@ -110,6 +110,7 @@ python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.y
 | `--augmentation-level` | full | basic/medium/full |
 | `--warmup-steps` | 2,000 | LR warmup steps |
 | `--min-lr` | 1e-6 | LR floor for the cosine decay |
+| `--schedule-steps` | = `--steps` | Campaign-wide LR-cosine horizon; slices never shorten it (`train-pool` passes the global target) |
 | `--val-split` | 0.05 | Held-out fraction for selection/early stopping (0 disables) |
 | `--val-batches` | 8 | Validation batches per evaluation (0 = all) |
 | `--timestep-sampling` | uniform | `uniform` or `logit_normal` |

@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import train_dit
 from dataset import CAT_BREEDS
 from dit import TinyDiT
-from train_dit import train_dit_local
+from train_dit import build_lr_lambda, train_dit_local
 from training_state import (
     IncompatibleExperimentError,
     build_manifest,
@@ -124,6 +124,8 @@ def run_train(
     resume: Path | None = None,
     lr: float = 1e-3,
     save_interval: int = 5,
+    warmup_steps: int = 2_000,
+    schedule_steps: int | None = None,
     allow_experiment_mismatch: bool = False,
     experiment_id: str = "resume-e2e",
     early_stopping_patience: int = 0,
@@ -141,6 +143,8 @@ def run_train(
         mixed_precision=False,
         val_split=0.25,
         val_batches=1,
+        warmup_steps=warmup_steps,
+        schedule_steps=schedule_steps,
         log_interval=10_000,
         save_interval=save_interval,
         sample_interval=10_000,
@@ -407,3 +411,85 @@ class TestIncompatibleResume:
             allow_experiment_mismatch=True,
         )
         assert overridden.train_forwards == 3
+
+
+class TestScheduleHorizon:
+    """The campaign LR horizon must survive slice boundaries.
+
+    ``--schedule-steps`` is the campaign-wide cosine horizon; without it the
+    horizon was "whatever the last slice asked for", so the decay hit its
+    floor long before the campaign goal and the run quietly froze
+    (docs/LR-PLATEAU-DIAGNOSIS-2026-10-02.md).
+    """
+
+    def test_campaign_horizon_governs_the_cosine(
+        self, tiny_dataset: Path, tmp_path: Path
+    ) -> None:
+        factory = CountingModelFactory()
+        output = tmp_path / "ckpts" / "dit_model.pt"
+        lr = 1e-3
+
+        run_train(
+            tiny_dataset,
+            output,
+            factory,
+            steps=20,
+            save_interval=10,
+            warmup_steps=0,
+            lr=lr,
+            schedule_steps=60,
+        )
+
+        checkpoint = load_ckpt(output)
+        assert checkpoint["target_steps"] == 20
+        assert checkpoint["schedule_steps"] == 60
+
+        # At the final step the stored LR must match the *campaign* horizon:
+        # a 20-step slice horizon would already be at the floor (1e-3 ratio),
+        # while horizon 60 keeps the cosine well above it.
+        stored_lr = checkpoint["optimizer_state_dict"]["param_groups"][0]["lr"]
+        expected = lr * build_lr_lambda(0, 60, min_lr_ratio=1e-3)(checkpoint["step"])
+        assert stored_lr == pytest.approx(expected, rel=1e-6)
+
+    def test_resume_continues_the_recorded_campaign_horizon(
+        self, tiny_dataset: Path, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "ckpts" / "dit_model.pt"
+        factory = CountingModelFactory()
+
+        run_train(
+            tiny_dataset,
+            output,
+            factory,
+            steps=20,
+            save_interval=10,
+            schedule_steps=60,
+        )
+        assert load_ckpt(output)["schedule_steps"] == 60
+
+        # Resume with a smaller slice target and no explicit horizon: the
+        # recorded campaign horizon must win, not the slice target.
+        run_train(
+            tiny_dataset, output, factory, steps=30, save_interval=10, resume=output
+        )
+        checkpoint = load_ckpt(output)
+        assert checkpoint["step"] == 30
+        assert checkpoint["schedule_steps"] == 60
+
+    def test_resume_with_zero_lr_does_not_crash(
+        self, tiny_dataset: Path, tmp_path: Path
+    ) -> None:
+        """lr=0 must survive the resume LR logging (no 0/0 ratio).
+
+        The resume logs the effective LR as a percentage of nominal; with
+        ``--lr 0`` the nominal LR is 0 and the ratio must be skipped rather
+        than raising ZeroDivisionError.
+        """
+        output = tmp_path / "ckpts" / "dit_model.pt"
+        factory = CountingModelFactory()
+
+        run_train(tiny_dataset, output, factory, steps=10, lr=0.0)
+        run_train(tiny_dataset, output, factory, steps=20, lr=0.0, resume=output)
+
+        # 10 steps + a 10-step resume; the resume must complete, not die on 0/0.
+        assert factory.train_forwards == 20

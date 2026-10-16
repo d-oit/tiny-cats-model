@@ -45,6 +45,7 @@ python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.y
 | `--lr` | 5e-5 | Learning rate |
 | `--warmup-steps` | 2,000 | LR warmup (shorter = faster convergence) |
 | `--min-lr` | 1e-6 | LR floor for the cosine decay |
+| `--schedule-steps` | = `--steps` | Campaign-wide LR-cosine horizon; per-slice targets never shorten it (persisted in the checkpoint) |
 | `--val-split` | 0.05 | Held-out fraction used for checkpoint selection (0 disables) |
 | `--timestep-sampling` | uniform | `uniform` or `logit_normal` (mid-trajectory focus) |
 | `--augmentation-level` | full | basic/medium/full |

@@ -264,6 +264,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--min-lr", type=float, default=1e-6, help="Minimum LR for cosine decay"
     )
     parser.add_argument(
+        "--schedule-steps",
+        type=int,
+        default=None,
+        help=(
+            "Campaign-wide LR-schedule horizon (global target). Keeps the "
+            "cosine horizon from being shortened by per-slice targets and is "
+            "persisted for later resumes; defaults to this run's --steps "
+            "(docs/LR-PLATEAU-DIAGNOSIS-2026-10-02.md)"
+        ),
+    )
+    parser.add_argument(
         "--gradient-clip",
         type=float,
         default=1.0,
@@ -473,6 +484,35 @@ def build_lr_lambda(
     return lr_lambda
 
 
+def resolve_schedule_horizon(
+    slice_target: int,
+    requested: int | None = None,
+    recorded: int | None = None,
+) -> int:
+    """Effective LR cosine horizon for this run (never shorter than any bound).
+
+    The schedule used to continue ``max(recorded_session_target, slice_target)``
+    — i.e. whatever the last slice happened to ask for — so the campaign goal
+    was recorded nowhere and the cosine could hit its floor far short of the
+    target (docs/LR-PLATEAU-DIAGNOSIS-2026-10-02.md: LR pinned at floor from
+    ~480k). The horizon is now an explicit value that only ever grows.
+
+    Args:
+        slice_target: This slice's ``--steps`` global target.
+        requested: Campaign-wide horizon from ``--schedule-steps``, when given.
+        recorded: Horizon persisted by the checkpoint being resumed, when any.
+
+    Returns:
+        The largest of the known horizons.
+    """
+    candidates = [int(slice_target)]
+    if requested is not None:
+        candidates.append(int(requested))
+    if recorded is not None:
+        candidates.append(int(recorded))
+    return max(candidates)
+
+
 def save_checkpoint(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -487,6 +527,7 @@ def save_checkpoint(
     val_loss: float | None = None,
     val_loss_ema: float | None = None,
     steps: int | None = None,
+    schedule_steps: int | None = None,
     warmup_steps: int | None = None,
     target_steps: int | None = None,
     manifest: dict[str, Any] | None = None,
@@ -509,7 +550,11 @@ def save_checkpoint(
         patience_counter: Consecutive non-improving evaluations.
         val_loss: Held-out validation loss at this step, when measured.
         val_loss_ema: EMA-weight validation loss, when measured.
-        steps: LR-schedule horizon this run is using.
+        steps: LR-schedule horizon this run is using (legacy alias of
+            ``schedule_steps``, kept so pre-fix checkpoints stay readable).
+        schedule_steps: Campaign-wide LR-schedule horizon, independent of a
+            slice's ``target_steps`` (docs/LR-PLATEAU-DIAGNOSIS-2026-10-02.md);
+            the resume path continues this rather than the last slice target.
         warmup_steps: LR-schedule warmup this run is using.
         target_steps: Global target step count for this run (issue #163).
         manifest: Immutable experiment manifest; embedded in the checkpoint
@@ -539,6 +584,7 @@ def save_checkpoint(
         "best_loss": best_loss,
         "patience_counter": patience_counter,
         "steps": steps,
+        "schedule_steps": schedule_steps,
         "warmup_steps": warmup_steps,
         "target_steps": target_steps,
         "manifest": manifest,
@@ -745,6 +791,9 @@ def load_checkpoint(
                 "val_loss": checkpoint.get("val_loss"),
                 "val_loss_ema": checkpoint.get("val_loss_ema"),
                 "steps": checkpoint.get("steps"),
+                # Campaign horizon (post-fix checkpoints); pre-fix ones only
+                # carry the horizon under "steps".
+                "schedule_steps": checkpoint.get("schedule_steps"),
                 "warmup_steps": checkpoint.get("warmup_steps"),
                 # Issue #163: experiment identity, progress and RNG stream for
                 # exact global-step / cross-provider resume. "loaded" marks a
@@ -934,6 +983,7 @@ class DiTTrainer:
         gradient_accumulation_steps: int = 1,
         warmup_steps: int = 2_000,
         min_lr: float = 1e-6,
+        schedule_steps: int | None = None,
         val_split: float = 0.05,
         val_batches: int = 8,
         timestep_sampling: str = "uniform",
@@ -1108,6 +1158,7 @@ class DiTTrainer:
                 gradient_accumulation_steps=gradient_accumulation_steps,
                 warmup_steps=warmup_steps,
                 min_lr=min_lr,
+                schedule_steps=schedule_steps,
                 val_split=val_split,
                 val_batches=val_batches,
                 timestep_sampling=timestep_sampling,
@@ -1333,6 +1384,7 @@ def train_dit_local(
     gradient_accumulation_steps: int = 1,
     warmup_steps: int = 2_000,
     min_lr: float = 1e-6,
+    schedule_steps: int | None = None,
     val_split: float = 0.05,
     val_batches: int = 8,
     timestep_sampling: str = "uniform",
@@ -1372,6 +1424,10 @@ def train_dit_local(
         gradient_accumulation_steps: Number of steps for gradient accumulation.
         warmup_steps: LR warmup steps.
         min_lr: LR floor for the cosine decay.
+        schedule_steps: Campaign-wide LR-schedule horizon. The effective
+            horizon is the largest of this, the slice target (``steps``) and
+            the horizon recorded in the checkpoint being resumed, so a run
+            never re-shortens its cosine (docs/LR-PLATEAU-DIAGNOSIS-2026-10-02.md).
         val_split: Fraction of the dataset held out for validation (0 disables).
         val_batches: Validation batches per evaluation (0 = all).
         timestep_sampling: "uniform" or "logit_normal".
@@ -1515,8 +1571,11 @@ def train_dit_local(
 
     # LR scheduler with warmup and cosine annealing using LambdaLR (ADR-032)
     # The horizon is persisted in checkpoints so a resumed slice keeps decaying
-    # along the original curve instead of restarting it.
-    schedule_steps = steps
+    # along the original curve instead of restarting it. It is the campaign
+    # horizon (--schedule-steps), the slice target and any recorded horizon —
+    # whichever is largest — never just the last slice's target
+    # (docs/LR-PLATEAU-DIAGNOSIS-2026-10-02.md).
+    schedule_horizon = resolve_schedule_horizon(steps, schedule_steps)
     schedule_warmup_steps = warmup_steps
 
     def make_scheduler(horizon_steps: int, horizon_warmup: int) -> LambdaLR:
@@ -1532,7 +1591,7 @@ def train_dit_local(
             optimizer, build_lr_lambda(horizon_warmup, horizon_steps, min_lr_ratio)
         )
 
-    scheduler = make_scheduler(schedule_steps, schedule_warmup_steps)
+    scheduler = make_scheduler(schedule_horizon, schedule_warmup_steps)
 
     # Mixed precision
     scaler = (
@@ -1642,22 +1701,30 @@ def train_dit_local(
                     "Restored RNG state (torch/python/numpy/cuda) from checkpoint"
                 )
 
-        # Continue the recorded LR horizon. Resuming with a *smaller* --steps
-        # than the run was scheduled for used to push the cosine past its end,
-        # where the decay term turns back up and raises the LR mid-run.
-        recorded_steps = resume_state.get("steps")
-        if recorded_steps:
-            schedule_steps = max(int(recorded_steps), steps)
+        # Continue the LR horizon: the largest of this slice's target, the
+        # requested campaign horizon (--schedule-steps) and the horizon the
+        # checkpoint recorded. Never shrink it — a cosine that ends early
+        # leaves the run pinned at the --min-lr floor for the rest of the
+        # campaign (docs/LR-PLATEAU-DIAGNOSIS-2026-10-02.md). Pre-fix
+        # checkpoints carry the horizon under the legacy "steps" key.
+        recorded_horizon = resume_state.get("schedule_steps") or resume_state.get(
+            "steps"
+        )
+        if recorded_horizon:
             schedule_warmup_steps = int(
                 resume_state.get("warmup_steps") or warmup_steps
             )
-            if schedule_steps != steps or schedule_warmup_steps != warmup_steps:
-                logger.info(
-                    f"LR schedule continued from checkpoint: steps={schedule_steps:,}, "
-                    f"warmup={schedule_warmup_steps:,} (requested steps={steps:,}, "
-                    f"warmup={warmup_steps:,})"
-                )
-            scheduler = make_scheduler(schedule_steps, schedule_warmup_steps)
+            schedule_horizon = resolve_schedule_horizon(
+                steps, schedule_steps, int(recorded_horizon)
+            )
+            logger.info(
+                f"LR schedule horizon: {schedule_horizon:,} steps "
+                f"(slice target={steps:,}, "
+                f"requested={schedule_steps if schedule_steps is not None else 'n/a'}, "
+                f"recorded={int(recorded_horizon):,}), "
+                f"warmup={schedule_warmup_steps:,}"
+            )
+            scheduler = make_scheduler(schedule_horizon, schedule_warmup_steps)
 
         # Position the schedule exactly at the completed step count. After N
         # completed optimizer steps the invariant is last_epoch == N and the
@@ -1672,12 +1739,43 @@ def train_dit_local(
             min(min_lr / base_lr_resume, 1.0) if base_lr_resume > 0 else 0.0
         )
         resumed_lr_fn = build_lr_lambda(
-            schedule_warmup_steps, schedule_steps, min_lr_ratio_resume
+            schedule_warmup_steps, schedule_horizon, min_lr_ratio_resume
         )
         resumed_lr = base_lr_resume * resumed_lr_fn(start_step)
         for group in optimizer.param_groups:
             group["lr"] = resumed_lr
         scheduler._last_lr = [resumed_lr for _ in optimizer.param_groups]
+
+        # The 2026-10 plateau went unnoticed because nothing ever said the LR
+        # was pinned at the floor: the cosine decay term was below
+        # min_lr_ratio since ~480k and every resume silently trained at ~2%
+        # of nominal (docs/LR-PLATEAU-DIAGNOSIS-2026-10-02.md).
+        cosine_progress = (start_step - schedule_warmup_steps) / max(
+            1, schedule_horizon - schedule_warmup_steps
+        )
+        cosine_decay = 0.5 * (
+            1.0 + math.cos(math.pi * min(max(cosine_progress, 0.0), 1.0))
+        )
+        # A zero --lr leaves no ratio to report (and 0/0 would raise); fall
+        # back to the absolute LR instead of dividing.
+        lr_share = (
+            f"{100 * resumed_lr / base_lr_resume:.1f}% of nominal"
+            if base_lr_resume > 0
+            else "nominal LR is 0"
+        )
+        if min_lr_ratio_resume > 0 and cosine_decay <= min_lr_ratio_resume:
+            logger.warning(
+                f"LR is pinned at the --min-lr floor: cosine decay "
+                f"{cosine_decay:.4f} <= floor {min_lr_ratio_resume:.4f}; "
+                f"effective LR {resumed_lr:.3e} ({lr_share}). "
+                "The cosine ran out before the target — raise --min-lr or "
+                "extend --schedule-steps if more progress is expected."
+            )
+        else:
+            logger.info(
+                f"Resumed LR: {resumed_lr:.3e} "
+                f"({lr_share}, horizon={schedule_horizon:,} steps)"
+            )
 
     # Training state. `best_loss` is restored so "improved" is still measured
     # against the true global best across hub-resumed slices, but the patience
@@ -1733,7 +1831,8 @@ def train_dit_local(
             patience_counter=patience_counter,
             val_loss=val_loss,
             val_loss_ema=val_loss_ema,
-            steps=schedule_steps,
+            steps=schedule_horizon,
+            schedule_steps=schedule_horizon,
             warmup_steps=schedule_warmup_steps,
             target_steps=steps,
             manifest=manifest,
@@ -2203,6 +2302,7 @@ def main(
     gradient_accumulation_steps: int = 1,
     warmup_steps: int = 2_000,
     min_lr: float = 1e-6,
+    schedule_steps: int | None = None,
     val_split: float = 0.05,
     val_batches: int = 8,
     timestep_sampling: str = "uniform",
@@ -2243,6 +2343,7 @@ def main(
         gradient_accumulation_steps=gradient_accumulation_steps,
         warmup_steps=warmup_steps,
         min_lr=min_lr,
+        schedule_steps=schedule_steps,
         val_split=val_split,
         val_batches=val_batches,
         timestep_sampling=timestep_sampling,
@@ -2278,6 +2379,7 @@ if __name__ == "__main__":
             gradient_accumulation_steps=args.gradient_accumulation_steps,
             warmup_steps=args.warmup_steps,
             min_lr=args.min_lr,
+            schedule_steps=args.schedule_steps,
             val_split=args.val_split,
             val_batches=args.val_batches,
             timestep_sampling=args.timestep_sampling,
