@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,6 +26,7 @@ from providers import (
     ProviderReport,
     UnsupportedProviderError,
     build_launch_command,
+    fetch_artifact,
     fetch_remote_completed,
     get_adapter,
     main,
@@ -93,9 +95,7 @@ class TestProviderGate:
         assert adapter.vram_gb == 16
         assert adapter.session_limit_minutes > 0
 
-    @pytest.mark.parametrize(
-        "provider", ["lightning", "colab", "kaggle", "hf_spaces", "local"]
-    )
+    @pytest.mark.parametrize("provider", ["lightning", "colab", "hf_spaces", "local"])
     def test_unsupported_providers_raise_loudly(self, provider: str) -> None:
         with pytest.raises(UnsupportedProviderError) as excinfo:
             get_adapter(provider)
@@ -165,7 +165,7 @@ class TestLaunchCommand:
 
     def test_unsupported_provider_cannot_launch(self) -> None:
         with pytest.raises(UnsupportedProviderError):
-            build_launch_command("kaggle", 60_000)
+            build_launch_command("colab", 60_000)
 
     def test_invalid_target_rejected(self) -> None:
         with pytest.raises(ValueError):
@@ -241,6 +241,127 @@ class TestLaunchCommand:
         )
         assert code == 0
         assert "--allow-experiment-mismatch" in capsys.readouterr().out
+
+
+class TestKaggleAndAutoLaunch:
+    """ADR-067: the Kaggle kernel adapter and the fallback dispatcher."""
+
+    def test_kaggle_launch_builds_a_kernel_session(self) -> None:
+        command = build_launch_command(
+            "kaggle",
+            540_000,
+            hub_resume=True,
+            min_lr="1e-5",
+            schedule_steps="600000",
+            kernel_id="d-oit/tiny-cats-dit-slice",
+            hf_token_dataset="d-oit/tiny-cats-hf-token",
+        )
+        assert command[:2] == ["python", "src/kaggle_provider.py"]
+        joined = " ".join(command)
+        assert "--target 540000" in joined
+        assert "--kernel-id d-oit/tiny-cats-dit-slice" in joined
+        assert "--hf-token-dataset d-oit/tiny-cats-hf-token" in joined
+        assert "--min-lr 1e-5" in joined
+        assert "--schedule-steps 600000" in joined
+        assert "--hub-resume" in command
+
+    def test_kaggle_without_kernel_id_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="kernel-id"):
+            build_launch_command("kaggle", 60_000)
+
+    def test_auto_dispatches_through_the_fallback_script(self) -> None:
+        command = build_launch_command(
+            "auto", 540_000, kernel_id="d-oit/tiny-cats-dit-slice", hub_resume=True
+        )
+        assert command[:2] == ["python", "src/provider_auto.py"]
+        assert "--kernel-id" in command
+        assert "--hub-resume" in command
+
+    def test_gate_cli_kaggle_succeeds(self, capsys: pytest.CaptureFixture) -> None:
+        assert main(["gate", "--provider", "kaggle", "--strict"]) == 0
+        assert "supported: kaggle" in capsys.readouterr().out
+
+    def test_gate_cli_auto_lists_the_chain(self, capsys: pytest.CaptureFixture) -> None:
+        assert main(["gate", "--provider", "auto"]) == 0
+        out = capsys.readouterr().out
+        assert "auto chain:" in out
+        assert "modal" in out and "kaggle" in out
+
+
+class TestFetchArtifact:
+    """ADR-067: one artifact source per provider, hidden from the workflow."""
+
+    def test_unsupported_provider_is_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(UnsupportedProviderError):
+            fetch_artifact(provider="colab", name="dit_model.pt", dest_dir=tmp_path)
+
+    def test_kaggle_pulls_from_the_hub_pointer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import gpu_pool
+
+        def fake_pull(
+            *,
+            hub_repo: str,
+            checkpoint_name: str,
+            output_dir: str,
+            token: str | None = None,
+            experiment_id: str | None = None,
+        ) -> Path:
+            path = Path(output_dir) / checkpoint_name
+            path.write_bytes(b"checkpoint-bytes")
+            return path
+
+        monkeypatch.setattr(gpu_pool, "pull_checkpoint_from_hub", fake_pull)
+        dest = fetch_artifact(provider="kaggle", name="dit_model.pt", dest_dir=tmp_path)
+        assert dest is not None
+        assert dest.read_bytes() == b"checkpoint-bytes"
+
+    def test_missing_hub_artifact_returns_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import gpu_pool
+
+        monkeypatch.setattr(gpu_pool, "pull_checkpoint_from_hub", lambda **_kw: None)
+        assert (
+            fetch_artifact(provider="kaggle", name="dit_model.pt", dest_dir=tmp_path)
+            is None
+        )
+
+    def test_modal_fetches_from_the_volume(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import providers as providers_module
+
+        calls: list[list[str]] = []
+
+        def fake_run(cmd: list[str], **_kwargs: object) -> object:
+            calls.append(cmd)
+            Path(cmd[-1]).write_bytes(b"state-bytes")
+            return SimpleNamespace(returncode=0)
+
+        monkeypatch.setattr(providers_module.subprocess, "run", fake_run)
+        path = fetch_artifact(
+            provider="modal", name="training_state.json", dest_dir=tmp_path
+        )
+        assert path is not None
+        assert path.read_bytes() == b"state-bytes"
+        assert calls[0][:4] == ["modal", "volume", "get", "dit-outputs"]
+
+    def test_modal_missing_artifact_returns_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import providers as providers_module
+
+        monkeypatch.setattr(
+            providers_module.subprocess,
+            "run",
+            lambda *_a, **_k: SimpleNamespace(returncode=1),
+        )
+        assert (
+            fetch_artifact(provider="modal", name="dit_model.pt", dest_dir=tmp_path)
+            is None
+        )
 
 
 class TestCheckpointVerification:

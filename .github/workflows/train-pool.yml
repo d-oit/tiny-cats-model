@@ -4,9 +4,10 @@
 # Architecture (ADR-065):
 #   - GitHub Actions plans bounded training slices and launches real GPU
 #     provider sessions; it never trains on CPU itself.
-#   - Only providers with a real headless adapter (currently Modal) are
-#     launched; every other provider FAILS CLEARLY via `providers.py gate`
-#     instead of silently simulating on CPU.
+#   - Providers with a real headless adapter (Modal, and Kaggle since ADR-067)
+#     are launched; every other provider FAILS CLEARLY via `providers.py gate`
+#     instead of silently simulating on CPU. `provider=auto` walks the
+#     launchable chain and only falls back on a launch-precondition failure.
 #   - HF Hub is the state transport (checkpoints/pool/<exp>/latest pointer);
 #     each slice resumes exactly to its global target and reports a
 #     machine-readable provider_report_<target>.json artifact.
@@ -24,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: "Provider to launch (modal is the only headless adapter; others fail clearly)"
+        description: "Provider to launch: modal, kaggle, auto (modal→kaggle on a launch block), or a gated provider (fails clearly)"
         required: false
         default: "modal"
         type: string
@@ -172,13 +173,15 @@ jobs:
     name: Slice → ${{ matrix.target }}
     # Never launch a slice when an unsupported provider was requested: the
     # provider gate runs for every non-modal provider, so a `skipped` gate is
-    # the (only) signal that modal was actually requested. `always()` keeps the
-    # matrix alive when the gate is skipped rather than failed.
+    # the (only) signal that modal was actually requested, and a `success`
+    # gate admits the other launchable adapters (kaggle, auto). `always()`
+    # keeps the matrix alive when the gate is skipped rather than failed.
     needs: [plan-slices, provider-gate]
     if: |
       always() &&
       needs.plan-slices.result == 'success' &&
-      needs.provider-gate.result == 'skipped'
+      (needs.provider-gate.result == 'skipped' ||
+       needs.provider-gate.result == 'success')
     runs-on: ubuntu-latest
     environment: modal-training
     timeout-minutes: 360
@@ -202,6 +205,8 @@ jobs:
           pip install -r requirements.txt
 
       - name: Ensure Modal HuggingFace secret
+        # Modal-only: a kaggle-only dispatch has no Modal container to sync.
+        if: github.event.inputs.provider != 'kaggle'
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
@@ -219,14 +224,18 @@ jobs:
           modal secret create --force huggingface-secret HF_TOKEN="$HF_TOKEN" \
             || echo "::warning::Failed to sync Modal secret 'huggingface-secret'"
 
-      - name: Launch slice on Modal GPU
+      - name: Launch slice on the selected provider
         id: train
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
           set -o pipefail
+          # Schedule runs default to `auto` (modal, then kaggle on a launch
+          # block); dispatches keep their explicit provider (default modal).
+          PROVIDER="${{ github.event.inputs.provider || 'auto' }}"
           HUBFLAGS=()
           if [ "${{ github.event_name }}" = "schedule" ] || \
              [ "${{ github.event.inputs.hub_resume }}" = "true" ]; then
@@ -249,7 +258,9 @@ jobs:
             LRFLAGS+=(--min-lr "${{ vars.MIN_LR }}")
           fi
           CMD="$(python src/providers.py launch \
-            --provider modal \
+            --provider "$PROVIDER" \
+            --kernel-id "${{ vars.KAGGLE_KERNEL_ID }}" \
+            --hf-token-dataset "${{ vars.KAGGLE_HF_TOKEN_DATASET }}" \
             --target ${{ matrix.target }} \
             --batch-size ${{ github.event.inputs.batch_size || '32' }} \
             --lr ${{ github.event.inputs.lr || '5e-5' }} \
@@ -258,6 +269,10 @@ jobs:
             --experiment-id dit-breed-conditioned-v4 \
             --schedule-steps ${{ github.event.inputs.steps || '600000' }} \
             "${HUBFLAGS[@]}" "${MIGRATEFLAGS[@]}" "${LRFLAGS[@]}")"
+          if [ -z "$CMD" ]; then
+            echo "::error::could not build a launch command for provider '$PROVIDER'"
+            exit 1
+          fi
           echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           echo "Launch: $CMD"
           eval "$CMD" 2>&1 | tee modal-training.log
@@ -268,7 +283,7 @@ jobs:
         # spend limit" buried in the launch step log.
         if: steps.train.outcome == 'failure'
         run: |
-          ERR="$(grep -aiE 'exceeded its spend limit|error' modal-training.log 2>/dev/null \
+          ERR="$(grep -aiE 'exceeded its spend limit|error' modal-training.log kaggle-training.log 2>/dev/null \
             | head -3 | tr '\n' ' ' || true)"
           echo "::error title=Slice ${{ matrix.target }} launch failed::${ERR:-see launch step log}"
 
@@ -277,13 +292,18 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           ENDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          modal volume get dit-outputs checkpoints/pool/training_state.json \
-            ./training_state.json \
-            || echo "::warning::training_state.json not on volume yet"
+          # The dispatcher records the provider that actually ran; direct
+          # launches fall back to the requested one (never the `auto` alias).
+          PROVIDER="$(cat .provider-used 2>/dev/null || echo "${{ github.event.inputs.provider || 'modal' }}")"
+          if [ "$PROVIDER" = "auto" ]; then PROVIDER=modal; fi
+          python src/providers.py fetch-artifacts \
+            --provider "$PROVIDER" --name training_state.json --dest . \
+            || echo "::warning::training_state.json not available for $PROVIDER"
           python src/providers.py report \
-            --provider modal \
+            --provider "$PROVIDER" \
             --gpu-model ${{ github.event.inputs.gpu_model || 'T4' }} \
             --job-id "${{ github.run_id }}/${{ github.job }}/${{ matrix.target }}" \
             --started-at "${{ steps.train.outputs.started_at }}" \
@@ -300,12 +320,17 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           set -o pipefail
           mkdir -p verify
-          modal volume get dit-outputs checkpoints/pool/dit_model.pt verify/dit_model.pt \
-            2>&1 | tee -a modal-training.log \
-            || echo "::warning::dit_model.pt not on volume for this slice"
+          PROVIDER="$(cat .provider-used 2>/dev/null || echo "${{ github.event.inputs.provider || 'modal' }}")"
+          if [ "$PROVIDER" = "auto" ]; then PROVIDER=modal; fi
+          (python src/providers.py fetch-artifacts \
+             --provider "$PROVIDER" --name dit_model.pt --dest verify \
+             && echo "fetched dit_model.pt from $PROVIDER") 2>&1 \
+            | tee -a modal-training.log \
+            || echo "::warning::dit_model.pt not available for $PROVIDER"
           set +e
           python src/providers.py verify \
             --state-file training_state.json \
@@ -332,7 +357,9 @@ jobs:
         if: always()
         with:
           name: modal-training-log-${{ matrix.target }}
-          path: modal-training.log
+          path: |
+            modal-training.log
+            kaggle-training.log
           retention-days: 7
           if-no-files-found: warn
 
