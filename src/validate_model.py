@@ -26,6 +26,8 @@ from typing import Any
 
 import torch
 
+from safe_checkpoint import load_torch_checkpoint
+
 try:
     from PIL import Image  # noqa: F401
 
@@ -231,7 +233,7 @@ def check_nan_weights(model_path: str | Path) -> ValidationResult:
     model_path = Path(model_path)
 
     try:
-        checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+        checkpoint = load_torch_checkpoint(model_path, map_location="cpu")
 
         # Get state dict (handle different checkpoint formats)
         if "model_state_dict" in checkpoint:
@@ -277,7 +279,7 @@ def check_inf_weights(model_path: str | Path) -> ValidationResult:
     model_path = Path(model_path)
 
     try:
-        checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+        checkpoint = load_torch_checkpoint(model_path, map_location="cpu")
 
         # Get state dict (handle different checkpoint formats)
         if "model_state_dict" in checkpoint:
@@ -333,7 +335,7 @@ def check_training_metrics(
     model_path = Path(model_path)
 
     try:
-        checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+        checkpoint = load_torch_checkpoint(model_path, map_location="cpu")
 
         # Get metrics
         val_acc = checkpoint.get("val_acc")
@@ -528,7 +530,7 @@ def validate_onnx_export(
         )
 
     try:
-        checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+        checkpoint = load_torch_checkpoint(model_path, map_location="cpu")
         model, is_generative = build_model_from_checkpoint(checkpoint)
         model.eval()
 
@@ -611,7 +613,7 @@ def generate_sample_and_check_quality(
     model_path = Path(model_path)
 
     try:
-        checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+        checkpoint = load_torch_checkpoint(model_path, map_location="cpu")
     except Exception as e:
         return ValidationResult(
             name="Sample Quality",

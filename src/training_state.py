@@ -23,6 +23,11 @@ steps. A checkpoint whose manifest does not match the current run's manifest is
 rejected with :class:`IncompatibleExperimentError` unless the caller passes an
 explicit override (``--allow-experiment-mismatch``).
 
+Dataset migration policy: old checkpoints use ``path-size-v1`` identities.
+Resumes must either match the content hash or be explicitly accepted with
+``--allow-legacy-dataset-hash``; that migration only succeeds when the saved
+hash equals the legacy fingerprint of the current data.
+
 Manifest fields that are recorded but deliberately *not* compared:
 
 - ``target_steps`` — slices of one experiment raise the global target
@@ -47,6 +52,12 @@ from typing import Any
 
 import torch
 
+from dataset_manifest import (
+    DATASET_HASH_VERSION,
+    dataset_fingerprint as content_dataset_fingerprint,
+    is_legacy_identity,
+)
+
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
@@ -65,6 +76,7 @@ MANIFEST_FIELDS: tuple[str, ...] = (
     "dataset_id",
     "dataset_version",
     "dataset_hash",
+    "dataset_hash_version",
     "breed_mapping_hash",
     "image_size",
     "patch_size",
@@ -84,12 +96,11 @@ MANIFEST_FIELDS: tuple[str, ...] = (
     "provider",
 )
 
-#: Manifest fields that must match for a resume to be accepted. Excludes
-#: target_steps/git_sha/provider/dataset_version — see module docstring.
 IMMUTABLE_FIELDS: tuple[str, ...] = (
     "experiment_id",
     "dataset_id",
     "dataset_hash",
+    "dataset_hash_version",
     "breed_mapping_hash",
     "image_size",
     "patch_size",
@@ -149,28 +160,19 @@ def git_sha(repo_dir: str | Path | None = None) -> str:
 
 
 def dataset_fingerprint(data_dir: str | Path) -> str:
-    """Deterministic dataset identity: sha256 over sorted ``relpath:size``.
+    """Return the content-based identity of the dataset."""
+    return content_dataset_fingerprint(data_dir)
 
-    Uses paths and sizes only (no content reads) so it stays cheap on the
-    7,390-image dataset while still detecting added, removed or replaced
-    files — the signal the resume check needs.
-    """
-    root = Path(data_dir)
-    if not root.exists():
-        return "missing"
-    entries: list[str] = []
-    try:
-        for item in sorted(root.rglob("*")):
-            if item.is_file():
-                try:
-                    entries.append(
-                        f"{item.relative_to(root).as_posix()}:{item.stat().st_size}"
-                    )
-                except OSError:
-                    continue
-    except OSError:
-        return "unreadable"
-    return hashlib.sha256("\n".join(entries).encode()).hexdigest()
+
+def legacy_dataset_identity_matches(
+    saved_manifest: dict[str, Any], data_dir: str | Path
+) -> bool:
+    """Whether a legacy checkpoint proves identity with the current dataset."""
+    return saved_manifest.get(
+        "breed_mapping_hash"
+    ) == breed_mapping_hash() and is_legacy_identity(
+        str(saved_manifest.get("dataset_hash", "")), data_dir
+    )
 
 
 def breed_mapping_hash() -> str:
@@ -217,11 +219,6 @@ def build_manifest(
     provider: str | None = None,
     git_sha_value: str | None = None,
 ) -> dict[str, Any]:
-    """Build the immutable experiment manifest for the *current* run.
-
-    Every field except ``target_steps``/``git_sha``/``provider`` must match a
-    checkpoint's stored manifest for a resume to be accepted.
-    """
     dataset_hash = dataset_fingerprint(data_dir)
     return {
         "experiment_id": experiment_id,
@@ -230,6 +227,7 @@ def build_manifest(
         "dataset_id": dataset_id,
         "dataset_version": dataset_hash[:12],
         "dataset_hash": dataset_hash,
+        "dataset_hash_version": DATASET_HASH_VERSION,
         "breed_mapping_hash": breed_mapping_hash(),
         "image_size": int(image_size),
         "patch_size": int(patch_size),
@@ -322,7 +320,7 @@ def read_training_state(state_path: str | Path) -> dict[str, Any] | None:
 
 
 def capture_rng_state() -> dict[str, Any]:
-    """Snapshot every RNG that influences training (PyTorch guidance)."""
+    """Snapshot every RNG that influences training using safe checkpoint values."""
     state: dict[str, Any] = {
         "torch": torch.get_rng_state(),
         "python": random.getstate(),
@@ -332,7 +330,18 @@ def capture_rng_state() -> dict[str, Any]:
     try:
         import numpy as np
 
-        state["numpy"] = np.random.get_state()
+        numpy_state = np.random.get_state(legacy=True)
+        if not isinstance(numpy_state, tuple):
+            raise TypeError("Expected NumPy legacy RNG state tuple")
+        state["numpy"] = {
+            "bit_generator": numpy_state[0],
+            "state": numpy_state[1].tolist(),
+            "dtype": str(numpy_state[1].dtype),
+            "shape": list(numpy_state[1].shape),
+            "position": int(numpy_state[2]),
+            "has_gauss": int(numpy_state[3]),
+            "cached_gaussian": float(numpy_state[4]),
+        }
     except ImportError:  # pragma: no cover - numpy is a hard dependency
         pass
     return state
@@ -357,4 +366,15 @@ def restore_rng_state(state: dict[str, Any]) -> None:
     if "numpy" in state:  # pragma: no cover - numpy is a hard dependency
         import numpy as np
 
-        np.random.set_state(state["numpy"])
+        numpy_state = state["numpy"]
+        if isinstance(numpy_state, dict):
+            values = np.asarray(numpy_state["state"], dtype=numpy_state["dtype"])
+            values = values.reshape(numpy_state["shape"])
+            numpy_state = (
+                numpy_state["bit_generator"],
+                values,
+                numpy_state["position"],
+                numpy_state["has_gauss"],
+                numpy_state["cached_gaussian"],
+            )
+        np.random.set_state(numpy_state)

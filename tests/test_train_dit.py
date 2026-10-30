@@ -144,6 +144,18 @@ class TestConfigLoading:
         assert args.val_split == pytest.approx(0.05)
         assert args.min_lr == pytest.approx(1e-6)
 
+    def test_resume_migration_flags_are_explicit(self) -> None:
+        args = parse_args(
+            [
+                "--data-dir",
+                "data/cats",
+                "--allow-unsafe-legacy-checkpoint",
+                "--allow-legacy-dataset-hash",
+            ]
+        )
+        assert args.allow_unsafe_legacy_checkpoint
+        assert args.allow_legacy_dataset_hash
+
 
 class TestLrSchedule:
     """Warmup, cosine decay, and the min-lr floor."""

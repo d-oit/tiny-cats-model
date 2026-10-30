@@ -4,15 +4,22 @@ Gradio demo for Cat Breed Classification and Generation.
 Loads models from HuggingFace Hub and runs inference via ONNX Runtime.
 """
 
+import json
 import os
 from typing import Any
 
 import gradio as gr
 import numpy as np
 import onnxruntime as ort
-import torch
 from huggingface_hub import hf_hub_download
 from PIL import Image
+
+from model_contract import (
+    CLASSIFIER_LABELS,
+    GENERATOR_CONDITIONS,
+    validate_classifier_metadata,
+)
+from preprocessing import classifier_eval_transform
 
 # Constants
 REPO_ID = "d4oit/tiny-cats-model"
@@ -29,14 +36,11 @@ BREED_NAMES = [
     "Russian Blue",
     "Siamese",
     "Sphynx",
-    "Other",
 ]
-
-# ImageNet stats used to train the classifier (src/dataset.py) and to export
-# the ONNX graph (src/export_onnx.py, 224x224 input).
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD = (0.229, 0.224, 0.225)
-
+GENERATOR_BREED_INDICES = {
+    name.replace("_", " "): index
+    for index, name in enumerate(GENERATOR_CONDITIONS[:-1])
+}
 # Cache for model sessions
 sessions: dict[str, ort.InferenceSession] = {}
 
@@ -63,70 +67,55 @@ def get_session(model_type):
         return None
 
 
-def _preprocess_classifier(image: np.ndarray, size: int) -> np.ndarray:
-    """Preprocess a raw image for the classifier ONNX graph.
-
-    Matches the training-time validation transform: resize to 256, center-crop
-    to 224, ImageNet-normalize (for non-224 models we fall back to a plain
-    resize to the graph's expected input size).
-    """
-    img = Image.fromarray(image).convert("RGB")
-    if size == 224:
-        img = img.resize((256, 256))
-        left = (256 - 224) // 2
-        top = (256 - 224) // 2
-        img = img.crop((left, top, left + 224, top + 224))
-    else:
-        img = img.resize((size, size))
-    img_np = np.array(img).astype(np.float32) / 255.0
-    # Use float32 operands so numpy weak-scalar promotion never upcasts to
-    # float64 (ONNX graphs declare float32 inputs).
-    img_np = (
-        (img_np - np.array(IMAGENET_MEAN, dtype=np.float32))
-        / np.array(IMAGENET_STD, dtype=np.float32)
-    ).astype(np.float32)
-    return img_np.transpose(2, 0, 1)[np.newaxis, ...]
+def _preprocess_classifier(image: np.ndarray) -> np.ndarray:
+    """Apply the canonical RGB/resize/crop/ImageNet normalization transform."""
+    return (
+        classifier_eval_transform()(Image.fromarray(image))
+        .unsqueeze(0)
+        .numpy()
+        .astype(np.float32, copy=False)
+    )
 
 
-def classify_cat(image):
-    """Classify an image with the published classifier model.
-
-    The published classifier ONNX is binary (cat vs other, 2 outputs). Older
-    exports were 13-way breed classifiers; both are supported here so the app
-    does not hard-depend on the current head size. Returns a {label: prob} dict
-    for the Gradio Label widget, or an error string.
-    """
+def classify_cat(image: np.ndarray | None) -> dict[str, float] | str | None:
+    """Return binary cat/not-cat probabilities, or a clear inference error."""
     if image is None:
         return None
 
     session = get_session("classifier")
     if session is None:
         return "Error: Could not load classifier model."
+    metadata_reader = getattr(session, "get_modelmeta", None)
+    if metadata_reader is not None:
+        contract_json = metadata_reader().custom_metadata_map.get("classifier_metadata")
+        if contract_json:
+            try:
+                validate_classifier_metadata(
+                    json.loads(contract_json),
+                    expected_num_classes=len(CLASSIFIER_LABELS),
+                    expected_labels=CLASSIFIER_LABELS,
+                )
+            except (ValueError, TypeError) as error:
+                return f"Error: invalid classifier metadata: {error}"
 
-    # Read the graph's expected input resolution (batch dim may be dynamic).
-    input_shape = session.get_inputs()[0].shape
-    size = int(input_shape[2]) if len(input_shape) >= 3 and input_shape[2] else 224
-
-    img_np = _preprocess_classifier(image, size)
-
-    input_name = session.get_inputs()[0].name
-    outputs = session.run(None, {input_name: img_np})
-    logits = outputs[0][0]
-    n_out = int(logits.shape[0]) if hasattr(logits, "shape") else len(logits)
-
-    probs = torch.nn.functional.softmax(torch.from_numpy(logits), dim=0).numpy()
-
-    if n_out == 2:
-        # Binary cat-vs-other: ImageFolder class order is ['cat', 'other'].
-        return {"Cat": float(probs[0]), "Other (dog / not a cat)": float(probs[1])}
-
-    if n_out == len(BREED_NAMES):
-        return {BREED_NAMES[i]: float(probs[i]) for i in range(n_out)}
-
-    return (
-        f"Error: classifier produced {n_out} outputs; "
-        f"expected 2 or {len(BREED_NAMES)}. Model and app drift."
-    )
+    inputs = session.get_inputs()
+    input_spec = inputs[0]
+    input_shape = input_spec.shape
+    if len(input_shape) != 4 or input_shape[2] != 224 or input_shape[3] != 224:
+        return (
+            "Error: classifier ONNX input must be NCHW with 224x224 spatial "
+            f"dimensions; got {input_shape}."
+        )
+    img_np = _preprocess_classifier(image)
+    outputs = session.run(None, {input_spec.name: img_np})
+    logits = np.asarray(outputs[0][0], dtype=np.float32)
+    if logits.ndim != 1 or len(logits) != len(CLASSIFIER_LABELS) or len(logits) != 2:
+        count = logits.shape[0] if logits.ndim else 0
+        return f"Error: classifier produced {count} outputs; expected 2."
+    logits = logits - np.max(logits)
+    exp_logits = np.exp(logits)
+    probs = exp_logits / np.sum(exp_logits)
+    return {"Cat": float(probs[0]), "Not a cat": float(probs[1])}
 
 
 def _generator_feed_keys(session: Any) -> tuple[str, str, str]:
@@ -170,8 +159,7 @@ def generate_cat(breed_name, cfg_scale=1.5, steps=100):
 
     x_key, t_key, breed_key = _generator_feed_keys(session)
 
-    # Preprocess
-    breed_idx = BREED_NAMES.index(breed_name)
+    breed_idx = GENERATOR_BREED_INDICES[breed_name]
     breed_tensor = np.array([breed_idx], dtype=np.int64)
 
     # Simple Euler ODE solver for flow matching
@@ -185,9 +173,8 @@ def generate_cat(breed_name, cfg_scale=1.5, steps=100):
         t = i / steps
         t_tensor = np.array([t], dtype=np.float32)
 
-        # CFG
         if cfg_scale > 1.0:
-            uncond_breed = np.array([len(BREED_NAMES) - 1], dtype=np.int64)
+            uncond_breed = np.array([len(GENERATOR_CONDITIONS)], dtype=np.int64)
 
             # Predict cond and uncond
             # Note: Inputs order might vary depending on export
@@ -211,10 +198,7 @@ def generate_cat(breed_name, cfg_scale=1.5, steps=100):
 
 # Build Interface
 with gr.Blocks(title="Tiny Cats Model Demo") as demo:
-    gr.Markdown("# 🐈 Tiny Cats Model Demo")
-    gr.Markdown(
-        "Classify cat breeds or generate new cats using TinyDiT (Diffusion Transformer)."
-    )
+    gr.Markdown("Detect cats vs not-cats or generate cats with TinyDiT.")
 
     with gr.Tab("Classify"):
         with gr.Row():
@@ -236,17 +220,16 @@ with gr.Blocks(title="Tiny Cats Model Demo") as demo:
 
     with gr.Tab("Generate"):
         with gr.Row():
-            with gr.Column():
-                input_breed = gr.Dropdown(
-                    choices=BREED_NAMES[:-1], label="Select Breed", value="Siamese"
-                )
-                input_cfg = gr.Slider(
-                    minimum=1.0, maximum=5.0, step=0.1, value=1.5, label="CFG Scale"
-                )
-                input_steps = gr.Slider(
-                    minimum=10, maximum=100, step=10, value=100, label="Sampling Steps"
-                )
-                btn_generate = gr.Button("Generate")
+            input_breed = gr.Dropdown(
+                choices=BREED_NAMES, label="Select Breed", value="Siamese"
+            )
+            input_cfg = gr.Slider(
+                minimum=1.0, maximum=5.0, step=0.1, value=1.5, label="CFG Scale"
+            )
+            input_steps = gr.Slider(
+                minimum=10, maximum=100, step=10, value=100, label="Sampling Steps"
+            )
+            btn_generate = gr.Button("Generate")
             output_gen = gr.Image(label="Generated Cat")
         btn_generate.click(
             fn=generate_cat,

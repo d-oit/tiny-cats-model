@@ -37,6 +37,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent))
 
 from dit import tinydit_128
+from safe_checkpoint import load_torch_checkpoint
 
 
 def parse_args() -> argparse.Namespace:
@@ -144,7 +145,7 @@ def load_pytorch_model(
     if not checkpoint_file.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    checkpoint = load_torch_checkpoint(checkpoint_path, map_location=device)
 
     # Get model config
     config = checkpoint.get(

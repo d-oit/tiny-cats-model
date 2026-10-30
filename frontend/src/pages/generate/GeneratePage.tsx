@@ -1,8 +1,9 @@
-import { useState, useRef, useEffect } from "react";
-import * as Comlink from "comlink";
+import { useState } from "react";
 
 import { GENERATOR_CONFIG, CAT_BREEDS } from "../../constants";
-import type { GenerationProgress, GenerationResult } from "../../engine/generation.worker";
+import { useGeneration } from "../../hooks/useGeneration";
+import type { GenerationProgress } from "../../engine/generation.worker";
+import { imageDataToCanvas } from "../../utils/imageUtils";
 
 import {
   Typography,
@@ -16,6 +17,7 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  TextField,
   Grid,
   Card,
   CardMedia
@@ -24,12 +26,16 @@ import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import DownloadIcon from "@mui/icons-material/Download";
 
-type GenerationWorker = Comlink.Remote<
-  import("../../engine/generation.worker").default
->;
-
 export default function GeneratePage() {
-  const [ready, setReady] = useState(false);
+  const {
+    ready,
+    status,
+    error: modelError,
+    provider,
+    source,
+    retry,
+    generate,
+  } = useGeneration();
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,76 +45,54 @@ export default function GeneratePage() {
   const [breedIndex, setBreedIndex] = useState<number>(0);
   const [steps, setSteps] = useState<number>(GENERATOR_CONFIG.defaultSteps);
   const [cfgScale, setCfgScale] = useState<number>(GENERATOR_CONFIG.defaultCfgScale);
-  const [noiseSeed, setNoiseSeed] = useState<number | undefined>(undefined);
+  const [seedInput, setSeedInput] = useState<string>("");
 
-  const workerRef = useRef<GenerationWorker | null>(null);
-
-  // Load the generator model on mount
-  useEffect(() => {
-    const worker = new Worker(
-      new URL("../../engine/generation.worker.ts", import.meta.url),
-      { type: "module" }
-    );
-
-    const engine: GenerationWorker = Comlink.wrap(worker);
-    workerRef.current = engine;
-
-    engine.loadModel()
-      .then(() => setReady(true))
-      .catch((err: unknown) => {
-        console.error("Failed to load generator model:", err);
-        setError("Failed to load generator model. Please refresh the page.");
-      });
-
-    return () => worker.terminate();
-  }, []);
+  const parsedSeed = (): number | undefined => {
+    if (seedInput.trim() === "") return undefined;
+    const value = Number(seedInput);
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error("Noise seed must be a non-negative integer (or blank for random).");
+    }
+    return value;
+  };
 
   const handleGenerate = async () => {
-    if (!workerRef.current || isGenerating) return;
+    if (!ready || isGenerating) return;
 
     setError(null);
-    setIsGenerating(true);
     setProgress(null);
 
+    let noiseSeed: number | undefined;
     try {
-      const progressCallback = Comlink.proxy((prog: GenerationProgress) => {
-        setProgress(prog);
-      });
+      noiseSeed = parsedSeed();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid noise seed");
+      return;
+    }
 
-      const result: GenerationResult = await workerRef.current.generate(
-        {
-          breedIndex,
-          steps,
-          cfgScale,
-          noiseSeed
-        },
-        progressCallback
+    setIsGenerating(true);
+    try {
+      const result = await generate(
+        { breedIndex, steps, cfgScale, noiseSeed },
+        (update) => setProgress(update)
       );
 
-      // Convert ImageData to base64 for display
-      const canvas = document.createElement("canvas");
-      canvas.width = result.imageData.width;
-      canvas.height = result.imageData.height;
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.putImageData(result.imageData, 0, 0);
-        setGeneratedImage(canvas.toDataURL("image/png"));
-      }
-
-      console.log(`Generation complete: ${result.totalTime.toFixed(2)}ms total, ${result.avgStepTime.toFixed(2)}ms/step`);
+      const canvas = imageDataToCanvas(
+        result.imageData,
+        result.imageData.width,
+        result.imageData.height
+      );
+      setGeneratedImage(canvas.toDataURL("image/png"));
     } catch (err) {
-      console.error("Generation failed:", err);
       setError(err instanceof Error ? err.message : "Generation failed");
     } finally {
       setIsGenerating(false);
       setProgress(null);
-      // Generate new random seed for next generation
-      setNoiseSeed(undefined);
     }
   };
 
   const handleResetNoise = () => {
-    setNoiseSeed(Math.floor(Math.random() * 1000000));
+    setSeedInput(String(Math.floor(Math.random() * 1000000)));
     setGeneratedImage(null);
     setProgress(null);
     setError(null);
@@ -146,10 +130,28 @@ export default function GeneratePage() {
           Generate cat images using the TinyDiT model with breed conditioning.
           Running entirely locally in your browser using ONNX Runtime Web.
         </Typography>
-        {!ready && (
+        {status === "loading" && (
           <Alert severity="info" sx={{ mt: 2, maxWidth: 900 }}>
-            Loading generator model... This may take a moment (126 MB).
+            Loading and verifying the generator model... This may take a moment (126 MB).
           </Alert>
+        )}
+        {modelError && (
+          <Alert
+            severity="error"
+            sx={{ mt: 2, maxWidth: 900 }}
+            action={
+              <Button color="inherit" size="small" onClick={retry}>
+                Retry
+              </Button>
+            }
+          >
+            {modelError}
+          </Alert>
+        )}
+        {ready && (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1, pl: 1 }}>
+            Verified model · {source} · {provider?.toUpperCase()}
+          </Typography>
         )}
       </div>
 
@@ -178,6 +180,7 @@ export default function GeneratePage() {
               label="Cat Breed"
               onChange={(e) => setBreedIndex(Number(e.target.value))}
               disabled={isGenerating || !ready}
+              inputProps={{ "data-testid": "breed-select" }}
             >
               {CAT_BREEDS.map((breed) => (
                 <MenuItem key={breed.index} value={breed.index}>
@@ -200,6 +203,7 @@ export default function GeneratePage() {
               step={5}
               disabled={isGenerating || !ready}
               valueLabelDisplay="auto"
+              aria-label="Sampling steps"
             />
             <Typography variant="caption" color="text.secondary">
               More steps = better quality but slower
@@ -219,11 +223,25 @@ export default function GeneratePage() {
               step={0.1}
               disabled={isGenerating || !ready}
               valueLabelDisplay="auto"
+              aria-label="Guidance scale"
             />
             <Typography variant="caption" color="text.secondary">
               Higher = more adherence to breed, lower = more creative
             </Typography>
           </Box>
+
+          {/* Deterministic seed */}
+          <TextField
+            label="Noise seed (blank = random)"
+            type="number"
+            value={seedInput}
+            onChange={(event) => setSeedInput(event.target.value)}
+            disabled={isGenerating || !ready}
+            inputProps={{ min: 0, step: 1, "data-testid": "noise-seed" }}
+            size="small"
+            fullWidth
+            sx={{ mb: 3 }}
+          />
 
           {/* Action Buttons */}
           <Button
@@ -234,6 +252,7 @@ export default function GeneratePage() {
             disabled={isGenerating || !ready}
             fullWidth
             sx={{ mb: 2 }}
+            data-testid="generate-button"
           >
             {isGenerating ? "Generating..." : "Generate"}
           </Button>
@@ -306,6 +325,7 @@ export default function GeneratePage() {
                 image={generatedImage}
                 alt={`Generated ${breedName} cat`}
                 sx={{ width: 256, height: 256, objectFit: "cover" }}
+                data-testid="generated-image"
               />
             ) : (
               <Typography variant="body2" color="text.secondary" align="center">
@@ -321,46 +341,48 @@ export default function GeneratePage() {
           )}
 
           {/* Progress Dashboard */}
-          {isGenerating && progress && (
-            <Box sx={{ width: "100%", mt: 2 }}>
-              <LinearProgress
-                variant="determinate"
-                value={(progress.step / progress.totalSteps) * 100}
-              />
-              <Grid container spacing={2} sx={{ mt: 2 }}>
-                <Grid size={{ xs: 4 }}>
-                  <Box sx={{ textAlign: "center" }}>
-                    <Typography variant="h6" color="primary">
-                      {progress.step}/{progress.totalSteps}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Steps
-                    </Typography>
-                  </Box>
+          <Box aria-live="polite" sx={{ width: "100%" }}>
+            {isGenerating && progress && (
+              <Box sx={{ width: "100%", mt: 2 }} data-testid="generation-progress">
+                <LinearProgress
+                  variant="determinate"
+                  value={(progress.step / progress.totalSteps) * 100}
+                />
+                <Grid container spacing={2} sx={{ mt: 2 }}>
+                  <Grid size={{ xs: 4 }}>
+                    <Box sx={{ textAlign: "center" }}>
+                      <Typography variant="h6" color="primary">
+                        {progress.step}/{progress.totalSteps}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Steps
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid size={{ xs: 4 }}>
+                    <Box sx={{ textAlign: "center" }}>
+                      <Typography variant="h6" color="primary">
+                        {progress.stepTime.toFixed(0)}ms
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Step Time
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid size={{ xs: 4 }}>
+                    <Box sx={{ textAlign: "center" }}>
+                      <Typography variant="h6" color="primary">
+                        {(progress.totalTime / 1000).toFixed(1)}s
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Total
+                      </Typography>
+                    </Box>
+                  </Grid>
                 </Grid>
-                <Grid size={{ xs: 4 }}>
-                  <Box sx={{ textAlign: "center" }}>
-                    <Typography variant="h6" color="primary">
-                      {progress.stepTime.toFixed(0)}ms
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Step Time
-                    </Typography>
-                  </Box>
-                </Grid>
-                <Grid size={{ xs: 4 }}>
-                  <Box sx={{ textAlign: "center" }}>
-                    <Typography variant="h6" color="primary">
-                      {(progress.totalTime / 1000).toFixed(1)}s
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Total
-                    </Typography>
-                  </Box>
-                </Grid>
-              </Grid>
-            </Box>
-          )}
+              </Box>
+            )}
+          </Box>
 
           {!isGenerating && !generatedImage && (
             <Box sx={{

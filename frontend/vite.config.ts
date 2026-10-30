@@ -9,11 +9,15 @@ export default defineConfig({
     viteStaticCopy({
       targets: [
         {
-          src: 'node_modules/onnxruntime-web/dist/*.{wasm,mjs}',
-          dest: '.'
-        }
-      ]
-    })
+          src: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs',
+          dest: '.',
+        },
+        {
+          src: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm',
+          dest: '.',
+        },
+      ],
+    }),
   ],
   base: "/tiny-cats-model/",
   // Fix for worker build: use 'es' format instead of default 'iife'

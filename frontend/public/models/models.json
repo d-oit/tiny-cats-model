@@ -26,18 +26,19 @@
     "input": {
       "name": "input",
       "shape": ["batch_size", 3, 224, 224],
-      "description": "RGB image with 3 channels, 224x224 pixels",
+      "description": "RGB image: bilinear resize with shorter side 256, then centre crop to 224x224",
       "normalization": {
         "mean": [0.485, 0.456, 0.406],
         "std": [0.229, 0.224, 0.225],
-        "range": "[-1, 1] after normalization"
+        "range": "ImageNet normalized; values are not bounded to [-1, 1]"
       }
     },
     "output": {
       "name": "output",
       "shape": ["batch_size", 2],
-      "description": "Logits for binary classification",
-      "classes": ["cat", "other"]
+      "description": "Logits for binary classification; apply numerically stable softmax for probabilities",
+      "semantics": "logits",
+      "classes": ["cat", "not_cat"]
     }
   },
   "generator": {
@@ -78,23 +79,15 @@
     "generator": "generator"
   },
   "recommendation_reason": "The quantized classifier is 4x smaller (11 MB vs 43 MB) and provides faster inference. The generator model uses CFG scale 1.5 for better sample quality.",
-  "breed_classes": {
-    "note": "This is a binary cat vs other classifier. For breed-specific classification, the model outputs 2 classes:",
+  "classifier_labels": {
+    "note": "Binary cat / not-cat classifier. ImageFolder folder other maps to public label not_cat.",
     "classes": [
-      {
-        "index": 0,
-        "name": "cat",
-        "description": "Image contains a cat (any of 12 breeds: Abyssinian, Bengal, Birman, Bombay, British Shorthair, Egyptian Mau, Maine Coon, Persian, Ragdoll, Russian Blue, Siamese, Sphynx)"
-      },
-      {
-        "index": 1,
-        "name": "other",
-        "description": "Image contains a non-cat (primarily dogs used as negative samples)"
-      }
+      {"index": 0, "name": "cat"},
+      {"index": 1, "name": "not_cat"}
     ]
   },
   "generator_breeds": {
-    "note": "Generator supports 13 breed classes for conditional image generation",
+    "note": "Generator has 13 conditions: 12 cat breeds plus Other. Unconditional/null index 13 is reserved for classifier-free guidance.",
     "classes": [
       {"index": 0, "name": "Abyssinian"},
       {"index": 1, "name": "Bengal"},
@@ -109,7 +102,8 @@
       {"index": 10, "name": "Siamese"},
       {"index": 11, "name": "Sphynx"},
       {"index": 12, "name": "Other"}
-    ]
+    ],
+    "unconditional_index": 13
   },
   "runtime": {
     "name": "ONNX Runtime Web",

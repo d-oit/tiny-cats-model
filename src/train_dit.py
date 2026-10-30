@@ -51,6 +51,8 @@ import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 
+from safe_checkpoint import UnsafeCheckpointError, load_torch_checkpoint
+
 # Optional auth utilities import (for enhanced error handling)
 try:
     from auth_utils import AuthenticationError, require_modal_auth, setup_auth_logging
@@ -307,6 +309,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Resume even when the checkpoint manifest differs from this run "
             "(explicit override; incompatible resumes are rejected by default)"
         ),
+    )
+    parser.add_argument(
+        "--allow-unsafe-legacy-checkpoint",
+        action="store_true",
+        help="Explicitly trust and resume a legacy pickle checkpoint.",
+    )
+    parser.add_argument(
+        "--allow-legacy-dataset-hash",
+        action="store_true",
+        help="Explicitly migrate legacy path/size dataset identities on resume.",
     )
 
     # Model architecture
@@ -689,6 +701,7 @@ def load_checkpoint(
     ema: EMA | None = None,
     logger: logging.Logger | None = None,
     state: dict[str, Any] | None = None,
+    allow_unsafe_legacy: bool = False,
 ) -> tuple[nn.Module, torch.optim.Optimizer | None, EMA | None, int]:
     """Load checkpoint for resume training.
 
@@ -724,7 +737,15 @@ def load_checkpoint(
         raise FileNotFoundError(f"Checkpoint not found: {path}")
 
     try:
-        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+        with path.open("rb") as checkpoint_file:
+            signature = checkpoint_file.read(4)
+        if not (signature.startswith(b"PK") or signature.startswith(b"\x80")):
+            raise pickle.UnpicklingError("invalid checkpoint serialization header")
+        checkpoint = load_torch_checkpoint(
+            path, map_location="cpu", allow_unsafe_legacy=allow_unsafe_legacy
+        )
+    except UnsafeCheckpointError:
+        raise
     except (
         zipfile.BadZipFile,
         RuntimeError,
@@ -1004,6 +1025,8 @@ class DiTTrainer:
         hub_push_interval: int = 0,
         experiment_id: str = "dit-breed-conditioned-v4",
         allow_experiment_mismatch: bool = False,
+        allow_unsafe_legacy_checkpoint: bool = False,
+        allow_legacy_dataset_hash: bool = False,
     ) -> dict[str, Any]:
         """Run DiT training (was train_dit_on_gpu, now DiTTrainer.train).
 
@@ -1180,6 +1203,8 @@ class DiTTrainer:
                 hub_repo=hub_repo,
                 experiment_id=experiment_id,
                 allow_experiment_mismatch=allow_experiment_mismatch,
+                allow_unsafe_legacy_checkpoint=allow_unsafe_legacy_checkpoint,
+                allow_legacy_dataset_hash=allow_legacy_dataset_hash,
             )
 
             # Canonical final artifact package (issue #163 WP2): export ONNX
@@ -1406,6 +1431,8 @@ def train_dit_local(
     hub_repo: str = "d4oit/tiny-cats-model",
     experiment_id: str = "dit-breed-conditioned-v4",
     allow_experiment_mismatch: bool = False,
+    allow_unsafe_legacy_checkpoint: bool = False,
+    allow_legacy_dataset_hash: bool = False,
     model_fn: Callable[[], nn.Module] | None = None,
 ) -> float:
     """Full TinyDiT training loop with flow matching and EMA.
@@ -1469,6 +1496,7 @@ def train_dit_local(
         TRAINING_STATE_FILENAME,
         IncompatibleExperimentError,
         build_manifest,
+        is_legacy_identity,
         manifest_mismatches,
         manifest_of,
         read_training_state,
@@ -1638,7 +1666,13 @@ def train_dit_local(
         # returns the same instance, but its return type is Optional —
         # rebinding would poison later optimizer.param_groups access for mypy.
         model, _loaded_optimizer, _ema, start_step = load_checkpoint(
-            resume, model, optimizer, ema, logger, state=resume_state
+            resume,
+            model,
+            optimizer,
+            ema,
+            logger,
+            state=resume_state,
+            allow_unsafe_legacy=allow_unsafe_legacy_checkpoint,
         )
         # Use loaded EMA if available
         ema = _ema if _ema is not None else ema
@@ -1672,6 +1706,28 @@ def train_dit_local(
                 saved_manifest = manifest_of(sidecar) if sidecar else None
             if saved_manifest:
                 mismatches = manifest_mismatches(saved_manifest, manifest)
+                mismatch_fields = {item.split(":", 1)[0] for item in mismatches}
+                if (
+                    allow_legacy_dataset_hash
+                    and mismatch_fields
+                    and mismatch_fields
+                    <= {"dataset_hash", "dataset_hash_version", "dataset_version"}
+                    and is_legacy_identity(
+                        str(saved_manifest.get("dataset_hash", "")), data_dir
+                    )
+                ):
+                    logger.warning(
+                        "MIGRATING legacy dataset path/size hash identity; "
+                        "the legacy hash does not verify file contents."
+                    )
+                    migrated_manifest = dict(manifest)
+                    for field in (
+                        "dataset_hash",
+                        "dataset_hash_version",
+                        "dataset_version",
+                    ):
+                        migrated_manifest[field] = saved_manifest.get(field)
+                    mismatches = manifest_mismatches(saved_manifest, migrated_manifest)
                 if mismatches:
                     detail = "; ".join(mismatches)
                     if allow_experiment_mismatch:
@@ -1683,8 +1739,7 @@ def train_dit_local(
                         raise IncompatibleExperimentError(
                             f"Checkpoint {resume} belongs to a different "
                             f"experiment ({detail}). Refusing to resume; pass "
-                            "--allow-experiment-mismatch to override "
-                            "deliberately."
+                            "--allow-experiment-mismatch to override deliberately."
                         )
                 else:
                     logger.info("Experiment manifest matches; resume accepted")
@@ -2318,6 +2373,8 @@ def main(
     hub_push_interval: int = 0,
     experiment_id: str = "dit-breed-conditioned-v4",
     allow_experiment_mismatch: bool = False,
+    allow_unsafe_legacy_checkpoint: bool = False,
+    allow_legacy_dataset_hash: bool = False,
 ):
     """Local entrypoint for Modal CLI (ADR-025: @modal.enter() class pattern).
 
@@ -2358,6 +2415,8 @@ def main(
         hub_push_interval=hub_push_interval,
         experiment_id=experiment_id,
         allow_experiment_mismatch=allow_experiment_mismatch,
+        allow_unsafe_legacy_checkpoint=allow_unsafe_legacy_checkpoint,
+        allow_legacy_dataset_hash=allow_legacy_dataset_hash,
     )
     print(f"Training completed: {result}")
 
@@ -2396,6 +2455,8 @@ if __name__ == "__main__":
             augmentation_level=args.augmentation_level,
             experiment_id=args.experiment_id,
             allow_experiment_mismatch=args.allow_experiment_mismatch,
+            allow_unsafe_legacy_checkpoint=args.allow_unsafe_legacy_checkpoint,
+            allow_legacy_dataset_hash=args.allow_legacy_dataset_hash,
         )
     except (TrainingError, Exception) as e:
         logging.error(f"Training failed: {e}")

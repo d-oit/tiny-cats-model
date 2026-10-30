@@ -27,6 +27,8 @@ from typing import Any
 
 import torch
 
+from safe_checkpoint import load_torch_checkpoint
+
 # Optional imports (handle gracefully if not installed)
 try:
     from safetensors.torch import save_file
@@ -120,7 +122,7 @@ def export_to_safetensors(
         logger.info(f"Loading checkpoint from {checkpoint_path}")
 
     # Load checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    checkpoint = load_torch_checkpoint(checkpoint_path, map_location="cpu")
 
     # Extract state dict (remove metadata)
     if "model_state_dict" in checkpoint:
@@ -390,7 +392,7 @@ def generate_samples(
         logger.info(f"Generating {num_samples} samples to {output_dir}")
 
     # Load model
-    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+    checkpoint = load_torch_checkpoint(model_path, map_location="cpu")
 
     # Import model architecture
     import sys
@@ -644,7 +646,7 @@ def load_model(checkpoint_path: str, device: str = "cpu"):
     """Load model from checkpoint."""
     from dit import tinydit_128
 
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    checkpoint = load_torch_checkpoint(checkpoint_path, map_location="cpu")
 
     # Get config
     config = checkpoint.get("config", {})

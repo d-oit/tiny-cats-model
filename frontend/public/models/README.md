@@ -1,6 +1,9 @@
 # Cats Classifier Models
 
-This directory contains ONNX models for binary cat classification (cat vs other).
+The classifier predicts **cat** vs **not-cat**. ImageFolder folders map as
+`cat/` → output index 0 (`cat`) and `other/` → output index 1 (`not_cat`).
+The generator is a separate model with 12 breed conditions plus `Other` at
+index 12 and an unconditional/null index 13 for classifier-free guidance.
 
 ## Model Files
 
@@ -30,103 +33,61 @@ This directory contains ONNX models for binary cat classification (cat vs other)
 - **Shape**: `[batch_size, 3, 224, 224]`
 - **Type**: Float32 tensor
 - **Preprocessing**:
-  1. Resize image to 224x224 pixels
-  2. Convert to RGB (3 channels)
-  3. Normalize using ImageNet statistics:
+  1. Convert to RGB.
+  2. Bilinearly resize while preserving aspect ratio so the shorter side is 256.
+  3. Centre crop to 224x224 pixels.
+  4. Scale pixels to [0, 1], then normalize using ImageNet statistics:
      - Mean: `[0.485, 0.456, 0.406]`
      - Std: `[0.229, 0.224, 0.225]`
-  4. Scale to range `[-1, 1]`
+  Normalized values are not restricted to `[-1, 1]`.
 
 ### Output
 - **Name**: `output`
 - **Shape**: `[batch_size, 2]`
-- **Type**: Float32 tensor (logits)
+- **Type**: Float32 tensor containing logits (the ONNX graph does not apply softmax)
 - **Classes**:
   - Index 0: `cat` (positive class)
-  - Index 1: `other` (negative class - primarily dogs)
+  - Index 1: `not_cat` (`other/` folder; negative examples are primarily dogs)
+## Frontend Runtime
 
-## How to Use in the Frontend
+The production frontend does not create ONNX sessions from arbitrary URLs.
+`frontend/src/generated/modelManifest.json` is generated from the bundled
+artifacts and records each artifact's SHA-256, byte size, model contract and
+optional immutable Hugging Face commit SHA. `modelAssets.ts` verifies size and
+SHA-256 with Web Crypto before either worker creates a session. Remote fetches
+are allowed only for a full 40-character Hub commit SHA; the bundled file is
+the fallback only when it matches the same digest and size.
 
-### Using ONNX Runtime Web
+The classify page uses `decodeImageFile()` and `preprocessImageSource()` from
+`frontend/src/utils/imageUtils.ts`. The generator and classifier workers own
+their ONNX sessions and release them on teardown. Use these application APIs
+instead of bypassing the manifest with direct `fetch()` or
+`InferenceSession.create()` calls.
 
-```typescript
-import * as ort from 'onnxruntime-web';
+## Model Promotion and Rollback
 
-// Initialize the session
-const session = await ort.InferenceSession.create('/models/cats_quantized.onnx', {
-  executionProviders: ['wasm']
-});
+1. Place the release-ready classifier and generator artifacts in
+   `frontend/public/models/`; the manifest generator reads their bytes and
+   inspects ONNX graph metadata.
+2. Upload those exact files to the Hugging Face repository and record the
+   resulting immutable commit SHA. Never use a branch name or tag as a
+   revision.
+3. Generate and review the frontend contract and manifest:
 
-// Preprocess the image
-function preprocessImage(image: HTMLImageElement): ort.Tensor {
-  const canvas = document.createElement('canvas');
-  canvas.width = 224;
-  canvas.height = 224;
-  const ctx = canvas.getContext('2d')!;
-  ctx.drawImage(image, 0, 0, 224, 224);
+   ```bash
+   python scripts/generate_frontend_metadata.py --revision <40-character-commit-sha>
+   python scripts/generate_frontend_metadata.py --revision <40-character-commit-sha> --check
+   ```
 
-  const imageData = ctx.getImageData(0, 0, 224, 224);
-  const data = imageData.data;
+4. Commit the model files and both generated JSON files together. The generated
+   SHA-256 values must match the uploaded bytes; the frontend rejects mismatched
+   remote or bundled artifacts before inference.
+5. To roll back, restore the previous known-good model files and matching
+   `modelManifest.json` revision as one release, then run the generator with the
+   previous commit SHA and `--check`. Do not edit a SHA by hand.
 
-  // Normalize and rearrange to CHW format
-  const tensorData = new Float32Array(3 * 224 * 224);
-  const mean = [0.485, 0.456, 0.406];
-  const std = [0.229, 0.224, 0.225];
-
-  for (let i = 0; i < 224 * 224; i++) {
-    for (let c = 0; c < 3; c++) {
-      const pixelValue = data[i * 4 + c] / 255.0;
-      tensorData[c * 224 * 224 + i] = (pixelValue - mean[c]) / std[c];
-    }
-  }
-
-  return new ort.Tensor('float32', tensorData, [1, 3, 224, 224]);
-}
-
-// Run inference
-async function classify(image: HTMLImageElement): Promise<{ cat: number; other: number }> {
-  const inputTensor = preprocessImage(image);
-  const feeds = { input: inputTensor };
-  const results = await session.run(feeds);
-  const output = results.output.data as Float32Array;
-
-  // Apply softmax to get probabilities
-  const expCat = Math.exp(output[0]);
-  const expOther = Math.exp(output[1]);
-  const sum = expCat + expOther;
-
-  return {
-    cat: expCat / sum,
-    other: expOther / sum
-  };
-}
-```
-
-### Using a Web Worker
-
-For better UI responsiveness, run inference in a web worker:
-
-```typescript
-// worker.ts
-import * as ort from 'onnxruntime-web';
-
-let session: ort.InferenceSession | null = null;
-
-self.onmessage = async (event) => {
-  const { type, data } = event.data;
-
-  if (type === 'init') {
-    session = await ort.InferenceSession.create(data.modelPath, {
-      executionProviders: ['wasm']
-    });
-    self.postMessage({ type: 'ready' });
-  } else if (type === 'infer' && session) {
-    const tensor = new ort.Tensor('float32', data.input, [1, 3, 224, 224]);
-    const results = await session.run({ input: tensor });
-    self.postMessage({ type: 'result', data: results.output.data });
-  }
-};
-```
+When no immutable Hub revision is configured, the frontend performs no remote
+model request and uses only digest-verified bundled artifacts.
 
 ## Performance Characteristics
 

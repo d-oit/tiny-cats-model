@@ -51,6 +51,7 @@ sys.path.insert(0, str(SRC_DIR))
 
 from dataset import create_train_val_dataloaders  # noqa: E402
 from dit_validation import evaluate_flow_loss  # noqa: E402
+from safe_checkpoint import load_torch_checkpoint  # noqa: E402
 from train_dit import train_dit_local  # noqa: E402
 from validate_model import build_model_from_checkpoint  # noqa: E402
 
@@ -194,7 +195,7 @@ def run_arm(
     train_dit_local(**params)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    checkpoint = torch.load(output, map_location="cpu", weights_only=False)
+    checkpoint = load_torch_checkpoint(output, map_location="cpu")
     model, _ = build_model_from_checkpoint(checkpoint)
     model = model.to(device).eval()
 

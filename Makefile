@@ -1,4 +1,4 @@
-.PHONY: help install install-dev lint format test test-cov clean train evaluate predict quality-gate
+.PHONY: help install install-dev lint format test test-cov clean train evaluate quality-gate
 
 PYTHON ?= python
 PIP    ?= pip
@@ -50,17 +50,12 @@ clean:
 
 ## train: Train the model with the default config
 train:
-	$(PYTHON) train.py --config configs/train_config.yaml
+	$(PYTHON) src/train.py --config configs/train_config.yaml
 
 ## evaluate: Evaluate a trained checkpoint
 ## Usage: make evaluate CKPT=checkpoints/best.pth DATA=data/cats
 evaluate:
-	$(PYTHON) evaluate.py --checkpoint $(CKPT) --data-dir $(DATA)
-
-## predict: Run inference on a single image
-## Usage: make predict IMG=path/to/image.jpg CKPT=checkpoints/best.pth
-predict:
-	$(PYTHON) predict.py --image $(IMG) --checkpoint $(CKPT)
+	$(PYTHON) src/eval.py --checkpoint $(CKPT) --data-dir $(DATA)
 
 ## quality-gate: Run full quality gate (format, lint, test)
 quality-gate:

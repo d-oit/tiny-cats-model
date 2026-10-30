@@ -22,13 +22,16 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from dataset_manifest import DATASET_HASH_VERSION, legacy_path_size_fingerprint
 from training_state import (
     IMMUTABLE_FIELDS,
     MANIFEST_FIELDS,
+    breed_mapping_hash,
     build_manifest,
     capture_rng_state,
     dataset_fingerprint,
     git_sha,
+    legacy_dataset_identity_matches,
     manifest_mismatches,
     manifest_of,
     read_training_state,
@@ -91,8 +94,8 @@ class TestExperimentManifest:
             "repository",
             "git_sha",
             "dataset_id",
-            "dataset_version",
             "dataset_hash",
+            "dataset_hash_version",
             "breed_mapping_hash",
             "image_size",
             "patch_size",
@@ -170,6 +173,7 @@ class TestExperimentManifest:
     def test_immutable_fields_exclude_slice_progress_fields(self) -> None:
         for field in ("target_steps", "git_sha", "provider", "dataset_version"):
             assert field not in IMMUTABLE_FIELDS
+        assert "dataset_hash_version" in IMMUTABLE_FIELDS
 
 
 class TestTrainingStateFile:
@@ -269,23 +273,79 @@ class TestRngState:
         assert "torch" in state
         assert "python" in state
 
+    def test_weights_only_checkpoint_rng_round_trip(self, tmp_path: Path) -> None:
+        path = tmp_path / "checkpoint.pt"
+        state = {"rng_state": capture_rng_state()}
+        torch.save(state, path)
+        loaded = torch.load(path, weights_only=True)
+        restore_rng_state(loaded["rng_state"])
+        assert "numpy" in loaded["rng_state"]
+
+    def test_legacy_numpy_tuple_is_still_accepted(self) -> None:
+        np = pytest.importorskip("numpy")
+        old = np.random.get_state()
+        restore_rng_state({"numpy": old})
+
 
 class TestFingerprints:
     def test_dataset_fingerprint_is_stable(self, tmp_path: Path) -> None:
-        (tmp_path / "a.jpg").write_bytes(b"1234")
+        (tmp_path / "cat").mkdir()
+        sample = tmp_path / "cat" / "Abyssinian_1.jpg"
+        sample.write_bytes(b"1234")
         first = dataset_fingerprint(tmp_path)
         assert first == dataset_fingerprint(tmp_path)
 
-    def test_dataset_fingerprint_detects_changes(self, tmp_path: Path) -> None:
-        (tmp_path / "a.jpg").write_bytes(b"1234")
+    def test_dataset_fingerprint_detects_same_size_replacement(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "cat").mkdir()
+        sample = tmp_path / "cat" / "Abyssinian_1.jpg"
+        sample.write_bytes(b"1234")
         before = dataset_fingerprint(tmp_path)
-        (tmp_path / "a.jpg").write_bytes(b"12345")
+        sample.write_bytes(b"5678")
         assert dataset_fingerprint(tmp_path) != before
 
+    def test_legacy_dataset_identity_requires_hash_and_mapping(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "cat").mkdir()
+        (tmp_path / "cat" / "Abyssinian_1.jpg").write_bytes(b"same")
+        saved = {
+            "dataset_hash": legacy_path_size_fingerprint(tmp_path),
+            "breed_mapping_hash": breed_mapping_hash(),
+        }
+        assert legacy_dataset_identity_matches(saved, tmp_path)
+        saved["breed_mapping_hash"] = "wrong"
+        assert not legacy_dataset_identity_matches(saved, tmp_path)
+        saved["breed_mapping_hash"] = breed_mapping_hash()
+        saved["dataset_hash"] = "wrong"
+        assert not legacy_dataset_identity_matches(saved, tmp_path)
+
+    def test_dataset_hash_version_is_recorded(self, tmp_path: Path) -> None:
+        manifest = build_manifest(
+            experiment_id="test",
+            data_dir=tmp_path,
+            image_size=128,
+            patch_size=16,
+            embed_dim=32,
+            depth=1,
+            num_heads=4,
+            num_classes=13,
+            batch_size=2,
+            gradient_accumulation_steps=1,
+            learning_rate=1e-4,
+            warmup_steps=1,
+            augmentation_level="basic",
+            seed=1,
+            target_steps=1,
+        )
+        assert manifest["dataset_hash_version"] == DATASET_HASH_VERSION
+
     def test_dataset_fingerprint_detects_additions(self, tmp_path: Path) -> None:
-        (tmp_path / "a.jpg").write_bytes(b"1234")
+        (tmp_path / "cat").mkdir()
+        (tmp_path / "cat" / "Abyssinian_1.jpg").write_bytes(b"1234")
         before = dataset_fingerprint(tmp_path)
-        (tmp_path / "b.jpg").write_bytes(b"1")
+        (tmp_path / "cat" / "Abyssinian_2.jpg").write_bytes(b"1")
         assert dataset_fingerprint(tmp_path) != before
 
     def test_missing_dataset_dir(self, tmp_path: Path) -> None:

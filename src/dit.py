@@ -473,49 +473,57 @@ class TinyDiT(nn.Module):
         return pred_uncond + cfg_scale * (pred_cond - pred_uncond)
 
 
-def load_state_dict_checked(model: nn.Module, state_dict: dict) -> None:
-    """Load a TinyDiT state dict, failing clearly on architecture mismatch.
-
-    ``load_state_dict(strict=True)`` copies every matching tensor *before*
-    raising for missing/unexpected keys or shape mismatches, which would leave
-    a partially restored model behind. Checking keys *and* shapes first avoids
-    that and gives a clear, actionable error — e.g. checkpoints saved before
-    ADR-060 have no ``pos_embed``, and ``tinydit_128`` vs ``tinydit_256``
-    checkpoints share key names but not shapes.
-    """
+def state_dict_diff(model: nn.Module, state_dict: dict) -> dict:
+    """Report missing, unexpected, shape, and dtype differences without mutation."""
     model_state = model.state_dict()
-    model_keys = set(model_state.keys())
-    state_keys = set(state_dict.keys())
-    if model_keys != state_keys:
-        missing = sorted(model_keys - state_keys)[:3]
-        unexpected = sorted(state_keys - model_keys)[:3]
+    model_keys = set(model_state)
+    state_keys = set(state_dict)
+    shape_mismatches = []
+    dtype_mismatches = []
+    for key in sorted(model_keys & state_keys):
+        checkpoint_value = state_dict[key]
+        model_value = model_state[key]
+        if not isinstance(checkpoint_value, torch.Tensor):
+            shape_mismatches.append(
+                {
+                    "key": key,
+                    "checkpoint_shape": type(checkpoint_value).__name__,
+                    "model_shape": list(model_value.shape),
+                }
+            )
+            continue
+        if tuple(model_value.shape) != tuple(checkpoint_value.shape):
+            shape_mismatches.append(
+                {
+                    "key": key,
+                    "checkpoint_shape": list(checkpoint_value.shape),
+                    "model_shape": list(model_value.shape),
+                }
+            )
+        if model_value.dtype != checkpoint_value.dtype:
+            dtype_mismatches.append(
+                {
+                    "key": key,
+                    "checkpoint_dtype": str(checkpoint_value.dtype),
+                    "model_dtype": str(model_value.dtype),
+                }
+            )
+    return {
+        "missing_keys": sorted(model_keys - state_keys),
+        "unexpected_keys": sorted(state_keys - model_keys),
+        "shape_mismatches": shape_mismatches,
+        "dtype_mismatches": dtype_mismatches,
+    }
+
+
+def load_state_dict_checked(model: nn.Module, state_dict: dict) -> None:
+    """Load only a complete, shape- and dtype-identical TinyDiT state dict."""
+    diff = state_dict_diff(model, state_dict)
+    if any(diff.values()):
         raise ValueError(
-            "Checkpoint is incompatible with the current TinyDiT architecture "
-            f"(missing keys={missing}, unexpected keys={unexpected}). "
-            "Checkpoints saved before ADR-060 have no positional embedding; "
-            "retrain or re-export with the current code."
+            f"Checkpoint is incompatible with the current TinyDiT architecture: {diff}"
         )
-    mismatched = [
-        key
-        for key in model_keys
-        if not isinstance(state_dict[key], torch.Tensor)
-        or tuple(model_state[key].shape) != tuple(state_dict[key].shape)
-    ]
-    if mismatched:
-        key = mismatched[0]
-        ck_val = state_dict[key]
-        ck_shape = (
-            tuple(ck_val.shape)
-            if isinstance(ck_val, torch.Tensor)
-            else type(ck_val).__name__
-        )
-        raise ValueError(
-            "Checkpoint tensors do not match the current TinyDiT architecture "
-            f"(shape mismatch for {key}: checkpoint {ck_shape} "
-            f"vs model {tuple(model_state[key].shape)}). "
-            "Retrain or re-export with the current code."
-        )
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=True)
 
 
 def count_parameters(model: nn.Module) -> int:

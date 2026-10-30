@@ -14,11 +14,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import torch
 
 from dit import TinyDiT, load_state_dict_checked, tinydit_128
+from model_contract import GENERATOR_CONDITIONS, ContractError, generator_metadata
+from safe_checkpoint import load_torch_checkpoint, sha256_file
 
 
 class SamplerWrapper(torch.nn.Module):
@@ -193,30 +196,52 @@ def load_model(
     Returns:
         Loaded TinyDiT model in eval mode
     """
+    checkpoint_path = Path(checkpoint_path)
     if device is None:
         device = torch.device("cpu")
-
-    checkpoint_path = Path(checkpoint_path)
-
-    # Create model
-    model = tinydit_128(num_classes=num_classes)
-
-    # Load checkpoint if it exists
-    if checkpoint_path.exists():
-        checkpoint = torch.load(
-            checkpoint_path, map_location=device, weights_only=False
+    if num_classes != len(GENERATOR_CONDITIONS):
+        raise ContractError(
+            f"generator must have {len(GENERATOR_CONDITIONS)} labels, got {num_classes}"
         )
-
-        # Handle different checkpoint formats
+    model = tinydit_128(num_classes=num_classes)
+    if checkpoint_path.exists():
+        checkpoint = load_torch_checkpoint(checkpoint_path, map_location=device)
+        if not isinstance(checkpoint, dict):
+            raise ContractError("generator checkpoint must be a dictionary")
+        config = checkpoint.get("config", {})
+        if isinstance(config, dict) and "num_classes" in config:
+            if int(config["num_classes"]) != len(GENERATOR_CONDITIONS):
+                raise ContractError(
+                    "generator checkpoint num_classes disagrees with condition labels"
+                )
+        metadata = checkpoint.get("metadata", {})
+        if isinstance(metadata, dict):
+            conditions = metadata.get("conditions")
+            if conditions is not None:
+                names = [
+                    item.get("name") for item in conditions if isinstance(item, dict)
+                ]
+                if tuple(names) != GENERATOR_CONDITIONS:
+                    raise ContractError(
+                        "generator checkpoint condition labels disagree with contract"
+                    )
+            architecture = metadata.get("architecture", {})
+            if (
+                isinstance(architecture, dict)
+                and "num_classes" in architecture
+                and int(architecture["num_classes"]) != len(GENERATOR_CONDITIONS)
+            ):
+                raise ContractError(
+                    "generator metadata num_classes disagrees with labels"
+                )
         if "model_state_dict" in checkpoint:
             state_dict = checkpoint["model_state_dict"]
         elif "model" in checkpoint:
             state_dict = checkpoint["model"]
-        elif "ema_params" in checkpoint and checkpoint["ema_params"] is not None:
+        elif checkpoint.get("ema_params") is not None:
             state_dict = checkpoint["ema_params"]
         else:
             state_dict = checkpoint
-
         load_state_dict_checked(model, state_dict)
         print(f"Loaded checkpoint from {checkpoint_path}")
     else:
@@ -283,6 +308,46 @@ def export_generator_onnx(
         },
         dynamo=False,
     )
+    import onnx
+
+    graph = onnx.load(str(output_path))
+    onnx.checker.check_model(graph)
+    graph_inputs = {value.name: value for value in graph.graph.input}
+    graph_outputs = {value.name: value for value in graph.graph.output}
+    if set(graph_inputs) != set(input_names) or set(graph_outputs) != set(output_names):
+        raise RuntimeError("exported generator graph names violate contract")
+    for name, value in graph_inputs.items():
+        dims = value.type.tensor_type.shape.dim
+        expected_rank = 4 if name == "noise" else 1
+        if len(dims) != expected_rank:
+            raise RuntimeError(f"exported generator input {name} has invalid rank")
+        expected_type = 7 if name == "breed" else 1
+        if value.type.tensor_type.elem_type != expected_type:
+            raise RuntimeError(f"exported generator input {name} has invalid dtype")
+        if name == "noise" and [dim.dim_value for dim in dims[1:]] != [
+            3,
+            image_size,
+            image_size,
+        ]:
+            raise RuntimeError("exported generator noise dimensions violate contract")
+    if graph_outputs["velocity"].type.tensor_type.elem_type != 1:
+        raise RuntimeError("exported generator output must be float32")
+    out_dims = graph_outputs["velocity"].type.tensor_type.shape.dim
+    if len(out_dims) != 4 or [dim.dim_value for dim in out_dims[1:]] != [
+        3,
+        image_size,
+        image_size,
+    ]:
+        raise RuntimeError("exported generator output dimensions violate contract")
+    metadata = generator_metadata(
+        num_classes=model.num_classes,
+        opset=opset_version,
+        image_size=image_size,
+        model_sha256=sha256_file(output_path),
+    )
+    Path(str(output_path) + ".json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n"
+    )
 
     print(f"Exported ONNX model to {output_path}")
     print("  Input shapes:")
@@ -344,6 +409,47 @@ def export_velocity_model_onnx(
             "breed": {0: "batch_size"},
             "velocity": {0: "batch_size"},
         },
+    )
+    if model.num_classes != len(GENERATOR_CONDITIONS):
+        raise ContractError("generator classes disagree with conditioning labels")
+    import onnx
+
+    graph = onnx.load(str(output_path))
+    onnx.checker.check_model(graph)
+    graph_inputs = {value.name: value for value in graph.graph.input}
+    graph_outputs = {value.name: value for value in graph.graph.output}
+    if set(graph_inputs) != set(input_names) or set(graph_outputs) != set(output_names):
+        raise RuntimeError("exported generator graph names violate contract")
+    for name, value in graph_inputs.items():
+        if value.type.tensor_type.elem_type != (7 if name == "breed" else 1):
+            raise RuntimeError(f"exported generator input {name} has wrong dtype")
+        dims = value.type.tensor_type.shape.dim
+        if len(dims) != (4 if name == "noise" else 1):
+            raise RuntimeError(f"exported generator input {name} has wrong rank")
+        if name == "noise" and [dim.dim_value for dim in dims[1:]] != [
+            3,
+            image_size,
+            image_size,
+        ]:
+            raise RuntimeError("exported generator noise dimensions violate contract")
+    output_value = graph_outputs["velocity"]
+    output_dims = output_value.type.tensor_type.shape.dim
+    if (
+        output_value.type.tensor_type.elem_type != 1
+        or len(output_dims) != 4
+        or [dim.dim_value for dim in output_dims[1:]] != [3, image_size, image_size]
+    ):
+        raise RuntimeError(
+            "exported generator output violates dtype/dimension contract"
+        )
+    metadata = generator_metadata(
+        num_classes=model.num_classes,
+        opset=opset_version,
+        image_size=image_size,
+        model_sha256=sha256_file(output_path),
+    )
+    Path(str(output_path) + ".json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n"
     )
 
     print(f"Exported raw velocity model to {output_path}")

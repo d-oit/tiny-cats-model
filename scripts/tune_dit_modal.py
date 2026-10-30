@@ -103,6 +103,7 @@ def tune_arm(
     from dataset import create_train_val_dataloaders
     from dit import TinyDiT, load_state_dict_checked
     from dit_validation import evaluate_flow_loss
+    from safe_checkpoint import load_torch_checkpoint
     from train_dit import train_dit_local
 
     overrides = {key: value for key, value in arm.items() if key != "label"}
@@ -142,7 +143,7 @@ def tune_arm(
     started = time.time()
     train_dit_local(**params)
 
-    checkpoint = torch.load(output, map_location="cpu", weights_only=False)
+    checkpoint = load_torch_checkpoint(output, map_location="cpu")
     raw_config = checkpoint.get("config")
     config = raw_config if isinstance(raw_config, dict) else {}
     model = TinyDiT(

@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+const serverPort = process.env.PLAYWRIGHT_PORT || "5174";
 
 /**
  * Playwright Configuration for TinyCats E2E Tests
@@ -42,7 +43,7 @@ export default defineConfig({
   use: {
     // Base URL for the application
     // Vite base is /tiny-cats-model/, app uses HashRouter
-    baseURL: 'http://localhost:5173/tiny-cats-model',
+    baseURL: `http://127.0.0.1:${serverPort}/tiny-cats-model`,
 
     // Collect trace when retrying failed tests
     trace: 'on-first-retry',
@@ -101,11 +102,13 @@ export default defineConfig({
 
   // Web server configuration
   webServer: {
-    // Command to start the development server
-    command: 'cd frontend && npm run dev',
+    // CI serves the production build; local runs use the dev server.
+    command: process.env.PLAYWRIGHT_PREVIEW
+      ? `cd frontend && npm run preview -- --host 127.0.0.1 --port ${serverPort}`
+      : `cd frontend && npm run dev -- --host 127.0.0.1 --port ${serverPort}`,
 
-    // Port the server runs on
-    port: 5173,
+    // Verify the deployment sub-path used by GitHub Pages.
+    url: `http://127.0.0.1:${serverPort}/tiny-cats-model/`,
 
     // Reuse existing server when not in CI
     reuseExistingServer: !process.env.CI,
