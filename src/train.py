@@ -192,6 +192,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed for reproducibility"
     )
+    parser.add_argument(
+        "--split-manifest",
+        type=str,
+        default=None,
+        help="Persisted deterministic split manifest",
+    )
     return parser.parse_args()
 
 
@@ -347,11 +353,12 @@ def save_checkpoint(
     path: str | Path,
     logger: logging.Logger,
     is_best: bool = False,
+    metadata: dict[str, Any] | None = None,
+    dataset: dict[str, Any] | None = None,
 ) -> None:
-    """Save training checkpoint."""
+    """Save model state with its classifier contract and dataset provenance."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-
     checkpoint = {
         "epoch": epoch,
         "model_state_dict": model.state_dict(),
@@ -359,10 +366,12 @@ def save_checkpoint(
         "val_acc": val_acc,
         "timestamp": datetime.now().isoformat(),
     }
-
+    if metadata is not None:
+        checkpoint["metadata"] = metadata
+    if dataset is not None:
+        checkpoint["dataset"] = dataset
     torch.save(checkpoint, path)
     logger.info(f"Saved checkpoint to {path} (val_acc={val_acc:.4f})")
-
     if is_best:
         best_path = path.parent / f"best_{path.name}"
         torch.save(checkpoint, best_path)
@@ -375,21 +384,19 @@ def load_checkpoint(
     optimizer: torch.optim.Optimizer | None = None,
     logger: logging.Logger | None = None,
 ) -> tuple[nn.Module, torch.optim.Optimizer | None, int]:
-    """Load checkpoint for resume training."""
+    """Load a checkpoint for resume training using safe deserialization."""
+    from safe_checkpoint import load_torch_checkpoint
+
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {path}")
-
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    checkpoint = load_torch_checkpoint(path, map_location="cpu")
     model.load_state_dict(checkpoint["model_state_dict"])
-
     if optimizer and "optimizer_state_dict" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-
     start_epoch = checkpoint.get("epoch", 0) + 1
     if logger:
         logger.info(f"Loaded checkpoint from {path} (epoch {start_epoch - 1})")
-
     return model, optimizer, start_epoch
 
 
@@ -492,6 +499,7 @@ class ClassifierTrainer:
         mixed_precision: bool = True,
         gradient_clip: float = 1.0,
         warmup_epochs: int = 2,
+        split_manifest: str | None = None,
     ) -> dict[str, Any]:
         """Run classifier training (was train_on_gpu, now ClassifierTrainer.train).
 
@@ -615,6 +623,7 @@ class ClassifierTrainer:
                 warmup_epochs=warmup_epochs,
                 log_file=log_file,
                 logger=logger,
+                split_manifest=split_manifest,
             )
 
             # Export to ONNX and Quantize (Issue #63)
@@ -702,13 +711,9 @@ def main(
     mixed_precision: bool = True,
     gradient_clip: float = 1.0,
     warmup_epochs: int = 2,
+    split_manifest: str | None = None,
 ):
-    """Local entrypoint for Modal CLI.
-
-    Usage:
-        modal run src/train.py data/cats --epochs 20 --batch-size 64
-        modal run src/train.py --epochs 20 --batch-size 64 --backbone resnet34
-    """
+    """Local entrypoint for Modal CLI."""
     trainer = ClassifierTrainer()
     result = trainer.train.remote(
         data_dir=data_dir,
@@ -722,6 +727,7 @@ def main(
         mixed_precision=mixed_precision,
         gradient_clip=gradient_clip,
         warmup_epochs=warmup_epochs,
+        split_manifest=split_manifest,
     )
     print(f"Training completed: {result}")
 
@@ -747,6 +753,7 @@ def train(
     logger: logging.Logger | None = None,
     seed: int = 42,
     resume: bool = True,
+    split_manifest: str | None = None,
 ) -> float:
     """Full training loop with validation, checkpointing, and memory management.
 
@@ -776,13 +783,18 @@ def train(
         log_gpu_memory(logger, "Initial | ")
 
     from dataset import cats_dataloader
+    from dataset_manifest import dataset_fingerprint
     from model import cats_model, count_parameters
+    from model_contract import classifier_metadata
+    from splits import read_split_manifest, split_manifest_summary
 
     try:
         train_loader, val_loader = cats_dataloader(
             root=data_dir,
             batch_size=batch_size,
             num_workers=num_workers,
+            seed=seed,
+            split_manifest=split_manifest,
         )
         logger.info(
             f"Data loaders created: {len(train_loader)} train batches, "
@@ -791,7 +803,26 @@ def train(
     except Exception as e:
         raise DataLoadError(f"Failed to create data loaders: {e}") from e
 
-    num_classes = len(train_loader.dataset.dataset.classes)  # type: ignore
+    training_dataset = train_loader.dataset
+    num_classes = len(
+        training_dataset.classes
+        if hasattr(training_dataset, "classes")
+        else training_dataset.dataset.classes
+    )
+    split_info = None
+    if split_manifest is not None:
+        split_info = split_manifest_summary(read_split_manifest(split_manifest))
+    dataset_hash = dataset_fingerprint(data_dir)
+    dataset_provenance = {
+        "dataset_hash": dataset_hash,
+        "split": split_info,
+    }
+    metadata = classifier_metadata(
+        backbone=backbone,
+        num_classes=num_classes,
+        dataset_version=dataset_hash,
+        split_manifest_hash=split_info["split_hash"] if split_info else None,
+    )
     model = cats_model(
         num_classes=num_classes,
         backbone=backbone,
@@ -824,13 +855,19 @@ def train(
 
     # Class-balanced cross entropy: weight each class by inverse frequency so
     # the minority class (other/dogs) is not starved by the cat-heavy data.
-    train_subset = train_loader.dataset  # type: ignore[attr-defined]
-    full_targets = train_subset.dataset.targets  # type: ignore[attr-defined]
+    training_samples = (
+        training_dataset.samples
+        if hasattr(training_dataset, "samples")
+        else [
+            training_dataset.dataset.samples[index]
+            for index in training_dataset.indices
+        ]
+    )
     support = [0] * num_classes
-    for sample_idx in train_subset.indices:
-        support[full_targets[sample_idx]] += 1
+    for _, label in training_samples:
+        support[label] += 1
     class_weights = torch.tensor(
-        [len(train_subset.indices) / (num_classes * max(c, 1)) for c in support],
+        [len(training_samples) / (num_classes * max(c, 1)) for c in support],
         dtype=torch.float32,
     ).to(device)
     loss_fn = nn.CrossEntropyLoss(weight=class_weights)
@@ -954,7 +991,8 @@ def train(
                         val_acc=val_acc,
                         path=output,
                         logger=logger,
-                        is_best=is_best,
+                        metadata=metadata,
+                        dataset=dataset_provenance,
                     )
 
                 cleanup_memory()
@@ -968,7 +1006,8 @@ def train(
                         val_acc=val_acc,
                         path=output,
                         logger=logger,
-                        is_best=False,
+                        metadata=metadata,
+                        dataset=dataset_provenance,
                     )
                     break
 
@@ -988,7 +1027,8 @@ def train(
                     val_acc=best_val_acc,
                     path=output.replace(".pt", "_error.pt"),
                     logger=logger,
-                    is_best=False,
+                    metadata=metadata,
+                    dataset=dataset_provenance,
                 )
                 raise TrainingError(f"Training failed at epoch {epoch}: {e}") from e
 
@@ -1008,7 +1048,8 @@ def train(
         signal.signal(signal.SIGTERM, old_handler_term)
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Run local classifier training from the installed console script."""
     args = parse_args()
     try:
         train(
@@ -1024,10 +1065,15 @@ if __name__ == "__main__":
             gradient_clip=args.gradient_clip,
             warmup_epochs=args.warmup_epochs,
             log_file=args.log_file,
+            split_manifest=args.split_manifest,
         )
-    except (TrainingError, DataLoadError) as e:
-        logging.error(f"Training failed: {e}")
+    except (TrainingError, DataLoadError) as error:
+        logging.error("Training failed: %s", error)
         sys.exit(1)
     except KeyboardInterrupt:
         logging.info("Training interrupted by user")
         sys.exit(130)
+
+
+if __name__ == "__main__":
+    cli()

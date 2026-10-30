@@ -15,7 +15,7 @@
 import { test as base, expect, type Page, type BrowserContext } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
-
+import { deflateSync } from "node:zlib";
 // ============================================================================
 // Test Image Paths
 // ============================================================================
@@ -27,7 +27,8 @@ export const testImages = {
   cat: path.join(TEST_ASSETS_DIR, 'cat1.jpg'),
   catPng: path.join(TEST_ASSETS_DIR, 'cat2.png'),
   dog: path.join(TEST_ASSETS_DIR, 'dog1.jpg'),
-  webp: path.join(TEST_ASSETS_DIR, 'test.webp'),
+  exifOrientation: path.join(TEST_ASSETS_DIR, "exif-orientation.jpg"),
+  webp: path.join(TEST_ASSETS_DIR, "test.webp"),
 
   // Size variants
   small: path.join(TEST_ASSETS_DIR, 'small.png'),      // 10x10
@@ -179,54 +180,51 @@ export function generateTestImage(
   height: number = 100,
   color: [number, number, number] = [255, 0, 0]
 ): Buffer {
-  // Create a minimal valid PNG
-  // This is a simplified PNG generator for testing purposes
+  if (
+    !Number.isSafeInteger(width) ||
+    width < 1 ||
+    !Number.isSafeInteger(height) ||
+    height < 1
+  ) {
+    throw new Error("Test image dimensions must be positive integers");
+  }
 
-  const pngSignature = Buffer.from([
-    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+  const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const typeBuffer = Buffer.from(type);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    return Buffer.concat([
+      length,
+      typeBuffer,
+      data,
+      crc32(Buffer.concat([typeBuffer, data])),
+    ]);
+  };
+
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.writeUInt8(8, 8);
+  header.writeUInt8(2, 9);
+
+  const rawImage = Buffer.alloc(height * (1 + width * 3));
+  for (let y = 0; y < height; y++) {
+    const row = y * (1 + width * 3);
+    for (let x = 0; x < width; x++) {
+      const pixel = row + 1 + x * 3;
+      rawImage[pixel] = color[0];
+      rawImage[pixel + 1] = color[1];
+      rawImage[pixel + 2] = color[2];
+    }
+  }
+
+  return Buffer.concat([
+    pngSignature,
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(rawImage)),
+    chunk("IEND", Buffer.alloc(0)),
   ]);
-
-  // IHDR chunk
-  const ihdrData = Buffer.alloc(13);
-  ihdrData.writeUInt32BE(width, 0);
-  ihdrData.writeUInt32BE(height, 4);
-  ihdrData.writeUInt8(8, 8);  // Bit depth
-  ihdrData.writeUInt8(2, 9);  // Color type (RGB)
-  ihdrData.writeUInt8(0, 10); // Compression
-  ihdrData.writeUInt8(0, 11); // Filter
-  ihdrData.writeUInt8(0, 12); // Interlace
-
-  const ihdrCrc = crc32(Buffer.concat([Buffer.from('IHDR'), ihdrData]));
-  const ihdrChunk = Buffer.concat([
-    Buffer.from([0x00, 0x00, 0x00, 0x0D]), // Length
-    Buffer.from('IHDR'),
-    ihdrData,
-    ihdrCrc,
-  ]);
-
-  // IDAT chunk (compressed image data)
-  // For simplicity, use a pre-computed minimal IDAT
-  const idatData = Buffer.from([
-    0x08, 0xD7, 0x63, 0xF8, 0x0F, 0x00, 0x00, 0x01,
-    0x01, 0x00, 0x18, 0xDD, 0x8D, 0x01, 0x00, 0x00,
-  ]);
-  const idatCrc = crc32(Buffer.concat([Buffer.from('IDAT'), idatData]));
-  const idatChunk = Buffer.concat([
-    Buffer.from([0x00, 0x00, 0x00, idatData.length]),
-    Buffer.from('IDAT'),
-    idatData,
-    idatCrc,
-  ]);
-
-  // IEND chunk
-  const iendCrc = crc32(Buffer.from('IEND'));
-  const iendChunk = Buffer.concat([
-    Buffer.from([0x00, 0x00, 0x00, 0x00]),
-    Buffer.from('IEND'),
-    iendCrc,
-  ]);
-
-  return Buffer.concat([pngSignature, ihdrChunk, idatChunk, iendChunk]);
 }
 
 /**

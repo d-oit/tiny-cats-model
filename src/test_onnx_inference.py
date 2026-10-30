@@ -19,8 +19,10 @@ from typing import Any
 
 import numpy as np
 import torch
-import torchvision.transforms as T
 from PIL import Image
+
+from model_contract import CLASSIFIER_IMAGE_SIZE
+from preprocessing import classifier_eval_transform
 
 try:
     import onnxruntime as ort
@@ -30,11 +32,9 @@ except ImportError as e:
     ) from e
 
 from model import cats_model
+from safe_checkpoint import load_torch_checkpoint
 
-# ImageNet mean/std for normalization (matches training preprocessing)
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD = (0.229, 0.224, 0.225)
-DEFAULT_IMAGE_SIZE = 224
+DEFAULT_IMAGE_SIZE = CLASSIFIER_IMAGE_SIZE
 
 
 def create_sample_image(size: tuple[int, int] = (224, 224)) -> Image.Image:
@@ -70,15 +70,7 @@ def preprocess_image(
     Returns:
         Preprocessed tensor of shape (1, 3, H, W).
     """
-    transform = T.Compose(
-        [
-            T.Resize(int(image_size * 1.14)),
-            T.CenterCrop(image_size),
-            T.ToTensor(),
-            T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-        ]
-    )
-    return transform(image).unsqueeze(0)
+    return classifier_eval_transform(image_size)(image).unsqueeze(0)
 
 
 def run_pytorch_inference(
@@ -258,7 +250,7 @@ def test_onnx_inference(
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
         model = cats_model(num_classes=2, backbone="resnet18", pretrained=False)
-        state = torch.load(checkpoint_path, map_location="cpu")
+        state = load_torch_checkpoint(checkpoint_path, map_location="cpu")
         model.load_state_dict(state)
         model.eval()
 

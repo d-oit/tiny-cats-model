@@ -17,7 +17,14 @@ import torch.nn as nn
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from model import SUPPORTED_BACKBONES, cats_model, count_parameters, load_checkpoint
+from model import (
+    SUPPORTED_BACKBONES,
+    cats_model,
+    count_parameters,
+    load_checkpoint,
+    load_checkpoint_with_metadata,
+)
+from model_contract import ContractError, classifier_metadata
 
 if TYPE_CHECKING:
     pass
@@ -524,25 +531,56 @@ class TestCheckpointFormats:
         self, temp_dir: Path, simple_model: nn.Module
     ) -> None:
         """Test loading checkpoint with mismatched num_classes."""
-        # Save checkpoint
         ckpt_path = temp_dir / "model.pt"
         torch.save(simple_model.state_dict(), ckpt_path)
-
-        # Try to load with wrong num_classes - should fail during load_state_dict
-        with pytest.raises(RuntimeError):
+        with pytest.raises(ContractError, match="disagrees"):
             load_checkpoint(ckpt_path, num_classes=10, backbone="resnet18")
 
     def test_load_checkpoint_wrong_backbone(
         self, temp_dir: Path, simple_model: nn.Module
     ) -> None:
         """Test loading checkpoint with mismatched backbone."""
-        # Save ResNet-18 checkpoint
         ckpt_path = temp_dir / "resnet18.pt"
         torch.save(simple_model.state_dict(), ckpt_path)
-
-        # Try to load as MobileNet - should fail due to architecture mismatch
-        with pytest.raises(RuntimeError):
+        with pytest.raises(ContractError, match="disagrees"):
             load_checkpoint(ckpt_path, num_classes=2, backbone="mobilenet_v3_small")
+
+    def test_metadata_auto_detection_and_returned_contract(
+        self, temp_dir: Path, simple_model: nn.Module
+    ) -> None:
+        checkpoint = temp_dir / "metadata.pt"
+        metadata = classifier_metadata()
+        torch.save(
+            {
+                "model_state_dict": simple_model.state_dict(),
+                "metadata": metadata,
+                "config": {"num_classes": 2, "backbone": "resnet18"},
+            },
+            checkpoint,
+        )
+        model, loaded_metadata = load_checkpoint_with_metadata(checkpoint)
+
+        assert not model.training
+        architecture = loaded_metadata.get("architecture")
+        output = loaded_metadata.get("output")
+        assert isinstance(architecture, dict)
+        assert isinstance(output, dict)
+        assert architecture.get("name") == "resnet18"
+        labels = output.get("labels")
+        assert isinstance(labels, list)
+        assert labels == ["cat", "not_cat"]
+
+    def test_metadata_contract_disagreement_fails(
+        self, temp_dir: Path, simple_model: nn.Module
+    ) -> None:
+        checkpoint = temp_dir / "metadata-mismatch.pt"
+        metadata = classifier_metadata(backbone="resnet34")
+        torch.save(
+            {"model_state_dict": simple_model.state_dict(), "metadata": metadata},
+            checkpoint,
+        )
+        with pytest.raises(ContractError, match="disagrees"):
+            load_checkpoint(checkpoint)
 
     def test_checkpoint_load_eval_mode(
         self, temp_dir: Path, simple_model: nn.Module

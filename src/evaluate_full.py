@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from dit import tinydit_128
 from flow_matching import sample
+from safe_checkpoint import load_torch_checkpoint
 
 # Cat breed names (Oxford IIIT Pet dataset)
 CAT_BREEDS = [
@@ -193,7 +194,7 @@ def load_model(
     if not checkpoint_file.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    checkpoint = load_torch_checkpoint(checkpoint_path, map_location=device)
 
     # Get model config from checkpoint
     config = checkpoint.get(

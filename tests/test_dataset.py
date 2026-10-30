@@ -354,23 +354,19 @@ class TestAllBreedsRepresented:
         for breed in expected_breeds:
             assert breed in class_names, f"Breed '{breed}' not found in dataset"
 
-    def test_13_breed_dataloader_creation(
+    def test_classifier_dataloader_rejects_multiclass_breed_folder(
         self, temp_image_dataset_13_classes: Path
     ) -> None:
-        """Test dataloader can be created with all 13 breeds."""
-        train_loader, val_loader = cats_dataloader(
-            root=temp_image_dataset_13_classes,
-            batch_size=4,
-            val_split=0.2,
-            image_size=32,
-            num_workers=0,
-            seed=42,
-        )
-
-        assert train_loader is not None
-        assert val_loader is not None
-        assert len(train_loader) > 0
-        assert len(val_loader) > 0
+        """Classifier loading is limited to its two contract labels."""
+        with pytest.raises(ValueError, match="two-class"):
+            cats_dataloader(
+                root=temp_image_dataset_13_classes,
+                batch_size=4,
+                val_split=0.2,
+                image_size=32,
+                num_workers=0,
+                seed=42,
+            )
 
     def test_all_breeds_have_samples(self, temp_image_dataset_13_classes: Path) -> None:
         """Test that each breed has at least one sample."""
@@ -488,7 +484,7 @@ class TestBoundaryConditions:
 
         Note: This raises ValueError because empty train loader is not allowed.
         """
-        with pytest.raises(ValueError, match="num_samples"):
+        with pytest.raises(ValueError, match="val_split"):
             cats_dataloader(
                 root=temp_image_dataset,
                 batch_size=4,
@@ -669,3 +665,33 @@ class TestTransformPipelineIntegration:
             assert x.shape[0] <= 2  # Batch size
             assert x.shape[1] == 3  # Channels
             break
+
+
+def test_eval_transform_uses_short_side_resize_and_center_crop() -> None:
+    import torchvision.transforms as T
+
+    transform = build_transforms(train=False, image_size=224)
+    assert isinstance(transform.transforms[0], T.Lambda)
+    assert isinstance(transform.transforms[1], T.Resize)
+    assert transform.transforms[1].size == 256
+    assert isinstance(transform.transforms[2], T.CenterCrop)
+    assert transform.transforms[2].size == (224, 224)
+
+
+def test_cats_dataloader_stratifies_deterministically(tmp_path: Path) -> None:
+    for class_name in ("cat", "other"):
+        directory = tmp_path / class_name
+        directory.mkdir()
+        for index in range(10):
+            Image.new("RGB", (16, 16)).save(directory / f"{index}.jpg")
+    first_train, first_val = cats_dataloader(
+        tmp_path, image_size=16, num_workers=0, seed=37
+    )
+    second_train, second_val = cats_dataloader(
+        tmp_path, image_size=16, num_workers=0, seed=37
+    )
+    assert first_train.dataset.indices == second_train.dataset.indices
+    assert first_val.dataset.indices == second_val.dataset.indices
+    for loader in (first_train, first_val):
+        targets = [loader.dataset.dataset.targets[i] for i in loader.dataset.indices]
+        assert set(targets) == {0, 1}

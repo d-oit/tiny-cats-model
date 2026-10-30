@@ -7,16 +7,45 @@
 [![Type Check: mypy](https://img.shields.io/badge/type%20check-mypy-blue)](https://github.com/python/mypy)
 [![HuggingFace Model](https://img.shields.io/badge/🤗-Model-yellow)](https://huggingface.co/d4oit/tiny-cats-model)
 
-A cats classifier and generator built on PyTorch with ResNet-18 and TinyDiT, following 2026 best practices for AI-agent-friendly repositories.
+A cat image classifier and a conditional cat image generator built with PyTorch,
+ResNet-18 and TinyDiT.
+
+## Classifier (binary cat detection)
+
+The ResNet-18 classifier predicts **cat** or **not-cat**, not a breed. Its
+ImageFolder training folders are `cat/` (output index 0) and `other/` (output
+index 1); the public output labels are `cat` and `not_cat`. The Oxford-IIIT Pet
+negative examples are dogs, so “not-cat” does not mean the model recognizes
+every possible non-cat image.
+
+## Generator (13-condition breed synthesis)
+
+TinyDiT generates cat images conditioned on 12 cat breeds plus `Other` at
+generator condition index 12. A separate unconditional/null index 13 is used
+for classifier-free guidance.
+
+The shared model metadata contract is defined in `configs/model_contract.json`
+and mirrored in the frontend generated copy. See [the model card](docs/MODEL_CARD.md)
+for preprocessing, evaluation and limitations.
 
 ## Features
 
-- **Classification**: ResNet-18 fine-tuned for cat breed classification (13 breeds)
+- **Classification**: binary cat / not-cat ResNet-18 classifier
 - **Generation**: TinyDiT diffusion model for conditional cat image generation
 - **Interactive Tutorials**: 3 Jupyter notebooks with Google Colab support
 - **Automated Deployment**: CI/CD pipeline with automated HuggingFace uploads
-- **Comprehensive Testing**: 215+ E2E tests covering all user journeys
-- **ONNX Export**: Quantized models for web deployment (11MB classifier, 33MB generator)
+- **Comprehensive Testing**: E2E tests covering user journeys
+- **ONNX Export**: Quantized models for web deployment
+
+### Evaluation
+
+`src/eval.py` evaluates the binary classifier. Reproducible evaluation accepts
+`--split-manifest PATH` and `--split {val,test}`; `--test-dir` can provide a
+separate test directory and `--absolute-paths` controls manifest path handling.
+Use the same persisted manifest to keep split membership reproducible.
+
+Install training and ONNX dependencies: `pip install -e ".[training,onnx]"`.
+For the Gradio demo, install `pip install -e ".[demo]"` as well.
 
 ## Quick Links
 
@@ -34,29 +63,31 @@ A cats classifier and generator built on PyTorch with ResNet-18 and TinyDiT, fol
 ## Quickstart
 
 ```bash
-# 1. Install dependencies
-pip install -r requirements.txt
+# 1. Install training and ONNX dependencies
+pip install -e ".[training,onnx]"
 
 # 2. Download & prepare dataset
 bash data/download.sh
 
-# 3. Train the model
+# 3. Train the binary classifier
 python src/train.py data/cats
 
-# 4. Evaluate
-python src/eval.py
+# 4. Evaluate the classifier
+python src/eval.py --data-dir data/cats
 ```
+
 
 ## Project Structure
 
 ```
 tiny-cats-model/
 ├── src/
-│   ├── train.py           # Training entrypoint
-│   ├── eval.py            # Evaluation script
+│   ├── train.py           # Binary classifier training entrypoint
+│   ├── eval.py            # Classifier evaluation script
 │   ├── model.py           # Model definition
 │   ├── dataset.py         # DataLoader factory
-│   └── export_onnx.py     # ONNX export
+│   ├── export_onnx.py     # ONNX export
+│   └── optimize_onnx.py   # ONNX optimization
 ├── tests/
 │   └── test_dataset.py    # Unit tests
 ├── data/

@@ -21,6 +21,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 
+from safe_checkpoint import load_torch_checkpoint
+
 # Supported timestep distributions for flow-matching training.
 TimestepSampling = Literal["uniform", "logit_normal"]
 
@@ -302,6 +304,6 @@ class EMA:
         Args:
             path: Path to checkpoint
         """
-        checkpoint = torch.load(path, map_location="cpu")
+        checkpoint = load_torch_checkpoint(path, map_location="cpu")
         self.shadow_params = checkpoint["shadow_params"]
         self.step = checkpoint["step"]

@@ -1,6 +1,8 @@
 import * as ort from "onnxruntime-web";
+import "../engine/ortRuntime";
 
 import { MODEL_CONFIGS, GENERATOR_CONFIG, type ModelType } from "../constants";
+import { fetchVerifiedModel, type ModelAsset } from "../modelAssets";
 
 /**
  * Benchmark statistics
@@ -301,15 +303,13 @@ export async function benchmarkFullGeneration(
 /**
  * Load model for benchmarking
  */
-export async function loadModelForBenchmark(modelPath: string): Promise<ort.InferenceSession> {
-  const response = await fetch(modelPath, { mode: "cors", credentials: "omit" });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch model: ${response.status}`);
-  }
-  const modelData = await response.arrayBuffer();
-  const modelDataUint8 = new Uint8Array(modelData);
-
-  return ort.InferenceSession.create(modelDataUint8, {
+export async function loadModelForBenchmark(
+  asset: ModelAsset
+): Promise<ort.InferenceSession> {
+  // Benchmarks measure WASM consistently, but they still verify the release
+  // digest before creating a session (issue #204).
+  const verified = await fetchVerifiedModel(asset);
+  return ort.InferenceSession.create(new Uint8Array(verified.data), {
     executionProviders: ["wasm"],
     graphOptimizationLevel: "all",
   });
@@ -343,7 +343,7 @@ export async function runBenchmarkSuite(
   try {
     // Benchmark classification
     progress("Loading classification model...");
-    const classifierSession = await loadModelForBenchmark(MODEL_CONFIGS.cats.modelPath);
+    const classifierSession = await loadModelForBenchmark(MODEL_CONFIGS.cats.asset);
     progress("Benchmarking classification inference...");
 
     const imageSizes = [128, 224, 256];
@@ -360,7 +360,7 @@ export async function runBenchmarkSuite(
 
     // Benchmark generation
     progress("Loading generation model...");
-    const generatorSession = await loadModelForBenchmark(GENERATOR_CONFIG.modelPath);
+    const generatorSession = await loadModelForBenchmark(GENERATOR_CONFIG.asset);
     progress("Benchmarking generation inference...");
 
     const stepsOptions = [10, 25, 50, 100];

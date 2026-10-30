@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 import torch
+from PIL import Image
 
 from eval import _aggregate_f1, _confusion_stats, _per_class_prf, evaluate
 
@@ -91,105 +92,99 @@ def test_published_report_numbers_regression() -> None:
     assert weighted_f1 == pytest.approx(report["weighted_f1"])
 
 
-def test_evaluate_wiring_reports_correct_aggregates(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_evaluate_checkpoint_contract_and_explicit_test_directory(
+    tmp_path: Path,
 ) -> None:
-    """evaluate() end-to-end metric wiring on synthetic deterministic data.
+    from model import cats_model
+    from model_contract import CLASSIFIER_LABELS, classifier_metadata
 
-    Deterministic 7-sample 2-class run: 5 cats (3 correct, 2 mispredicted as
-    other) and 2 other (1 correct, 1 mispredicted as cat) -> confusion matrix
-    [[3, 2], [1, 1]]. The dataloader and checkpoint seams are patched so the
-    real metric plumbing (support built from class names, aggregate F1s,
-    failure paths, report write) runs against known inputs. Imbalanced support
-    (5:2) and distinct class F1s (2/3 vs 2/5) make weighted != macro, so a
-    swapped or miskeyed support list would break weighted_f1.
-    """
-    samples = [(f"/img/{i}.jpg", 0 if i < 5 else 1) for i in range(7)]
-
-    class FakeImageFolder:
-        def __init__(self, samples):
-            self.classes = ["cat", "other"]
-            self.samples = samples
-
-    class FakeSubset:
-        def __init__(self, samples):
-            self.dataset = FakeImageFolder(samples)
-            self.indices = list(range(7))
-
-    class FakeValLoader:
-        def __init__(self):
-            self.dataset = FakeSubset(samples)
-            self.xb = torch.zeros(7, 1, 1, 1)
-            self.yb = torch.tensor([0, 0, 0, 0, 0, 1, 1])
-
-        def __iter__(self):
-            yield self.xb, self.yb
-
-    # logits.argmax(dim=1) -> [0, 0, 0, 1, 1, 1, 0] (3 correct cats, 2
-    # cat->other, 1 correct other, 1 other->cat).
-    logits = torch.tensor(
-        [
-            [2.0, 0.0],
-            [2.0, 0.0],
-            [2.0, 0.0],
-            [0.0, 2.0],
-            [0.0, 2.0],
-            [0.0, 2.0],
-            [2.0, 0.0],
-        ]
+    data_root = tmp_path / "data"
+    test_dir = tmp_path / "held-out"
+    for root in (data_root, test_dir):
+        for folder in ("cat", "other"):
+            directory = root / folder
+            directory.mkdir(parents=True)
+            Image.new("RGB", (260, 260), color=(30, 70, 120)).save(
+                directory / "sample.jpg"
+            )
+    model = cats_model(num_classes=2, backbone="resnet18", pretrained=False)
+    metadata = classifier_metadata(backbone="resnet18", num_classes=2)
+    checkpoint = tmp_path / "classifier.pt"
+    torch.save(
+        {"model_state_dict": model.state_dict(), "metadata": metadata}, checkpoint
     )
 
-    class FakeModel:
-        def to(self, device):
-            return self
-
-        def eval(self):
-            return self
-
-        def __call__(self, xb):
-            return logits
-
-    fake_loader = FakeValLoader()
-    monkeypatch.setattr("eval.cats_dataloader", lambda **kw: (None, fake_loader))
-    monkeypatch.setattr("eval.load_checkpoint", lambda *a, **k: FakeModel())
-
-    report = tmp_path / "report.json"
+    report_path = tmp_path / "report.json"
     result = evaluate(
-        data_dir="unused",
-        checkpoint="unused.pt",
-        batch_size=8,
-        report=str(report),
+        data_dir=str(data_root),
+        checkpoint=str(checkpoint),
+        test_dir=str(test_dir),
+        split="test",
+        batch_size=2,
+        report=str(report_path),
     )
+    saved = json.loads(report_path.read_text())
+    assert all(not Path(path).is_absolute() for path in saved["image_paths"])
+    assert result["evaluated_samples"] == 2
+    assert result["labels"] == list(CLASSIFIER_LABELS)
+    assert result["split_source"] == "test_dir"
+    assert result["per_class_support"] == {"cat": 1, "not_cat": 1}
+    assert saved["dataset_hash"] is None
+    assert saved["split_hash"] is None
+    assert saved["model_sha256"]
+    assert all(
+        not Path(item["image"]).is_absolute() for item in result["failure_cases"]
+    )
+    with pytest.raises(ValueError, match="backbone"):
+        evaluate(
+            data_dir=str(data_root),
+            checkpoint=str(checkpoint),
+            test_dir=str(test_dir),
+            backbone="resnet34",
+            report=str(tmp_path / "bad.json"),
+        )
+    with pytest.raises(ValueError, match="num_classes"):
+        evaluate(
+            data_dir=str(data_root),
+            checkpoint=str(checkpoint),
+            test_dir=str(test_dir),
+            num_classes=1,
+            report=str(tmp_path / "bad-classes.json"),
+        )
+    with pytest.raises(FileNotFoundError, match="Test directory"):
+        evaluate(
+            data_dir=str(data_root),
+            checkpoint=str(checkpoint),
+            test_dir=str(tmp_path / "missing"),
+            report=str(tmp_path / "missing.json"),
+        )
 
-    assert result["accuracy"] == pytest.approx(4 / 7)
-    assert result["confusion_matrix"] == [[3, 2], [1, 1]]
-    assert result["f1"] == {"cat": pytest.approx(2 / 3), "other": pytest.approx(2 / 5)}
-    assert result["precision"] == {
-        "cat": pytest.approx(3 / 4),
-        "other": pytest.approx(1 / 3),
-    }
-    assert result["recall"] == {
-        "cat": pytest.approx(3 / 5),
-        "other": pytest.approx(1 / 2),
-    }
-    # Imbalanced support and distinct class F1s keep weighted != macro.
-    assert result["macro_f1"] == pytest.approx(8 / 15)
-    assert result["weighted_f1"] == pytest.approx(62 / 105)
-    assert result["macro_f1"] != result["weighted_f1"]
-    # Failure wiring: mispredictions at val positions 3, 4, 6 map to images.
-    assert result["num_failures"] == 3
-    assert result["failure_cases"][0] == {
-        "image": "/img/3.jpg",
-        "true": "cat",
-        "predicted": "other",
-        "confidence": pytest.approx(0.8808, abs=1e-3),
-    }
 
-    # Report file persists the same aggregates.
-    saved = json.loads(report.read_text())
-    assert saved["accuracy"] == result["accuracy"]
-    assert saved["macro_f1"] == result["macro_f1"]
-    assert saved["weighted_f1"] == result["weighted_f1"]
+def test_evaluate_test_split_never_falls_back(tmp_path: Path) -> None:
+    from model import cats_model
+    from model_contract import classifier_metadata
+
+    data_root = tmp_path / "data"
+    for folder in ("cat", "other"):
+        directory = data_root / folder
+        directory.mkdir(parents=True)
+        Image.new("RGB", (8, 8)).save(directory / "image.jpg")
+    model = cats_model(num_classes=2, backbone="resnet18", pretrained=False)
+    checkpoint = tmp_path / "model.pt"
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "metadata": classifier_metadata(backbone="resnet18", num_classes=2),
+        },
+        checkpoint,
+    )
+    with pytest.raises(ValueError, match="requires"):
+        evaluate(
+            data_dir=str(data_root),
+            checkpoint=str(checkpoint),
+            split="test",
+            report=str(tmp_path / "report.json"),
+        )
 
 
 @pytest.mark.slow

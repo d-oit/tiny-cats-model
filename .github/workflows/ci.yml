@@ -76,7 +76,7 @@ jobs:
           pip install --upgrade pip
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
-          pip install pytest-cov>=4.1.0
+          pip install 'pytest-cov>=4.1.0' tomli
 
       - name: Run tests with coverage
         run: |
@@ -178,6 +178,58 @@ jobs:
         with:
           name: frontend-dist
           path: ./frontend/dist
+          retention-days: 7
+
+  browser-e2e:
+    name: Browser E2E (Playwright + WASM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [build-frontend]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Install Playwright and frontend dependencies
+        run: |
+          npm ci
+          npm ci --prefix frontend
+
+      - name: Download production frontend
+        uses: actions/download-artifact@v7
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser runtime and accessibility tests
+        run: npx playwright test tests/e2e/runtime.spec.ts --project=chromium --retries=0
+        env:
+          CI: "true"
+          PLAYWRIGHT_PREVIEW: "true"
+
+      - name: Compare browser preprocessing against the shared contract
+        run: npx playwright test tests/e2e/runtime.spec.ts --grep "browser tensor matches" --project=chromium --retries=0
+        env:
+          CI: "true"
+
+      - name: Upload Playwright diagnostics
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: browser-e2e-diagnostics
+          path: |
+            test-results/
+            playwright-report/
           retention-days: 7
 
   guardrail-deps:

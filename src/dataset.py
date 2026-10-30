@@ -12,46 +12,32 @@ Expects ImageFolder-compatible structure:
 
 from __future__ import annotations
 
-from collections import Counter
+import hashlib
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Literal
 
 import torch
 import torchvision.transforms as T
-from torch.utils.data import (
-    DataLoader,
-    Dataset,
-    Subset,
-    WeightedRandomSampler,
-    random_split,
-)
+from torch.utils.data import DataLoader, Dataset, Subset, WeightedRandomSampler
 from torchvision.datasets import ImageFolder
-from torchvision.datasets.folder import IMG_EXTENSIONS, default_loader
+from torchvision.datasets.folder import IMG_EXTENSIONS
 
-# ImageNet mean/std for pretrained model normalization
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD = (0.229, 0.224, 0.225)
-DEFAULT_IMAGE_SIZE = 224
+from dataset_manifest import dataset_fingerprint
+from model_contract import (
+    CAT_BREEDS,
+    CLASSIFIER_IMAGE_SIZE,
+    CLASSIFIER_LABELS,
+    IMAGENET_MEAN,
+    IMAGENET_STD,
+    OTHER_CLASS_INDEX,
+)
+from preprocessing import classifier_eval_transform, load_classifier_image
+from splits import ManifestDataset, read_split_manifest
 
-# Supported augmentation levels
+DEFAULT_IMAGE_SIZE = CLASSIFIER_IMAGE_SIZE
 AugmentationLevel = Literal["basic", "standard", "advanced"]
 EnhancedAugmentationLevel = Literal["basic", "medium", "full"]
-
-CAT_BREEDS = (
-    "Abyssinian",
-    "Bengal",
-    "Birman",
-    "Bombay",
-    "British_Shorthair",
-    "Egyptian_Mau",
-    "Maine_Coon",
-    "Persian",
-    "Ragdoll",
-    "Russian_Blue",
-    "Siamese",
-    "Sphynx",
-)
-OTHER_CLASS_INDEX = len(CAT_BREEDS)
 
 
 class CatBreedGenerationDataset(Dataset):
@@ -99,7 +85,7 @@ class CatBreedGenerationDataset(Dataset):
 
     def __getitem__(self, index: int) -> tuple[Any, int]:
         path, label = self.samples[index]
-        image = default_loader(path)
+        image = load_classifier_image(path)
         if self.transform is not None:
             image = self.transform(image)
         return image, label
@@ -327,14 +313,7 @@ def build_transforms(
 
         return T.Compose(transforms)
 
-    return T.Compose(
-        [
-            T.Resize(int(image_size * 1.14)),
-            T.CenterCrop(image_size),
-            T.ToTensor(),
-            T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-        ]
-    )
+    return classifier_eval_transform(image_size)
 
 
 def cats_dataloader(
@@ -345,49 +324,95 @@ def cats_dataloader(
     num_workers: int = 2,
     seed: int = 42,
     augmentation_level: AugmentationLevel = "standard",
+    split_manifest: str | Path | None = None,
+    test_split: float = 0.0,
+    allow_stale_split: bool = False,
 ) -> tuple[DataLoader, DataLoader]:
-    """Create train and validation DataLoaders from an ImageFolder directory.
-
-    Args:
-        root: Path to the dataset root (expects class subdirectories).
-        batch_size: Batch size for both loaders.
-        val_split: Fraction of data to use for validation.
-        image_size: Spatial size to resize images to.
-        num_workers: Number of DataLoader worker processes.
-        seed: Random seed for reproducible splits.
-        augmentation_level: Level of data augmentation ("basic", "standard", "advanced").
-
-    Returns:
-        Tuple of (train_loader, val_loader).
-    """
+    """Create class-stratified train/validation loaders."""
     root = Path(root)
     if not root.exists():
         raise FileNotFoundError(
             f"Dataset root not found: {root}. Run `bash data/download.sh` first."
         )
-
-    # Full dataset with train transforms (we apply different transforms after split)
-    full_dataset = ImageFolder(
-        root,
-        transform=build_transforms(
-            train=True, image_size=image_size, augmentation_level=augmentation_level
-        ),
+    train_transform = build_transforms(
+        train=True, image_size=image_size, augmentation_level=augmentation_level
     )
-
-    n_total = len(full_dataset)
-    n_val = int(n_total * val_split)
-    n_train = n_total - n_val
-
-    import torch
-
-    generator = torch.Generator().manual_seed(seed)
-    train_ds, val_ds = random_split(full_dataset, [n_train, n_val], generator=generator)
-
-    # Override val transforms
-    val_ds.dataset = ImageFolder(
-        root, transform=build_transforms(train=False, image_size=image_size)
-    )
-
+    eval_transform = build_transforms(train=False, image_size=image_size)
+    if split_manifest is None and (
+        not 0 <= val_split < 1 or not 0 <= test_split < 1 or val_split + test_split >= 1
+    ):
+        raise ValueError("val_split and test_split must be in [0, 1) and sum below 1")
+    split_seed = seed
+    split_hash: str | None = None
+    if split_manifest is not None:
+        manifest = read_split_manifest(split_manifest)
+        actual_hash = dataset_fingerprint(root)
+        if manifest.get("dataset_hash") != actual_hash and not allow_stale_split:
+            raise ValueError(
+                "Split manifest dataset fingerprint does not match dataset root"
+            )
+        split_seed = int(manifest.get("seed", seed))
+        split_hash = str(manifest.get("split_hash"))
+        train_ds = ManifestDataset(root, manifest, "train", transform=train_transform)
+        val_ds = ManifestDataset(root, manifest, "val", transform=eval_transform)
+        class_names = list(CLASSIFIER_LABELS)
+        train_labels = [label for _, label in train_ds.samples]
+        val_labels = [label for _, label in val_ds.samples]
+    else:
+        train_full = ImageFolder(
+            root, transform=train_transform, loader=load_classifier_image
+        )
+        val_full = ImageFolder(
+            root, transform=eval_transform, loader=load_classifier_image
+        )
+        class_names = train_full.classes
+        if val_full.classes != class_names or len(class_names) != 2:
+            raise ValueError(
+                f"Expected matching two-class ImageFolder classes, found {class_names}"
+            )
+        by_class: dict[int, list[int]] = defaultdict(list)
+        for index, (_, label) in enumerate(train_full.samples):
+            by_class[label].append(index)
+        generator = torch.Generator().manual_seed(seed)
+        train_indices: list[int] = []
+        val_indices: list[int] = []
+        test_indices: list[int] = []
+        for label in sorted(by_class):
+            indices = torch.tensor(by_class[label])
+            shuffled = indices[
+                torch.randperm(len(indices), generator=generator)
+            ].tolist()
+            n_val = round(len(shuffled) * val_split)
+            n_test = min(round(len(shuffled) * test_split), max(0, len(shuffled) - 1))
+            available_val = max(0, len(shuffled) - n_test - 1)
+            if val_split > 0 and available_val:
+                n_val = max(1, n_val)
+            n_val = min(max(0, n_val), available_val)
+            val_indices.extend(shuffled[:n_val])
+            test_indices.extend(shuffled[n_val : n_val + n_test])
+            train_indices.extend(shuffled[n_val + n_test :])
+        train_ds = Subset(train_full, train_indices)
+        val_ds = Subset(val_full, val_indices)
+        train_labels = [train_full.samples[i][1] for i in train_indices]
+        split_identity = (
+            f"{seed}\n"
+            + "\n".join(
+                f"{Path(train_full.samples[index][0]).relative_to(root).as_posix()}:train"
+                for index in sorted(train_indices)
+            )
+            + "\n"
+            + "\n".join(
+                f"{Path(train_full.samples[index][0]).relative_to(root).as_posix()}:val"
+                for index in sorted(val_indices)
+            )
+            + "\n"
+            + "\n".join(
+                f"{Path(train_full.samples[index][0]).relative_to(root).as_posix()}:test"
+                for index in sorted(test_indices)
+            )
+        )
+        split_hash = hashlib.sha256(split_identity.encode()).hexdigest()
+        val_labels = [val_full.samples[i][1] for i in val_indices]
     train_loader = DataLoader(
         train_ds,
         batch_size=batch_size,
@@ -402,11 +427,154 @@ def cats_dataloader(
         num_workers=num_workers,
         pin_memory=True,
     )
-
-    print(f"Dataset: {n_train} train / {n_val} val samples")
-    print(f"Classes: {full_dataset.classes}")
-
+    val_loader.split_hash = split_hash
+    print(
+        f"Dataset: {len(train_ds)} train / {len(val_ds)} val samples; "
+        f"train support={dict(Counter(train_labels))}, "
+        f"val support={dict(Counter(val_labels))}; "
+        f"seed={split_seed}, split_hash={split_hash or 'generated'}"
+    )
+    print(f"Classes: {class_names}")
     return train_loader, val_loader
+
+
+def cats_eval_loader(
+    root: str | Path | None = None,
+    *,
+    split: str = "val",
+    split_manifest: str | Path | None = None,
+    test_dir: str | Path | None = None,
+    batch_size: int = 32,
+    image_size: int = DEFAULT_IMAGE_SIZE,
+    num_workers: int = 2,
+    allow_stale_split: bool = False,
+) -> tuple[DataLoader, list[tuple[Path, int]], list[str], dict[str, Any]]:
+    """Create an evaluation loader and provenance for its exact sample set."""
+    if split not in {"val", "test"}:
+        raise ValueError(f"Unsupported evaluation split: {split!r}")
+    transform = build_transforms(train=False, image_size=image_size)
+    ds: Dataset[Any]
+    split_hash = dataset_hash = None
+    if test_dir is not None:
+        test_root = Path(test_dir)
+        if not test_root.is_dir():
+            raise FileNotFoundError(f"Test directory not found: {test_root}")
+        has_class_folders = any(path.is_dir() for path in test_root.iterdir())
+        folder_ds = (
+            ImageFolder(test_root, transform=transform, loader=load_classifier_image)
+            if has_class_folders
+            else None
+        )
+        if folder_ds is not None and folder_ds.classes:
+            folder_labels = [
+                "not_cat" if name == "other" else name for name in folder_ds.classes
+            ]
+            if any(name not in CLASSIFIER_LABELS for name in folder_labels):
+                raise ValueError(
+                    f"Unsupported classifier test labels: {folder_ds.classes}"
+                )
+            class_names = list(CLASSIFIER_LABELS)
+            samples = [
+                (
+                    Path(path),
+                    CLASSIFIER_LABELS.index(
+                        "not_cat"
+                        if folder_ds.classes[label] == "other"
+                        else folder_ds.classes[label]
+                    ),
+                )
+                for path, label in folder_ds.samples
+            ]
+
+            class MappedFolder(Dataset):
+                def __len__(self) -> int:
+                    return len(samples)
+
+                def __getitem__(self, index: int) -> tuple[Any, int]:
+                    path, label = samples[index]
+                    image = load_classifier_image(path)
+                    return transform(image), label
+
+            ds = MappedFolder()
+        else:
+            images = sorted(
+                path
+                for path in test_root.iterdir()
+                if path.is_file() and path.suffix.lower() in IMG_EXTENSIONS
+            )
+            label_name = {"other": "not_cat", "cat": "cat"}.get(
+                test_root.name, test_root.name
+            )
+            if label_name not in CLASSIFIER_LABELS:
+                raise ValueError("Flat test_dir must be the label's folder")
+            label = CLASSIFIER_LABELS.index(label_name)
+            samples = [(path, label) for path in images]
+
+            class FlatDataset(Dataset):
+                def __len__(self) -> int:
+                    return len(samples)
+
+                def __getitem__(self, index: int) -> tuple[Any, int]:
+                    path, target = samples[index]
+                    return transform(load_classifier_image(path)), target
+
+            ds = FlatDataset()
+            class_names = list(CLASSIFIER_LABELS)
+        source = "test_dir"
+    elif split_manifest is not None:
+        manifest = read_split_manifest(split_manifest)
+        if split not in {entry.get("split") for entry in manifest["entries"]}:
+            raise ValueError(
+                f"Split manifest does not contain requested split {split!r}"
+            )
+        if root is None:
+            raise ValueError("root is required when evaluating a split manifest")
+        dataset_hash = dataset_fingerprint(root)
+        if manifest.get("dataset_hash") != dataset_hash and not allow_stale_split:
+            raise ValueError(
+                "Split manifest dataset fingerprint does not match dataset root"
+            )
+        split_hash = str(manifest.get("split_hash"))
+        ds = ManifestDataset(root, manifest, split, transform=transform)
+        samples = ds.samples
+        class_names = list(CLASSIFIER_LABELS)
+        source = split
+    else:
+        if split == "test":
+            raise ValueError("split='test' requires split_manifest or test_dir")
+        if root is None:
+            raise ValueError("root is required for validation evaluation")
+        _, val_loader = cats_dataloader(
+            root,
+            batch_size=batch_size,
+            val_split=0.2,
+            image_size=image_size,
+            num_workers=num_workers,
+        )
+        split_hash = getattr(val_loader, "split_hash", None)
+        subset = val_loader.dataset
+        full_ds = subset.dataset
+        samples = [full_ds.samples[i] for i in subset.indices]
+        ds = subset
+        class_names = list(CLASSIFIER_LABELS)
+        dataset_hash = dataset_fingerprint(root)
+        source = "val"
+    loader = DataLoader(
+        ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+    )
+    provenance = {
+        "source": source,
+        "split_hash": split_hash,
+        "dataset_hash": dataset_hash,
+        "counts": dict(Counter(label for _, label in samples)),
+        "class_names": class_names,
+        "evaluated_samples": len(samples),
+    }
+    return loader, samples, class_names, provenance
 
 
 def get_class_names(root: str | Path) -> list[str]:

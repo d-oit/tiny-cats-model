@@ -3,68 +3,57 @@
   "checkpoint": "checkpoints/best_cats_model_v2.pt",
   "data_dir": "data/cats",
   "device": "cpu",
-  "accuracy": 0.996617050067659,
-  "correct": 1473,
+  "accuracy": 0.9993234100135318,
+  "correct": 1477,
   "total": 1478,
+  "evaluated_samples": 1478,
   "class_names": [
     "cat",
-    "other"
+    "not_cat"
   ],
+  "labels": [
+    "cat",
+    "not_cat"
+  ],
+  "per_class_support": {
+    "cat": 480,
+    "not_cat": 998
+  },
+  "dataset_hash": "160db4f380fbcc5004cd72577e8525c4b426ea9949b974821e78ca7720aa55df",
+  "split_hash": "8f51d8409c9b83a2ace42f750aeac67e4b3c39104d51d3fddb75e03edde1dc49",
+  "model_sha256": "54cca7b83ef6a3bbe61fa9e0ebd4901b76defb48585544683e191f670389a021",
+  "split_source": "val",
   "precision": {
-    "cat": 0.99581589958159,
-    "other": 0.997
+    "cat": 0.997920997920998,
+    "not_cat": 1.0
   },
   "recall": {
-    "cat": 0.9937369519832986,
-    "other": 0.997997997997998
+    "cat": 1.0,
+    "not_cat": 0.998997995991984
   },
   "f1": {
-    "cat": 0.9947753396029259,
-    "other": 0.9974987493746873
+    "cat": 0.9989594172736733,
+    "not_cat": 0.9994987468671679
   },
-  "macro_f1": 0.9961370444888066,
-  "weighted_f1": 0.9966161287517687,
+  "macro_f1": 0.9992290820704206,
+  "weighted_f1": 0.9993235924660331,
   "confusion_matrix": [
     [
-      476,
-      3
+      480,
+      0
     ],
     [
-      2,
+      1,
       997
     ]
   ],
-  "num_failures": 5,
+  "num_failures": 1,
   "failure_cases": [
     {
-      "image": "data/cats/other/shiba_inu_177.jpg",
-      "true": "other",
+      "image": "other/beagle_137.jpg",
+      "true": "not_cat",
       "predicted": "cat",
-      "confidence": 0.6481073498725891
-    },
-    {
-      "image": "data/cats/cat/Sphynx_45.jpg",
-      "true": "cat",
-      "predicted": "other",
-      "confidence": 0.6544919013977051
-    },
-    {
-      "image": "data/cats/other/beagle_137.jpg",
-      "true": "other",
-      "predicted": "cat",
-      "confidence": 0.7254727482795715
-    },
-    {
-      "image": "data/cats/cat/Abyssinian_20.jpg",
-      "true": "cat",
-      "predicted": "other",
-      "confidence": 0.9647343158721924
-    },
-    {
-      "image": "data/cats/cat/Bengal_20.jpg",
-      "true": "cat",
-      "predicted": "other",
-      "confidence": 0.9374046325683594
+      "confidence": 0.6193583607673645
     }
   ]
 }

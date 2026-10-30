@@ -48,7 +48,6 @@ from typing import Any, TypeVar
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
-
 import torch  # noqa: E402
 from PIL import Image  # noqa: E402
 
@@ -58,6 +57,7 @@ from dataset import CAT_BREEDS, build_transforms  # noqa: E402
 from dit import TinyDiT  # noqa: E402
 from export_dit_onnx import export_generator_onnx, verify_onnx_model  # noqa: E402
 from optimize_onnx import optimize_onnx  # noqa: E402
+from safe_checkpoint import load_torch_checkpoint  # noqa: E402
 from train_dit import train_dit_local  # noqa: E402
 from training_state import read_training_state  # noqa: E402
 
@@ -189,7 +189,7 @@ def stage_smoke(work: Path) -> None:
     checkpoint = work / "smoke" / "dit_model.pt"
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"model_state_dict": model.state_dict()}, checkpoint)
-    reloaded = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    reloaded = load_torch_checkpoint(checkpoint, map_location="cpu")
     check("model_state_dict" in reloaded, "checkpoint round trip lost its state dict")
 
 
@@ -311,7 +311,7 @@ def stage_export(work: Path, checkpoint: Path | None = None) -> tuple[Path, Path
 
     model = tiny_model().eval()
     if checkpoint is not None and checkpoint.exists():
-        payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        payload = load_torch_checkpoint(checkpoint, map_location="cpu")
         model.load_state_dict(payload["model_state_dict"])
 
     onnx_path = export_dir / "model.onnx"
