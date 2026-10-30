@@ -66,7 +66,11 @@ export default function ClassifyPage() {
       const decoded = await decodeImageFile(file);
       closeDecoded = decoded.close;
 
-      const url = createPreviewUrl(file);
+      const url = await createPreviewUrl(
+        decoded.source,
+        decoded.width,
+        decoded.height
+      );
       previewRef.current = url;
       setPreviewUrl(url);
 

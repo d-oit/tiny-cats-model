@@ -105,7 +105,11 @@ def _fake_validation(*_: object, **__: object) -> dict[str, object]:
         "prediction_match_rate": 0.95,
         "real_images": True,
         "accuracy": {"original": 0.8, "quantized": 0.75, "delta": -0.05},
-        "provenance": {"dataset_hash": "abc", "image_count": 8},
+        "provenance": {
+            "dataset_hash": "abc",
+            "image_count": 8,
+            "selected_paths": ["validation/cat/image.png"],
+        },
     }
 
 

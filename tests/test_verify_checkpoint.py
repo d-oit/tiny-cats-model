@@ -176,7 +176,7 @@ def _write_onnx(
     from onnx import TensorProto, helper
 
     batch = "batch"
-    noise_shape = [batch, 3, 128 if not bad_dims else 64, 128]
+    noise_shape: list[str | int] = ["batch", 3, 128 if not bad_dims else 64, 128]
     inputs = [
         helper.make_tensor_value_info(
             "noise",

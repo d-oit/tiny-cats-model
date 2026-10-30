@@ -106,6 +106,17 @@ test.describe("browser runtime contract", () => {
       mimeType: "image/png",
       buffer: VALID_PNG,
     });
+    const preview = page.getByAltText("Preview of the uploaded image");
+    await expect(preview).toBeVisible();
+    await expect
+      .poll(() =>
+        preview.evaluate((image: HTMLImageElement) => ({
+          width: image.naturalWidth,
+          height: image.naturalHeight,
+          protocol: new URL(image.currentSrc).protocol,
+        }))
+      )
+      .toEqual({ width: 1, height: 1, protocol: "blob:" });
 
     const result = page.getByTestId("classification-result");
     await expect(result).toBeVisible({ timeout: 30_000 });

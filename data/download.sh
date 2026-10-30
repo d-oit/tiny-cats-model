@@ -13,6 +13,14 @@ PET_IMAGES_URL="${PET_IMAGES_URL:-https://www.robots.ox.ac.uk/~vgg/data/pets/dat
 PET_ANNOTS_URL="${PET_ANNOTS_URL:-https://www.robots.ox.ac.uk/~vgg/data/pets/data/annotations.tar.gz}"
 DOWNLOAD_REPLACE="${DOWNLOAD_REPLACE:-0}"
 VERSION="${DATASET_VERSION:-oxford-iiit-pet-v1}"
+if [[ -n "${PYTHON:-}" ]]; then
+  PYTHON_BIN="${PYTHON}"
+elif [[ -x "${REPO_DIR}/.venv/bin/python" ]]; then
+  PYTHON_BIN="${REPO_DIR}/.venv/bin/python"
+else
+  PYTHON_BIN="$(command -v python3 || command -v python || true)"
+  [[ -n "${PYTHON_BIN}" ]] || { echo "Python interpreter not found" >&2; exit 1; }
+fi
 
 for arg in "$@"; do
   case "$arg" in
@@ -83,15 +91,15 @@ find "${IMAGES_DIR}" -type f -name '*.jpg' -print0 | while IFS= read -r -d '' im
 done
 
 printf '==> Validating staged dataset\n'
-"${REPO_DIR}/.venv/bin/python" "${REPO_DIR}/scripts/validate_dataset.py" \
+"${PYTHON_BIN}" "${REPO_DIR}/scripts/validate_dataset.py" \
   --root "${STAGING}" --expected-breeds 12 --write-manifest \
   --source "${PET_IMAGES_URL} | ${PET_ANNOTS_URL}" --version "${VERSION}"
-"${REPO_DIR}/.venv/bin/python" -c 'import json,sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from dataset_manifest import read_dataset_manifest,write_dataset_manifest; root=Path(sys.argv[2]); m=read_dataset_manifest(root); m["archive_sha256"]={"images":sys.argv[3],"annotations":sys.argv[4]}; write_dataset_manifest(root,m)' \
+"${PYTHON_BIN}" -c 'import json,sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from dataset_manifest import read_dataset_manifest,write_dataset_manifest; root=Path(sys.argv[2]); m=read_dataset_manifest(root); m["archive_sha256"]={"images":sys.argv[3],"annotations":sys.argv[4]}; write_dataset_manifest(root,m)' \
   "${REPO_DIR}/src" "${STAGING}" "${IMAGES_SHA256}" "${ANNOTS_SHA256}"
 
 if [[ -e "${CATS_DIR}" ]]; then
-  EXISTING_HASH="$("${REPO_DIR}/.venv/bin/python" -c 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from dataset_manifest import build_dataset_manifest,read_dataset_manifest; root=Path(sys.argv[2]); saved=read_dataset_manifest(root); current=build_dataset_manifest(root,use_cache=False,persist_cache=False); print(saved.get("manifest_hash","") if saved and saved.get("manifest_hash")==current.get("manifest_hash") else "")' "${REPO_DIR}/src" "${CATS_DIR}")"
-  NEW_HASH="$("${REPO_DIR}/.venv/bin/python" -c 'import json,sys; print(json.loads(open(sys.argv[1]).read())["manifest_hash"])' "${STAGING}/dataset_manifest.json")"
+  EXISTING_HASH="$("${PYTHON_BIN}" -c 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from dataset_manifest import build_dataset_manifest,read_dataset_manifest; root=Path(sys.argv[2]); saved=read_dataset_manifest(root); current=build_dataset_manifest(root,use_cache=False,persist_cache=False); print(saved.get("manifest_hash","") if saved and saved.get("manifest_hash")==current.get("manifest_hash") else "")' "${REPO_DIR}/src" "${CATS_DIR}")"
+  NEW_HASH="$("${PYTHON_BIN}" -c 'import json,sys; print(json.loads(open(sys.argv[1]).read())["manifest_hash"])' "${STAGING}/dataset_manifest.json")"
   if [[ -n "${EXISTING_HASH}" && "${EXISTING_HASH}" == "${NEW_HASH}" ]]; then
     echo "==> Existing dataset has identical content; no-op."
     exit 0

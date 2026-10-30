@@ -862,6 +862,7 @@ def optimize_onnx(
         results["calibration_provenance"] = {
             "source": "not_required_weight_only",
             "image_count": 0,
+            "selected_paths": [],
         }
     elif method == "static":
         output_path = output_dir / f"{base_name}_quantized_static.onnx"

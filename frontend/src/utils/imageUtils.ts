@@ -293,8 +293,28 @@ export function preprocessImageSource(
   return tensor;
 }
 
-export function createPreviewUrl(file: File): string {
-  return URL.createObjectURL(file);
+export async function createPreviewUrl(
+  source: CanvasImageSource,
+  width: number,
+  height: number
+): Promise<string> {
+  const scale = Math.min(1, 300 / width, 300 / height);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not create a safe image preview.");
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  const previewBlob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) =>
+        blob
+          ? resolve(blob)
+          : reject(new Error("Could not encode the image preview.")),
+      "image/png"
+    );
+  });
+  return URL.createObjectURL(previewBlob);
 }
 
 export function revokePreviewUrl(url: string | null): void {
