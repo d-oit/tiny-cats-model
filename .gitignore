@@ -141,6 +141,7 @@ test-results/
 playwright-report/
 node_modules/
 package-lock.json
+!/package-lock.json
 *.log
 .mypy_cache/
 .claude/settings.local.json
