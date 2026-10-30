@@ -6,6 +6,7 @@ import hashlib
 import io
 import os
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -65,6 +66,7 @@ def _run_download(tmp_path: Path, images_url: str, annotations_url: str, *flags:
             "PET_ANNOTS_URL": annotations_url,
             "DOWNLOAD_WORKDIR": str(tmp_path / "work"),
             "PATH": f"{Path('/usr/bin')}:{Path('/bin')}:{env.get('PATH', '')}",
+            "PYTHON": sys.executable,
         }
     )
     return subprocess.run(

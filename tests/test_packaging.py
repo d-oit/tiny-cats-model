@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import importlib
 import sys
+from pathlib import Path
 
 tomllib = importlib.import_module("tomllib" if sys.version_info >= (3, 11) else "tomli")
 
