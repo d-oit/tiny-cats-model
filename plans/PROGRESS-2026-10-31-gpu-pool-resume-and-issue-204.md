@@ -156,6 +156,14 @@ Run 41237445797 confirmed both: the dataset was published
 `invalid sources` because Kaggle had not finished processing it. The push now
 retries on that specific error (bounded, 30s) before failing.
 
+Run 41238009001 got the kernel running and training setup started (GPU T4
+detected), then the dataset download failed: `robots.ox.ac.uk` timed out (it
+also times out from this workstation). `data/download.py` now falls back to the
+Zenodo mirror of the same archive (`The Oxford-IIIT Pet.zip`, 789 MB), which
+preserves the original JPEG bytes and therefore the `relpath:size` fingerprint
+used by the resume manifest gate. A socket timeout keeps a dead mirror from
+stalling the kernel.
+
 ## Follow-ups
 
 - After the next Kaggle slice succeeds, set the `KAGGLE_KERNEL_ID` repository
