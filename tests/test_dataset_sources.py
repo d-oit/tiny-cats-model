@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "data"))
 
-import download  # noqa: E402
+import download
 
 
 def _write_zip(path: Path, members: dict[str, bytes]) -> None:
