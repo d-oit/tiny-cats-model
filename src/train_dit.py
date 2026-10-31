@@ -45,7 +45,30 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import modal
+# Modal is only needed for the remote training wrapper. Kaggle kernels run
+# ``train_dit_local`` directly and ship no Modal SDK, but they still import
+# this module (via scripts/train_kaggle.py) — so the SDK must be optional.
+try:
+    import modal
+
+    _HAS_MODAL = True
+except ImportError:  # pragma: no cover - exercised on the Kaggle kernel
+    _HAS_MODAL = False
+
+    class _ModalStub:
+        """Minimal decorator-argument surface used by the wrapper below."""
+
+        class Secret:
+            @staticmethod
+            def from_name(*_args: Any, **_kwargs: Any) -> None:
+                return None
+
+        class Retries:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                pass
+
+    modal = _ModalStub()  # type: ignore[assignment]
+
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -848,48 +871,76 @@ class TrainingError(Exception):
 
 
 # Modal setup (ADR-022, ADR-023, ADR-024, ADR-025)
-app = modal.App("tiny-dit-training")
+if _HAS_MODAL:
+    app = modal.App("tiny-dit-training")
 
-# Volume definitions (ADR-024: organized storage with explicit commits)
-volume_outputs = modal.Volume.from_name("dit-outputs", create_if_missing=True)
-volume_data = modal.Volume.from_name("dit-dataset", create_if_missing=True)
+    # Volume definitions (ADR-024: organized storage with explicit commits)
+    volume_outputs = modal.Volume.from_name("dit-outputs", create_if_missing=True)
+    volume_data = modal.Volume.from_name("dit-dataset", create_if_missing=True)
+    enter = modal.enter
+    method = modal.method
+else:  # pragma: no cover - Kaggle/local training path
+
+    class _StubApp:
+        """Import-safe stand-in: the wrapper is never invoked off Modal."""
+
+        def cls(self, **_kwargs: Any) -> Callable[[type], type]:
+            return lambda cls: cls
+
+        def local_entrypoint(self, *_args: Any, **_kwargs: Any) -> Callable:
+            return lambda fn: fn
+
+    app = _StubApp()
+    volume_outputs = None
+    volume_data = None
+
+    def enter() -> Callable:
+        return lambda fn: fn
+
+    def method() -> Callable:
+        return lambda fn: fn
+
 
 # Optimized container image (ADR-022: fast builds with uv_pip_install)
 # Download scripts added for dataset download fallback (ADR-031)
 image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .apt_install("wget", "tar", "curl", "git")
-    .env(
-        {
-            "HF_XET_HIGH_PERFORMANCE": "1",  # Faster HuggingFace downloads
-            "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512",  # Memory optimization
-        }
+    (
+        modal.Image.debian_slim(python_version="3.12")
+        .apt_install("wget", "tar", "curl", "git")
+        .env(
+            {
+                "HF_XET_HIGH_PERFORMANCE": "1",  # Faster HuggingFace downloads
+                "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512",  # Memory optimization
+            }
+        )
+        .uv_pip_install(
+            "torch==2.5.1",
+            "torchvision==0.20.1",
+            "pillow==11.0.0",
+            "tqdm==4.67.1",
+            "onnx==1.17.0",
+            "onnxruntime==1.20.0",
+            "huggingface_hub",
+        )
+        .add_local_file("src/train_dit.py", "/app/train_dit.py")
+        .add_local_file("src/training_state.py", "/app/training_state.py")
+        .add_local_file("src/artifacts.py", "/app/artifacts.py")
+        .add_local_file("src/dit.py", "/app/dit.py")
+        .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
+        .add_local_file("src/dit_validation.py", "/app/dit_validation.py")
+        .add_local_file("src/dataset.py", "/app/dataset.py")
+        .add_local_file("src/gpu_pool.py", "/app/gpu_pool.py")
+        .add_local_file("src/export_dit_onnx.py", "/app/export_dit_onnx.py")
+        .add_local_file("src/optimize_onnx.py", "/app/optimize_onnx.py")
+        .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
+        .add_local_file("src/auth_utils.py", "/app/auth_utils.py")
+        .add_local_file("src/retry_utils.py", "/app/retry_utils.py")
+        .add_local_file("src/experiment_tracker.py", "/app/experiment_tracker.py")
+        .add_local_file("data/download.py", "/app/data/download.py")
+        .add_local_file("data/download.sh", "/app/data/download.sh")
     )
-    .uv_pip_install(
-        "torch==2.5.1",
-        "torchvision==0.20.1",
-        "pillow==11.0.0",
-        "tqdm==4.67.1",
-        "onnx==1.17.0",
-        "onnxruntime==1.20.0",
-        "huggingface_hub",
-    )
-    .add_local_file("src/train_dit.py", "/app/train_dit.py")
-    .add_local_file("src/training_state.py", "/app/training_state.py")
-    .add_local_file("src/artifacts.py", "/app/artifacts.py")
-    .add_local_file("src/dit.py", "/app/dit.py")
-    .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
-    .add_local_file("src/dit_validation.py", "/app/dit_validation.py")
-    .add_local_file("src/dataset.py", "/app/dataset.py")
-    .add_local_file("src/gpu_pool.py", "/app/gpu_pool.py")
-    .add_local_file("src/export_dit_onnx.py", "/app/export_dit_onnx.py")
-    .add_local_file("src/optimize_onnx.py", "/app/optimize_onnx.py")
-    .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
-    .add_local_file("src/auth_utils.py", "/app/auth_utils.py")
-    .add_local_file("src/retry_utils.py", "/app/retry_utils.py")
-    .add_local_file("src/experiment_tracker.py", "/app/experiment_tracker.py")
-    .add_local_file("data/download.py", "/app/data/download.py")
-    .add_local_file("data/download.sh", "/app/data/download.sh")
+    if _HAS_MODAL
+    else None
 )
 
 
@@ -922,7 +973,7 @@ class DiTTrainer:
     per function invocation — cutting cold start latency.
     """
 
-    @modal.enter()
+    @enter()
     def enter(self):
         """One-time container init: paths, heavy imports, CUDA warm-up.
 
@@ -988,7 +1039,7 @@ class DiTTrainer:
         except Exception as e:
             logger.warning(f"GPU pool: hub push skipped ({e})")
 
-    @modal.method()
+    @method()
     def train(
         self,
         data_dir: str = "/data/cats",

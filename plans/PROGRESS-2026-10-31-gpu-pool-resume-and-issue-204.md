@@ -127,6 +127,21 @@ After both fixes the control plane can fetch the state that travels with a
 Hub snapshot, so a 540000 slice that is still short of target reports
 `partial` (resumable) instead of a false invalid checkpoint.
 
+### Run 41235455797 (19:44Z)
+
+This re-dispatch did launch Kaggle: kernel version 1 was pushed to
+`dominikoswald/tiny-cats-dit-slice` and the credentials/auth path worked. The
+kernel then errored within a minute, and two more issues surfaced:
+
+1. The kernel log was lost because `kernels_output(file_pattern="*.log")`
+   passed a glob where Kaggle expects a regex (`nothing to repeat at position
+   0`). Now `.*\.log$`, with a regression test that compiles the pattern.
+2. The kernel error is `import modal` in `train_dit.py`: Kaggle ships no Modal
+   SDK, yet the kernel imports `train_dit` through `scripts/train_kaggle.py`.
+   `modal` is now optional (a stub provides the decorator-argument surface),
+   so local/Kaggle training imports cleanly; a subprocess test proves it with
+   `modal` blocked.
+
 ## Follow-ups
 
 - After the next Kaggle slice succeeds, set the `KAGGLE_KERNEL_ID` repository

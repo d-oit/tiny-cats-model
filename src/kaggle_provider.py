@@ -521,8 +521,11 @@ def fetch_kernel_logs(
     download_dir = Path(download_dir)
     download_dir.mkdir(parents=True, exist_ok=True)
     try:
+        # Kaggle treats file_pattern as a *regex*: "*.log" raises
+        # "nothing to repeat at position 0" and loses the only diagnostic a
+        # failed kernel leaves behind.
         api.kernels_output(
-            kernel_id, path=str(download_dir), file_pattern="*.log", force=True
+            kernel_id, path=str(download_dir), file_pattern=r".*\.log$", force=True
         )
     except Exception as exc:
         logger.warning("could not fetch kernel logs: %s", exc)

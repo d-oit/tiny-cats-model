@@ -14,6 +14,7 @@ Unit coverage for the Kaggle slice adapter (ADR-067):
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -356,6 +357,38 @@ class TestLogs:
         )
         assert result == log_file
         assert "line two" in log_file.read_text()
+
+    def test_log_fetch_uses_a_valid_regex(self, tmp_path: Path) -> None:
+        seen: dict[str, str | None] = {}
+
+        class Api:
+            def kernels_output(
+                self,
+                kernel: str,
+                path: str,
+                file_pattern: str | None = None,
+                force: bool = False,
+            ) -> tuple[list[str], str]:
+                seen["pattern"] = file_pattern
+                target = Path(path) / "slice.log"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("step 1\n")
+                return ([], "")
+
+        result = fetch_kernel_logs(
+            Api(),
+            "d-oit/slice",
+            download_dir=tmp_path / "out",
+            log_file=tmp_path / "l.log",
+        )
+
+        assert result is not None
+        # Kaggle parses this server-side as a regex; a glob raised
+        # "nothing to repeat at position 0" and discarded the kernel log.
+        pattern = seen["pattern"]
+        assert pattern is not None
+        assert re.compile(pattern).search("training.log")
+        assert not re.compile(pattern).search("training.txt")
 
     def test_missing_log_is_not_fatal(self, tmp_path: Path) -> None:
         api = FakeApi(log_text=None)

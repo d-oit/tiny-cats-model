@@ -12,6 +12,8 @@ generated ``kernel-metadata.json``.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -95,8 +97,16 @@ def test_blocked_modal_launches_kaggle_end_to_end(tmp_path: Path, monkeypatch) -
         ),
     )
     monkeypatch.setattr(kaggle_provider, "_load_api", lambda: api)
-    # Polling sleeps 60s between checks in production.
-    monkeypatch.setattr(kaggle_provider.time, "sleep", lambda _seconds: None)
+    # ``wait_for_kernel`` binds ``time.sleep`` as a default argument, so patch
+    # the function rather than the module (polling sleeps 60s in production).
+    real_wait = kaggle_provider.wait_for_kernel
+    monkeypatch.setattr(
+        kaggle_provider,
+        "wait_for_kernel",
+        lambda api_arg, kernel_id, **kwargs: real_wait(
+            api_arg, kernel_id, sleep=lambda _seconds: None, **kwargs
+        ),
+    )
     monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
 
     commands: list[list[str]] = []
@@ -143,6 +153,29 @@ def test_blocked_modal_launches_kaggle_end_to_end(tmp_path: Path, monkeypatch) -
     assert len(api.push_calls) == 1
     assert used.read_text().strip() == "kaggle"
     assert (tmp_path / "kaggle-training.log").read_text().strip()
+
+
+def test_train_dit_imports_without_the_modal_sdk() -> None:
+    """Kaggle has no Modal SDK, yet the kernel imports train_dit.
+
+    ``sys.modules['modal'] = None`` makes ``import modal`` raise ImportError,
+    exactly like the Kaggle image, without uninstalling it from the runner.
+    """
+    root = Path(__file__).parent.parent
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.modules['modal'] = None; import train_dit; print('ok')",
+        ],
+        cwd=root,
+        env={**os.environ, "PYTHONPATH": str(root / "src")},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
 
 
 def test_workflow_surfaces_launch_failures() -> None:
