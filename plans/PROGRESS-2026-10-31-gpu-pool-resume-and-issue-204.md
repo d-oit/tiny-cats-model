@@ -164,6 +164,11 @@ preserves the original JPEG bytes and therefore the `relpath:size` fingerprint
 used by the resume manifest gate. A socket timeout keeps a dead mirror from
 stalling the kernel.
 
+Run 41238847231 got the kernel running (status RUNNING for 15 min) but the
+dataset prep was capped at 15 minutes. Zenodo measured ~0.5 MB/s here, so the
+789 MB archive needs ~27 minutes; the cap is now 45 minutes. Full-slice
+confirmation therefore takes hours (download + training), not minutes.
+
 ## Follow-ups
 
 - After the next Kaggle slice succeeds, set the `KAGGLE_KERNEL_ID` repository

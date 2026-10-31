@@ -54,6 +54,10 @@ KAGGLE_CHECKPOINT_DIR = os.environ.get(
 )
 KAGGLE_HUB_REPO = os.environ.get("KAGGLE_HUB_REPO", "d4oit/tiny-cats-model")
 KAGGLE_MAX_SESSION_HOURS = 9  # Kaggle session limit
+# The Oxford host is unreliable; the Zenodo mirror is ~789 MB and measured at
+# ~0.5 MB/s (2026-10-31), i.e. ~27 minutes. The old 15-minute cap killed the
+# kernel mid-download (run 41238847231), so allow the full download + extract.
+KAGGLE_DATA_PREP_TIMEOUT_SECONDS = 2_700
 
 logger = logging.getLogger("kaggle_train")
 
@@ -213,7 +217,7 @@ def prepare_kaggle_data(data_dir: str | Path, *, force_download: bool = False) -
             },
             capture_output=True,
             text=True,
-            timeout=900,
+            timeout=KAGGLE_DATA_PREP_TIMEOUT_SECONDS,
         )
         if result.returncode == 0:
             logger.info("Dataset downloaded successfully")
