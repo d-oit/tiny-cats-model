@@ -108,6 +108,25 @@ python .agents/skills/smart_lint.py \
   followed by `--check`; until then the frontend makes no mutable `main`
   request and uses digest-verified bundled bytes.
 
+## Live run 41234934096 (2026-10-31 19:35Z)
+
+The dispatched run reached the fallback: Modal was blocked, Kaggle was
+attempted through `src/kaggle_provider.py` (the annotation ran this time), and
+the run failed on two follow-on issues rather than the original gate:
+
+1. `No module named 'kaggle'` — the SDK was not in `requirements.txt`, so the
+   GitHub runner could build the launch command but not authenticate/push.
+   Added `kaggle>=1.7.0`.
+2. `slice_verification_540000.json` reported
+   `training state unreadable: training_state.json` while the checkpoint was
+   valid: `pull_checkpoint_from_hub` zip-validated every downloaded file and
+   quarantined the JSON sidecar. Zip validation is now limited to checkpoint
+   suffixes (`.pt/.pth/.bin/.ckpt`), with a regression test.
+
+After both fixes the control plane can fetch the state that travels with a
+Hub snapshot, so a 540000 slice that is still short of target reports
+`partial` (resumable) instead of a false invalid checkpoint.
+
 ## Follow-ups
 
 - After the next Kaggle slice succeeds, set the `KAGGLE_KERNEL_ID` repository

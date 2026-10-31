@@ -178,6 +178,26 @@ class TestRoundTrip:
         )
         assert (pulled.parent / "training_state.json").exists()
 
+    def test_training_state_pull_is_not_zip_validated(
+        self, fake_hub, tmp_path: Path
+    ) -> None:
+        # The state sidecar travels in the same snapshot but is JSON. Treating
+        # it as a torch archive quarantined it, leaving the control-plane
+        # verifier with no completed_steps (a resumable slice looked invalid).
+        assert push(fake_hub, tmp_path, "s10", 10) is True
+
+        pulled = pull_checkpoint_from_hub(
+            hub_repo="test/repo",
+            checkpoint_name="training_state.json",
+            output_dir=tmp_path / "out",
+            experiment_id="exp-a",
+        )
+
+        assert pulled is not None
+        assert pulled.suffix == ".json"
+        assert json.loads(pulled.read_text())["completed_steps"] == 10
+        assert not pulled.with_name(pulled.name + ".corrupt").exists()
+
     def test_same_step_pushes_merge_file_list(self, fake_hub, tmp_path: Path) -> None:
         assert push(fake_hub, tmp_path, "s10", 10) is True
         assert (

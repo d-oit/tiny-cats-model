@@ -406,6 +406,10 @@ def _check_hf_available() -> bool:
 
 POOL_ROOT = "checkpoints/pool"
 
+#: File suffixes that must be structurally valid torch archives. Sidecars such
+#: as ``training_state.json`` travel in the same snapshot but are not zips.
+_CHECKPOINT_SUFFIXES = (".pt", ".pth", ".bin", ".ckpt")
+
 
 def _pool_base(experiment_id: str) -> str:
     return f"{POOL_ROOT}/{experiment_id}"
@@ -798,9 +802,14 @@ def pull_checkpoint_from_hub(
                 except Exception as exc:
                     logger.warning(f"Could not pull training_state.json: {exc}")
 
-        # Validate before activation (WP3): a corrupt transfer must never
-        # become the resume source.
-        if not zipfile.is_zipfile(downloaded):
+        # Validate before activation (WP3): a corrupt *checkpoint* transfer
+        # must never become the resume source. Sidecars are not torch archives:
+        # zip-validating ``training_state.json`` quarantined every Hub-backed
+        # state fetch, so provider verification saw no state and failed a
+        # resumable slice as invalid (2026-10-31 pool run).
+        if downloaded.suffix.lower() in _CHECKPOINT_SUFFIXES and not zipfile.is_zipfile(
+            downloaded
+        ):
             quarantine = downloaded.with_name(downloaded.name + ".corrupt")
             try:
                 downloaded.rename(quarantine)
