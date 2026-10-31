@@ -70,6 +70,8 @@ EXIT_CONFIG = 5
 # account, so a fresh repository only needs KAGGLE_API_TOKEN (ADR-067).
 DEFAULT_KERNEL_SLUG = "tiny-cats-dit-slice"
 
+DEFAULT_PUSH_RETRY_ATTEMPTS = 4
+DEFAULT_PUSH_RETRY_DELAY_SECONDS = 30
 DEFAULT_POLL_INTERVAL_SECONDS = 60
 DEFAULT_POLL_TIMEOUT_SECONDS = 19_800  # 5.5 h — inside the 360-min job cap
 DEFAULT_SESSION_TIMEOUT_SECONDS = 21_600  # 6 h kernel session cap
@@ -519,6 +521,42 @@ def push_kernel(
     return info
 
 
+def push_kernel_with_retry(
+    api: Any,
+    workspace: str | Path,
+    *,
+    session_timeout_seconds: int | None = DEFAULT_SESSION_TIMEOUT_SECONDS,
+    attempts: int = DEFAULT_PUSH_RETRY_ATTEMPTS,
+    delay_seconds: int = DEFAULT_PUSH_RETRY_DELAY_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """Push, retrying while Kaggle has not processed a fresh dataset source.
+
+    A dataset created (or versioned) moments before the push is rejected as an
+    ``invalid dataset source`` until Kaggle finishes processing it; the push is
+    otherwise a cheap metadata upload, so a bounded retry is safe. Any other
+    push error is raised immediately.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return push_kernel(
+                api, workspace, session_timeout_seconds=session_timeout_seconds
+            )
+        except Exception as exc:
+            retryable = "invalid sources" in str(exc).lower()
+            if not retryable or attempt == attempts:
+                raise
+            logger.info(
+                "kernel sources not ready (attempt %d/%d): %s; retrying in %ss",
+                attempt,
+                attempts,
+                exc,
+                delay_seconds,
+            )
+            sleep(delay_seconds)
+    raise KaggleLaunchError("kernel push retries exhausted")  # pragma: no cover
+
+
 def wait_for_kernel(
     api: Any,
     kernel_id: str,
@@ -779,7 +817,7 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_CONFIG
 
     try:
-        info = push_kernel(
+        info = push_kernel_with_retry(
             api,
             workspace,
             session_timeout_seconds=args.session_timeout_seconds,

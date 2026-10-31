@@ -41,6 +41,7 @@ from kaggle_provider import (
     fetch_kernel_logs,
     main,
     push_kernel,
+    push_kernel_with_retry,
     resolve_kernel_id,
     status_name,
     wait_for_kernel,
@@ -365,6 +366,47 @@ class TestPush:
         api = FakeApi(invalid_sources=["d-oit/missing-dataset"])
         with pytest.raises(KaggleLaunchError, match="invalid sources"):
             push_kernel(api, tmp_path)
+
+    def test_fresh_dataset_source_is_retried_until_ready(self, tmp_path: Path) -> None:
+        class Api:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def kernels_push(self, folder: str, timeout: str | None = None) -> object:
+                self.calls += 1
+                if self.calls < 3:
+                    return SimpleNamespace(
+                        ref=None,
+                        kernel_id=None,
+                        version_number=None,
+                        url=None,
+                        error=None,
+                        invalid_dataset_sources=["owner/not-processed"],
+                    )
+                return SimpleNamespace(
+                    ref="owner/slice",
+                    kernel_id=1,
+                    version_number=9,
+                    url=None,
+                    error=None,
+                    invalid_dataset_sources=[],
+                )
+
+        api = Api()
+        info = push_kernel_with_retry(
+            api, tmp_path, attempts=3, delay_seconds=0, sleep=lambda _s: None
+        )
+
+        assert api.calls == 3
+        assert info["version"] == 9
+
+    def test_other_push_errors_are_not_retried(self, tmp_path: Path) -> None:
+        api = FakeApi(push_error="invalid kernel")
+        with pytest.raises(KaggleLaunchError, match="invalid kernel"):
+            push_kernel_with_retry(
+                api, tmp_path, attempts=3, delay_seconds=0, sleep=lambda _s: None
+            )
+        assert len(api.push_calls) == 1
 
     def test_missing_version_is_rejected(self, tmp_path: Path) -> None:
         api = FakeApi(version=None)

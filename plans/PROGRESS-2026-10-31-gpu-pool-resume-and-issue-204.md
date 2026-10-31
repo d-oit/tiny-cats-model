@@ -151,6 +151,11 @@ kernel then errored within a minute, and two more issues surfaced:
    the token as a private `tiny-cats-hf-token` Kaggle dataset (new version when
    it already exists) and attaches it to the kernel.
 
+Run 41237445797 confirmed both: the dataset was published
+(`dominikoswald/tiny-cats-hf-token`), but the immediate push was rejected as
+`invalid sources` because Kaggle had not finished processing it. The push now
+retries on that specific error (bounded, 30s) before failing.
+
 ## Follow-ups
 
 - After the next Kaggle slice succeeds, set the `KAGGLE_KERNEL_ID` repository
