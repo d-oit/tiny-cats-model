@@ -13,9 +13,12 @@ Unit coverage for the Kaggle slice adapter (ADR-067):
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import re
 import sys
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,6 +37,7 @@ from kaggle_provider import (
     KaggleLaunchError,
     build_kernel_workspace,
     build_slice_args,
+    ensure_hf_token_dataset,
     fetch_kernel_logs,
     main,
     push_kernel,
@@ -193,6 +197,29 @@ class TestKernelWorkspace:
         assert metadata["dataset_sources"] == ["d-oit/tiny-cats-hf-token"]
         # Title must satisfy kaggle-api's >=5 chars rule and slugify to the id.
         assert metadata["title"] == "tiny cats dit slice"
+
+    def test_entrypoint_embeds_the_workspace(self, tmp_path: Path) -> None:
+        # Kaggle script kernels upload ONLY train.py, so sibling files must
+        # travel inside the entrypoint (embedding) rather than beside it.
+        repo = _fake_repo(tmp_path / "repo")
+        workspace = build_kernel_workspace(
+            repo,
+            tmp_path / "kernel",
+            kernel_id="d-oit/slice",
+            slice_args=["--steps", "1"],
+        )
+        entry = (workspace / ENTRY_FILE).read_text()
+        match = re.search(r"WORKSPACE_B64 = '([^']+)'", entry)
+        assert match is not None
+        payload = base64.b64decode(match.group(1))
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            names = set(archive.namelist())
+        assert {
+            "src/train_dit.py",
+            "scripts/train_kaggle.py",
+            "data/download.py",
+        } <= names
+        assert ENTRY_FILE not in names
 
     def test_tokens_are_not_embedded_in_the_kernel(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -399,6 +426,53 @@ class TestLogs:
             log_file=tmp_path / "l.log",
         )
         assert result is None
+
+
+class TestHfTokenDataset:
+    """ADR-067: the private token dataset replaces unattached secrets."""
+
+    def test_private_dataset_carries_the_token(self) -> None:
+        captured: dict[str, str] = {}
+
+        class Api:
+            username = "slice-owner"
+
+            def dataset_create_new(
+                self, folder: str, public: bool = False, quiet: bool = False
+            ) -> None:
+                captured.update({p.name: p.read_text() for p in Path(folder).iterdir()})
+
+        ref = ensure_hf_token_dataset(Api(), "hf_sentinel_value")
+
+        assert ref == "slice-owner/tiny-cats-hf-token"
+        metadata = json.loads(captured["dataset-metadata.json"])
+        assert metadata["id"] == ref
+        assert metadata["title"]
+        assert captured["HF_TOKEN"].strip() == "hf_sentinel_value"
+
+    def test_existing_dataset_is_versioned(self) -> None:
+        class Api:
+            username = "slice-owner"
+
+            def __init__(self) -> None:
+                self.notes: str | None = None
+
+            def dataset_create_new(
+                self, folder: str, public: bool = False, quiet: bool = False
+            ) -> None:
+                raise RuntimeError("dataset already exists")
+
+            def dataset_create_version(
+                self, folder: str, notes: str, quiet: bool = False
+            ) -> None:
+                self.notes = notes
+
+        api = Api()
+        assert (
+            ensure_hf_token_dataset(api, "rotated-token")
+            == "slice-owner/tiny-cats-hf-token"
+        )
+        assert api.notes == "refresh HF_TOKEN"
 
 
 class TestKernelIdResolution:

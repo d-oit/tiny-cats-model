@@ -141,6 +141,15 @@ kernel then errored within a minute, and two more issues surfaced:
    `modal` is now optional (a stub provides the decorator-argument surface),
    so local/Kaggle training imports cleanly; a subprocess test proves it with
    `modal` blocked.
+3. Kaggle script kernels upload only `train.py`; the packaged `src/` and
+   `scripts/` never reached the kernel
+   (`FileNotFoundError: /kaggle/src/scripts/train_kaggle.py`). The entrypoint
+   now embeds a base64 zip of the workspace and extracts it under
+   `/kaggle/working/` before running.
+4. No `HF_TOKEN` reached the kernel (the `KAGGLE_HF_TOKEN_DATASET` variable was
+   unset), so a slice could neither resume nor push. The launcher now publishes
+   the token as a private `tiny-cats-hf-token` Kaggle dataset (new version when
+   it already exists) and attaches it to the kernel.
 
 ## Follow-ups
 

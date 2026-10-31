@@ -31,12 +31,16 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+import base64
+import io
 import json
 import logging
 import os
 import shutil
 import sys
+import tempfile
 import time
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -79,12 +83,18 @@ what ran (slice target, LR horizon, experiment identity).
 
 from __future__ import annotations
 
+import base64
+import io
 import os
 import runpy
+import shutil
 import sys
+import zipfile
 from pathlib import Path
 
-WORKSPACE = Path(__file__).resolve().parent
+# Kaggle script kernels upload ONLY this file; the workspace travels embedded
+# so src/, data/ and scripts/ exist inside the kernel.
+WORKSPACE_B64 = {workspace!r}
 HF_TOKEN_DATASET = {dataset!r}
 SLICE_ARGS = {args!r}
 
@@ -108,7 +118,19 @@ def resolve_hf_token() -> str | None:
         return None
 
 
+def materialise_workspace() -> Path:
+    """Extract the embedded workspace into Kaggle's writable output dir."""
+    target = Path("/kaggle/working/slice-workspace")
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(io.BytesIO(base64.b64decode(WORKSPACE_B64))) as archive:
+        archive.extractall(target)
+    return target
+
+
 def main() -> None:
+    workspace = materialise_workspace()
     token = resolve_hf_token()
     if token:
         os.environ["HF_TOKEN"] = token
@@ -120,7 +142,7 @@ def main() -> None:
         )
     sys.argv = ["train_kaggle.py", *SLICE_ARGS]
     runpy.run_path(
-        str(WORKSPACE / "scripts" / "train_kaggle.py"), run_name="__main__"
+        str(workspace / "scripts" / "train_kaggle.py"), run_name="__main__"
     )
 
 
@@ -280,6 +302,55 @@ def _prepare_workspace(workspace: Path) -> None:
     workspace.mkdir(parents=True, exist_ok=True)
 
 
+def _workspace_b64(workspace: Path) -> str:
+    """Base64 zip of everything the kernel entrypoint needs at run time."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(workspace.rglob("*")):
+            if not path.is_file() or path.name in (ENTRY_FILE, KERNEL_METADATA_FILE):
+                continue
+            archive.write(path, path.relative_to(workspace).as_posix())
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def ensure_hf_token_dataset(api: Any, token: str) -> str:
+    """Publish ``HF_TOKEN`` as a private Kaggle dataset and return its ref.
+
+    Kaggle cannot attach secrets at kernel-push time (kaggle-api#582), so the
+    documented workaround is a private dataset the kernel mounts. Creating it
+    here keeps unattended slices resumable without a manual repo variable.
+    """
+    username = _kaggle_username(api)
+    if not username:
+        raise KaggleLaunchError(
+            "cannot publish the HF token dataset: the authenticated account did "
+            "not expose a username"
+        )
+    dataset_ref = f"{username}/tiny-cats-hf-token"
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp) / "tiny-cats-hf-token"
+        folder.mkdir()
+        (folder / "HF_TOKEN").write_text(token.strip() + "\n")
+        (folder / "dataset-metadata.json").write_text(
+            json.dumps(
+                {
+                    "title": "tiny cats hf token",
+                    "id": dataset_ref,
+                    "licenses": [{"name": "CC0-1.0"}],
+                },
+                indent=2,
+            )
+        )
+        try:
+            api.dataset_create_new(str(folder), public=False, quiet=True)
+        except Exception:
+            # Dataset already exists: publish a new version with the current
+            # token instead of failing the launch (rotated/expired tokens are
+            # the common case; see ADR-041).
+            api.dataset_create_version(str(folder), "refresh HF_TOKEN", quiet=True)
+    return dataset_ref
+
+
 def write_kernel_metadata(
     workspace: str | Path,
     *,
@@ -349,7 +420,11 @@ def build_kernel_workspace(
         shutil.copy2(source, target)
 
     (workspace / ENTRY_FILE).write_text(
-        ENTRY_TEMPLATE.format(dataset=hf_token_dataset, args=slice_args)
+        ENTRY_TEMPLATE.format(
+            workspace=_workspace_b64(workspace),
+            dataset=hf_token_dataset,
+            args=slice_args,
+        )
     )
     write_kernel_metadata(
         workspace,
@@ -638,22 +713,40 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     kernel_id: str | None = args.kernel_id or os.environ.get("KAGGLE_KERNEL_ID")
+    hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
     api: Any | None = None
-    if not kernel_id:
-        # Resolving the owner needs an authenticated API client, which a dry
-        # run deliberately avoids touching.
-        if args.dry_run:
-            logger.error(
-                "no kernel id: pass --kernel-id owner/slug or set KAGGLE_KERNEL_ID"
-            )
-            return EXIT_CONFIG
+    if not args.dry_run and (not kernel_id or (hf_token and not hf_token_dataset)):
+        # Resolving the owner / publishing the token dataset need an
+        # authenticated client, which a dry run deliberately avoids touching.
         try:
             api = _load_api()
-            kernel_id = resolve_kernel_id(api, None)
         except Exception as exc:
-            logger.error("could not resolve the Kaggle kernel id (%s)", exc)
+            logger.error("Kaggle authentication failed (%s)", exc)
             return EXIT_CONFIG
-        logger.info("resolved kernel id %s from the authenticated account", kernel_id)
+        if not kernel_id:
+            try:
+                kernel_id = resolve_kernel_id(api, None)
+            except Exception as exc:
+                logger.error("could not resolve the Kaggle kernel id (%s)", exc)
+                return EXIT_CONFIG
+            logger.info(
+                "resolved kernel id %s from the authenticated account", kernel_id
+            )
+        if hf_token and not hf_token_dataset:
+            try:
+                hf_token_dataset = ensure_hf_token_dataset(api, hf_token)
+            except Exception as exc:
+                # A slice without the token cannot resume from or push to the
+                # Hub, so burning GPU time on it is worse than failing here.
+                logger.error("could not publish the HF token dataset (%s)", exc)
+                return EXIT_CONFIG
+            logger.info("HF token dataset ready: %s", hf_token_dataset)
+
+    if not kernel_id:
+        logger.error(
+            "no kernel id: pass --kernel-id owner/slug or set KAGGLE_KERNEL_ID"
+        )
+        return EXIT_CONFIG
 
     try:
         workspace = build_kernel_workspace(
