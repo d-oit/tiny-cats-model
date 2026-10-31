@@ -36,6 +36,7 @@ from kaggle_provider import (
     fetch_kernel_logs,
     main,
     push_kernel,
+    resolve_kernel_id,
     status_name,
     wait_for_kernel,
 )
@@ -367,6 +368,59 @@ class TestLogs:
         assert result is None
 
 
+class TestKernelIdResolution:
+    """ADR-067: flag → env → authenticated account, never a hard failure."""
+
+    def test_explicit_id_wins_over_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KAGGLE_KERNEL_ID", "env/slice")
+        assert resolve_kernel_id(FakeApi(), "d-oit/slice") == "d-oit/slice"
+
+    def test_environment_id_is_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KAGGLE_KERNEL_ID", "env/slice")
+        assert resolve_kernel_id(FakeApi(), None) == "env/slice"
+
+    def test_owner_comes_from_the_authenticated_username(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
+        api = SimpleNamespace(username="d-oit")
+        assert resolve_kernel_id(api, None) == "d-oit/tiny-cats-dit-slice"
+
+    def test_owner_comes_from_config_values(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
+        api = SimpleNamespace(config_values={"username": "config-owner"})
+        assert resolve_kernel_id(api, None) == "config-owner/tiny-cats-dit-slice"
+
+    def test_owner_comes_from_the_config_getter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
+
+        class Api:
+            def get_config_value(self, key: str) -> str | None:
+                return "getter-owner" if key == "username" else None
+
+        assert resolve_kernel_id(Api(), None) == "getter-owner/tiny-cats-dit-slice"
+
+    def test_unresolvable_owner_fails_loudly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
+        with pytest.raises(KaggleLaunchError, match="cannot resolve"):
+            resolve_kernel_id(SimpleNamespace(), None)
+
+    def test_malformed_environment_id_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KAGGLE_KERNEL_ID", "not-a-slug")
+        with pytest.raises(ValueError, match="owner/slug"):
+            resolve_kernel_id(FakeApi(), None)
+
+
 class TestCli:
     def test_dry_run_builds_the_workspace(
         self, tmp_path: Path, capsys: pytest.CaptureFixture
@@ -399,6 +453,38 @@ class TestCli:
             ]
         )
         assert code == EXIT_CONFIG
+
+    def test_dry_run_without_kernel_id_exits_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
+        code = main(
+            [
+                "--target",
+                "15000",
+                "--workspace",
+                str(tmp_path / "kernel"),
+                "--dry-run",
+            ]
+        )
+        assert code == EXIT_CONFIG
+
+    def test_dry_run_accepts_the_environment_kernel_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KAGGLE_KERNEL_ID", "env-owner/slice")
+        code = main(
+            [
+                "--target",
+                "15000",
+                "--workspace",
+                str(tmp_path / "kernel"),
+                "--dry-run",
+            ]
+        )
+        assert code == EXIT_COMPLETE
+        metadata = json.loads((tmp_path / "kernel" / KERNEL_METADATA_FILE).read_text())
+        assert metadata["id"] == "env-owner/slice"
 
     def test_auth_failure_exits_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

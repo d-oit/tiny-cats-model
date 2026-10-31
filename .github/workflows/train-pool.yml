@@ -231,6 +231,11 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+          # Optional: when unset, kaggle_provider resolves
+          # <authenticated-account>/tiny-cats-dit-slice, so the modal→kaggle
+          # fallback never dies on a missing repo variable (ADR-067).
+          KAGGLE_KERNEL_ID: ${{ vars.KAGGLE_KERNEL_ID }}
+          KAGGLE_HF_TOKEN_DATASET: ${{ vars.KAGGLE_HF_TOKEN_DATASET }}
         run: |
           set -o pipefail
           # Schedule runs default to `auto` (modal, then kaggle on a launch
@@ -281,7 +286,11 @@ jobs:
         # Surface the provider's own error on the run page: the 2026-10-03 ->
         # 2026-10-16 stall was a one-line "Workspace ... has exceeded its
         # spend limit" buried in the launch step log.
-        if: steps.train.outcome == 'failure'
+        #
+        # `always() &&` is required: a bare `if: steps.train.outcome == ...`
+        # inherits the implicit "all previous steps succeeded" condition, so
+        # this annotation was skipped in exactly the runs it exists for.
+        if: always() && steps.train.outcome == 'failure'
         run: |
           ERR="$(grep -aiE 'exceeded its spend limit|error' modal-training.log kaggle-training.log 2>/dev/null \
             | head -3 | tr '\n' ' ' || true)"
@@ -302,7 +311,10 @@ jobs:
           python src/providers.py fetch-artifacts \
             --provider "$PROVIDER" --name training_state.json --dest . \
             || echo "::warning::training_state.json not available for $PROVIDER"
-          python src/providers.py report \
+          # `report` exits 1 for a failed/cancelled slice (by design). The
+          # report file is still written, so record a warning here instead of
+          # masking the launch failure with a second step failure.
+          if ! python src/providers.py report \
             --provider "$PROVIDER" \
             --gpu-model ${{ github.event.inputs.gpu_model || 'T4' }} \
             --job-id "${{ github.run_id }}/${{ github.job }}/${{ matrix.target }}" \
@@ -312,7 +324,9 @@ jobs:
             --state-file training_state.json \
             --checkpoint-uri "hf://d4oit/tiny-cats-model/checkpoints/pool/dit-breed-conditioned-v4/latest" \
             --outcome "${{ steps.train.outcome }}" \
-            --out "provider_report_${{ matrix.target }}.json"
+            --out "provider_report_${{ matrix.target }}.json"; then
+            echo "::warning::provider report recorded a non-successful slice; artifact still uploaded"
+          fi
 
       - name: Verify slice checkpoint
         id: verify

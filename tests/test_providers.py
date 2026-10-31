@@ -265,9 +265,27 @@ class TestKaggleAndAutoLaunch:
         assert "--schedule-steps 600000" in joined
         assert "--hub-resume" in command
 
-    def test_kaggle_without_kernel_id_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="kernel-id"):
-            build_launch_command("kaggle", 60_000)
+    def test_kaggle_without_kernel_id_defers_resolution(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # ADR-067: the owner is resolved from the authenticated Kaggle account
+        # at run time, so a fresh repository (only KAGGLE_API_TOKEN) can still
+        # fall back from a blocked Modal workspace.
+        monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
+        command = build_launch_command("kaggle", 60_000)
+        assert command[:2] == ["python", "src/kaggle_provider.py"]
+        assert "--kernel-id" not in command
+
+    def test_kaggle_settings_fall_back_to_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KAGGLE_KERNEL_ID", "env-owner/tiny-cats-dit-slice")
+        monkeypatch.setenv("KAGGLE_HF_TOKEN_DATASET", "env-owner/tiny-cats-hf-token")
+
+        command = build_launch_command("kaggle", 60_000)
+        joined = " ".join(command)
+        assert "--kernel-id env-owner/tiny-cats-dit-slice" in joined
+        assert "--hf-token-dataset env-owner/tiny-cats-hf-token" in joined
 
     def test_auto_dispatches_through_the_fallback_script(self) -> None:
         command = build_launch_command(
