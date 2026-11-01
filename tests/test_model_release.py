@@ -474,3 +474,19 @@ def test_immutable_commit_sha_requires_full_sha() -> None:
         immutable_commit_sha(object())
     with pytest.raises(ReleaseError, match="40-character"):
         immutable_commit_sha(type("BranchName", (), {"oid": "main"})())
+
+
+def test_committed_frontend_manifest_matches_bundled_artifacts() -> None:
+    """The checked-in manifest must stay consistent with the bundled models."""
+    pytest.importorskip("onnx")
+    manifest = json.loads(generator.MANIFEST_PATH.read_text())
+    assert manifest["hub"]["revision"] is None or HUB_REVISION.fullmatch(
+        manifest["hub"]["revision"]
+    )
+    assert manifest["policy"] == {
+        "acceptLocalFallbackOnlyOnDigestMatch": True,
+        "allowMutableRevision": False,
+        "requireSha256": True,
+        "requireSize": True,
+    }
+    assert generator.check_generated() == 0
