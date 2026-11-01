@@ -1110,6 +1110,46 @@ class TestProviderReport:
         assert json.loads(out.read_text())["exit_reason"] == "partial"
         assert capsys.readouterr().out
 
+    def test_report_cli_prefers_the_launched_target_over_the_state(
+        self, tmp_path: Path
+    ) -> None:
+        # The pulled state file can still describe the previous slice's target:
+        # reporting only that target made a 555000 slice look like it had been
+        # mis-planned as 540000 (2026-10-31 pool run).
+        state = {
+            "experiment_id": "exp-v9",
+            "target_steps": 540_000,
+            "completed_steps": 531_238,
+        }
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(json.dumps(state))
+        out = tmp_path / "provider_report.json"
+
+        code = main(
+            [
+                "report",
+                "--provider",
+                "kaggle",
+                "--job-id",
+                "run-1-slice-555000",
+                "--started-at",
+                "2026-10-31T20:00:00Z",
+                "--target",
+                "555000",
+                "--state-file",
+                str(state_file),
+                "--outcome",
+                "success",
+                "--out",
+                str(out),
+            ]
+        )
+
+        document = json.loads(out.read_text())
+        assert document["target_steps"] == 555_000
+        assert document["exit_reason"] == "partial"
+        assert code == 0
+
     def test_report_cli_writes_file_and_status_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture
     ) -> None:

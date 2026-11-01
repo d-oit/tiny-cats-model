@@ -201,3 +201,10 @@ fixed branch.
 Verification: `tests/test_train_kaggle.py`, `tests/test_pool_fallback_e2e.py`,
 `tests/test_hub_transport.py`, `tests/test_kaggle_provider.py`,
 `tests/test_providers.py` all pass; `ruff check` clean.
+
+## Provider report recorded the wrong slice target
+
+Slices 555000/570000 reported `target_steps: 540000` because `providers.py
+report` preferred the Hub state file's target (written by the earlier slice)
+over the `--target` that was launched. The report now records the launched
+target, so the artifact names the slice that actually ran.

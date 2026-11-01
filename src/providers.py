@@ -1071,11 +1071,11 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 def _cmd_report(args: argparse.Namespace) -> int:
     state = _read_state(args.state_file)
     completed = int(state["completed_steps"]) if state else None
-    target = (
-        int(state["target_steps"])
-        if state and state.get("target_steps")
-        else args.target
-    )
+    # Record the target that was actually launched. The state file's target
+    # belongs to whichever checkpoint the Hub held when it was written: a
+    # 2026-10-31 slice with matrix target 555000 reported 540000 because the
+    # pulled state still carried the previous slice's target.
+    target = args.target
     # Strictly boolean, mirroring verify_checkpoint: a stringified "false" is
     # truthy in Python, so a report must not coerce a malformed flag into a
     # converged run and relabel a partial slice as completed.
