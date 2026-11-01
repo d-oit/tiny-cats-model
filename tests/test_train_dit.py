@@ -445,12 +445,13 @@ class TestModalImageShipsAllLocalModules:
     image, which broke container startup.
     """
 
-    def test_every_transitive_local_import_is_copied(self) -> None:
+    @pytest.mark.parametrize("app_module", ["train_dit.py", "train.py"])
+    def test_every_transitive_local_import_is_copied(self, app_module: str) -> None:
         import ast
         import re
 
         src_dir = Path(__file__).parent.parent / "src"
-        source = (src_dir / "train_dit.py").read_text()
+        source = (src_dir / app_module).read_text()
 
         image_modules = set(
             re.findall(r'add_local_file\("src/([A-Za-z0-9_]+)\.py"', source)
@@ -487,7 +488,7 @@ class TestModalImageShipsAllLocalModules:
 
         missing = sorted(seen - image_modules)
         assert not missing, (
-            "Modal image is missing local modules that are imported at runtime; "
-            "containers would fail to start with ModuleNotFoundError: "
-            f"{missing}"
+            f"{app_module} Modal image is missing local modules that are "
+            "imported at runtime; containers would fail to start with "
+            f"ModuleNotFoundError: {missing}"
         )
