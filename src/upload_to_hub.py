@@ -523,8 +523,8 @@ def upload_to_hub(
         if revision:
             logger.info(
                 "Pin the browser to this immutable revision with: "
-                "python scripts/generate_frontend_metadata.py "
-                f"--revision {revision} --verify-hub"
+                "python scripts/promote_frontend_release.py "
+                f"--revision {revision}"
             )
 
     return {

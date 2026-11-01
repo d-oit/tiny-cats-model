@@ -652,8 +652,8 @@ def upload_to_huggingface(
             if revision:
                 logger.info(
                     "Promote this immutable revision: python "
-                    "scripts/generate_frontend_metadata.py "
-                    f"--revision {revision} --verify-hub"
+                    "scripts/promote_frontend_release.py "
+                    f"--revision {revision}"
                 )
         except Exception as e:
             logger.error(f"❌ Upload failed after retries: {e}")

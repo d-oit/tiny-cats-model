@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import generate_frontend_metadata as generator  # noqa: E402
+import promote_frontend_release as promoter  # noqa: E402
 
 from model_release import (  # noqa: E402
     HUB_REVISION,
@@ -491,3 +492,58 @@ def test_committed_frontend_manifest_matches_bundled_artifacts() -> None:
         "requireSize": True,
     }
     assert generator.check_generated() == 0
+
+
+def test_promote_release_resolves_hub_revision_and_verifies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: list[list[str]] = []
+    monkeypatch.setattr(promoter, "resolve_hub_revision", lambda repo, token: REVISION)
+    monkeypatch.setattr(
+        promoter.generator, "main", lambda argv: captured.append(list(argv)) or 0
+    )
+
+    package = tmp_path / "manifest.json"
+    assert (
+        promoter.main(
+            [
+                "--artifact-dir",
+                str(tmp_path),
+                "--package-manifest",
+                str(package),
+                "--history",
+                str(tmp_path / "modelReleases.json"),
+            ]
+        )
+        == 0
+    )
+    argv = captured[0]
+    assert argv[argv.index("--revision") + 1] == REVISION
+    assert argv[argv.index("--package-manifest") + 1] == str(package)
+    assert argv[argv.index("--history") + 1] == str(tmp_path / "modelReleases.json")
+    assert "--no-verify-hub" not in argv
+
+
+def test_promote_release_accepts_explicit_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[list[str]] = []
+
+    def fail_resolve(*args: object, **kwargs: object) -> str:
+        raise AssertionError("explicit --revision must not query the Hub")
+
+    monkeypatch.setattr(promoter, "resolve_hub_revision", fail_resolve)
+    monkeypatch.setattr(
+        promoter.generator, "main", lambda argv: captured.append(list(argv)) or 0
+    )
+    assert promoter.main(["--revision", REVISION, "--no-verify-hub"]) == 0
+    assert captured[0][captured[0].index("--revision") + 1] == REVISION
+    assert "--no-verify-hub" in captured[0]
+
+
+def test_promote_release_rejects_mutable_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(promoter, "resolve_hub_revision", lambda repo, token: "main")
+    with pytest.raises(SystemExit, match="40-character"):
+        promoter.main([])

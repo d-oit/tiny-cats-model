@@ -69,6 +69,14 @@ A stale bundle is a hard error, never a silent downgrade.
    manifest is also compared against the bundled bytes, so a stale
    `frontend/public/models/` file cannot be promoted.
 
+   The same promotion can resolve the immutable revision for you (it reads
+   the Hub's current commit SHA after an upload, then verifies every byte):
+
+   ```bash
+   HF_TOKEN=... python scripts/promote_frontend_release.py \
+     --package-manifest outputs/artifacts/manifest.json
+   ```
+
    The release is appended to `frontend/src/generated/modelReleases.json`
    (revision, per-model digests/sizes, package manifest digest, timestamp) so
    model history is traceable independently of frontend releases.
