@@ -235,3 +235,16 @@ Modal command). That migration is still fingerprint-checked — the saved hash
 must equal the legacy fingerprint of the current data — so it accepts the same
 dataset rather than skipping verification. Once a v2 checkpoint lands, the flag
 is inert.
+
+## The legacy fingerprint is layout-specific
+
+Run 41341376287 did pass `--allow-legacy-dataset-hash` (confirmed in the kernel
+config) but the gate still rejected the resume: the checkpoint's
+`path-size-v1` identity was computed on the Modal volume layout, and Kaggle's
+downloaded layout fingerprints differently, so the legacy comparison cannot
+match across providers.
+
+The documented one-off override is `--allow-experiment-mismatch`, which the
+pool workflow already forwards from its `allow_experiment_mismatch` input; the
+migration slice is dispatched with it. Once that slice pushes a v2
+(content-hash) checkpoint, every later slice resumes without an override.
