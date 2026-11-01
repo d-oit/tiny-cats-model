@@ -260,7 +260,24 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 8. GPU Pool Fallback Chain Simulation
+# 8. Frontend model metadata integrity (issue #204)
+# ─────────────────────────────────────────────────────────────────────────────
+log_info "Checking frontend model manifest against bundled artifacts..."
+
+if METADATA_OUTPUT=$(python scripts/generate_frontend_metadata.py --check 2>&1); then
+    log_success "Frontend model metadata is up to date"
+else
+    log_error "Frontend model metadata is stale"
+    echo "$METADATA_OUTPUT" | tail -20
+    echo "   Regenerate: python scripts/generate_frontend_metadata.py"
+    FAILURES=$((FAILURES + 1))
+    if [[ "$STRICT" == true ]]; then
+        exit 1
+    fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 9. GPU Pool Fallback Chain Simulation
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Running GPU pool fallback chain simulation..."
 
@@ -276,7 +293,7 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 9. End-to-End Training Pipeline Verification (issue #163 WP8)
+# 10. End-to-End Training Pipeline Verification (issue #163 WP8)
 # ─────────────────────────────────────────────────────────────────────────────
 log_info "Verifying the end-to-end training pipeline (smoke/resume/export/package)..."
 

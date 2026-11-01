@@ -82,7 +82,8 @@ A stale bundle is a hard error, never a silent downgrade.
 
    `--check` re-hashes the bundled artifacts against the committed manifest,
    verifies the contract matches `src/model_contract.py`, and fails on drift.
-   CI runs it on every PR (see `.github/workflows/ci.yml`).
+   `scripts/quality-gate.sh` runs the same check, so run it before
+   committing.
 
 ## Rolling back
 

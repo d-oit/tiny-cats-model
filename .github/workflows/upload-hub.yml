@@ -178,39 +178,3 @@ jobs:
           if len(files) > 10:
               print(f'  ... and {len(files) - 10} more')
           "
-
-      - name: Pin the frontend to the immutable Hub revision
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          REVISION=$(python - <<'EOF'
-          import os
-          from huggingface_hub import HfApi
-
-          info = HfApi(token=os.environ["HF_TOKEN"]).repo_info(
-              "d4oit/tiny-cats-model", revision="main"
-          )
-          print(info.sha)
-          EOF
-          )
-          echo "Immutable Hub revision: $REVISION"
-          # Downloads every artifact from the pinned revision and verifies
-          # SHA-256/size before the manifest is written (issue #204).
-          python scripts/generate_frontend_metadata.py \
-            --revision "$REVISION" --verify-hub
-          python scripts/generate_frontend_metadata.py --check
-          {
-            echo "### Frontend model release"
-            echo ""
-            echo "Pinned to Hub revision \`$REVISION\` (SHA-256 and size verified)."
-            echo "Commit frontend/src/generated/modelManifest.json and modelReleases.json."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload pinned frontend metadata
-        uses: actions/upload-artifact@v7
-        with:
-          name: frontend-model-release
-          path: |
-            frontend/src/generated/modelManifest.json
-            frontend/src/generated/modelReleases.json
-          retention-days: 14

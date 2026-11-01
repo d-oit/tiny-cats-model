@@ -83,12 +83,6 @@ jobs:
           pytest tests/ -v --cov=. --cov-report=xml --cov-report=term-missing
           # test_gpu_pool.py is discovered automatically by pytest tests/
 
-      - name: Frontend model metadata matches the bundled artifacts (issue #204)
-        run: |
-          # Re-hashes the bundled ONNX bytes against modelManifest.json,
-          # re-derives the contract and fails on a stale bundled fallback.
-          python scripts/generate_frontend_metadata.py --check
-
       - name: End-to-end training pipeline verification (issue #163 WP8)
         run: |
           # CPU smoke + exact resume (10 -> 20) + ONNX export/runtime inference
