@@ -112,6 +112,28 @@ class TestPackageFinalArtifacts:
         kwargs.update(overrides)
         return package_final_artifacts(outputs, **kwargs)
 
+    def test_package_includes_classifier_onnx_for_browser_release(
+        self, ready_outputs: Path
+    ) -> None:
+        classifier = ready_outputs / "export/cats_classifier.onnx"
+        classifier.write_bytes(b"classifier-onnx")
+        quantized = ready_outputs / "export/cats_quantized.onnx"
+        quantized.write_bytes(b"classifier-quantized")
+
+        manifest = self._package(
+            ready_outputs,
+            classifier_onnx=classifier,
+            classifier_quantized=quantized,
+        )
+
+        packaged = ready_outputs / "artifacts/classifier"
+        assert (packaged / "model.onnx").read_bytes() == b"classifier-onnx"
+        assert (
+            packaged / "model_quantized.onnx"
+        ).read_bytes() == b"classifier-quantized"
+        paths = {entry["path"] for entry in manifest["files"]}
+        assert str(packaged / "model_quantized.onnx") in paths
+
     def test_package_layout_and_manifest(self, ready_outputs: Path) -> None:
         manifest = self._package(ready_outputs)
 
