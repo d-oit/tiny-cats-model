@@ -82,7 +82,7 @@ A stale bundle is a hard error, never a silent downgrade.
    model history is traceable independently of frontend releases.
 
 4. **Commit the artifacts, contract, manifest and release history together**
-   and let CI prove they are consistent:
+   and prove they are consistent:
 
    ```bash
    python scripts/generate_frontend_metadata.py --check
