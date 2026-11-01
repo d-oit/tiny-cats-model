@@ -367,6 +367,14 @@ def check_generated(
     """Verify committed generated metadata still matches the artifacts."""
     manifest_path = manifest_path or MANIFEST_PATH
     contract_path = contract_path or CONTRACT_PATH
+    try:
+        import onnx  # noqa: F401
+    except ImportError:
+        print(
+            "STALE: onnx is required to verify the generated ONNX metadata "
+            "(pip install onnx)"
+        )
+        return 1
     for path in (contract_path, manifest_path):
         if not path.exists():
             print(f"STALE: {path} is missing")
