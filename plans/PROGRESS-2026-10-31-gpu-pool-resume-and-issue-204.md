@@ -175,3 +175,29 @@ confirmation therefore takes hours (download + training), not minutes.
   variable only if a non-default kernel name is wanted; it is now optional.
 - Pin the production manifest (`--revision <40-hex>`) as part of the next model
   release so remote artifacts are traceable independently of frontend builds.
+
+## Live run 41240500640 — two post-launch blockers found and fixed
+
+The Kaggle adapter now launches, but the first real slices exposed defects that
+no dry run could reach:
+
+1. **Modal containers crashed at startup** —
+   `ModuleNotFoundError: No module named 'safe_checkpoint'` (slices 555000 and
+   570000). The image mounts `train_dit.py`'s local siblings by hand and this
+   one was missing, so every Modal slice failed after launch and burned its
+   window. Fixed by adding `src/safe_checkpoint.py` to the image, plus a
+   regression test that every local module `train_dit` imports is mounted.
+2. **Kaggle resumed from the stale flat checkpoint** — the slice pulled
+   `checkpoints/pool/dit_model_ema.pt` (60,000 steps) instead of the canonical
+   `latest` snapshot (531,238), trained 60k→87.5k, then the stale-push guard
+   correctly refused to overwrite 531,238. `pull_checkpoint_from_hub` now
+   receives `experiment_id`, so `--hub-resume` resolves the canonical pointer.
+   Fixing this is what makes slices after the first actually advance.
+
+Run 41240500640 was cancelled (its remaining slices could only repeat the
+Modal startup crash), and a verification slice was re-dispatched against the
+fixed branch.
+
+Verification: `tests/test_train_kaggle.py`, `tests/test_pool_fallback_e2e.py`,
+`tests/test_hub_transport.py`, `tests/test_kaggle_provider.py`,
+`tests/test_providers.py` all pass; `ruff check` clean.

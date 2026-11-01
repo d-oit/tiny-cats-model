@@ -423,6 +423,33 @@ def push_progress_backstop(
         logger.info(f"Backstop push complete at step {completed:,}")
 
 
+def pull_resume_checkpoint(
+    *,
+    hub_repo: str,
+    checkpoint_dir: Path,
+    experiment_id: str,
+    token: str | None = None,
+) -> Path | None:
+    """Pull the newest committed snapshot for a campaign slice.
+
+    Resolves the canonical ``latest`` pointer (issue #163 WP3) instead of the
+    legacy flat ``pool/dit_model_ema.pt`` file. That flat file is a pre-WP3
+    leftover: resuming a 2026-10-31 Kaggle slice from it replayed steps
+    60k->87.5k while the Hub already held 531,238, so the stale-push guard
+    discarded the whole session.
+    """
+    from gpu_pool import pull_checkpoint_from_hub
+
+    pulled = pull_checkpoint_from_hub(
+        hub_repo=hub_repo,
+        checkpoint_name="dit_model_ema.pt",
+        output_dir=str(checkpoint_dir),
+        token=token,
+        experiment_id=experiment_id,
+    )
+    return Path(pulled) if pulled else None
+
+
 def main() -> int:
     """Main entry point for Kaggle training."""
     args = parse_args()
@@ -453,12 +480,10 @@ def main() -> int:
     # Sync-only mode
     if args.sync_only:
         logger.info("Sync-only mode — pulling checkpoint from Hub")
-        from gpu_pool import pull_checkpoint_from_hub
-
-        pulled = pull_checkpoint_from_hub(
+        pulled = pull_resume_checkpoint(
             hub_repo=args.hub_repo,
-            checkpoint_name="dit_model_ema.pt",
-            output_dir=str(checkpoint_dir),
+            checkpoint_dir=checkpoint_dir,
+            experiment_id=args.experiment_id,
             token=args.hub_token,
         )
         if pulled:
@@ -475,12 +500,10 @@ def main() -> int:
     # Pull checkpoint from Hub for resume
     resume_from: str | None = None
     if args.hub_resume:
-        from gpu_pool import pull_checkpoint_from_hub
-
-        pulled = pull_checkpoint_from_hub(
+        pulled = pull_resume_checkpoint(
             hub_repo=args.hub_repo,
-            checkpoint_name="dit_model_ema.pt",
-            output_dir=str(checkpoint_dir),
+            checkpoint_dir=checkpoint_dir,
+            experiment_id=args.experiment_id,
             token=args.hub_token,
         )
         if pulled:

@@ -924,6 +924,7 @@ image = (
         )
         .add_local_file("src/train_dit.py", "/app/train_dit.py")
         .add_local_file("src/training_state.py", "/app/training_state.py")
+        .add_local_file("src/safe_checkpoint.py", "/app/safe_checkpoint.py")
         .add_local_file("src/artifacts.py", "/app/artifacts.py")
         .add_local_file("src/dit.py", "/app/dit.py")
         .add_local_file("src/flow_matching.py", "/app/flow_matching.py")

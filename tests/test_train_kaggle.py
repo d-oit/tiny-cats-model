@@ -89,5 +89,31 @@ def test_missing_state_is_not_fatal(tmp_path: Path, monkeypatch) -> None:
     )
 
 
+def test_hub_resume_uses_the_canonical_snapshot(tmp_path: Path, monkeypatch) -> None:
+    calls: list[dict] = []
+
+    import gpu_pool
+
+    monkeypatch.setattr(
+        gpu_pool,
+        "pull_checkpoint_from_hub",
+        lambda **kwargs: calls.append(kwargs) or None,
+    )
+
+    pulled = train_kaggle.pull_resume_checkpoint(
+        hub_repo="d-oit/tiny-cats-model",
+        checkpoint_dir=tmp_path,
+        experiment_id="dit-breed-conditioned-v4",
+    )
+
+    assert pulled is None
+    assert len(calls) == 1
+    # Resolving the canonical pointer keeps a slice from resuming a stale
+    # pre-WP3 flat file (60k) instead of the latest snapshot (531k).
+    assert calls[0]["experiment_id"] == "dit-breed-conditioned-v4"
+    assert calls[0]["checkpoint_name"] == "dit_model_ema.pt"
+    assert calls[0]["output_dir"] == str(tmp_path)
+
+
 def pytest_fail() -> bool:  # pragma: no cover - only reached on regression
     raise AssertionError("no push expected without a training state")

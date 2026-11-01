@@ -13,6 +13,7 @@ generated ``kernel-metadata.json``.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -176,6 +177,22 @@ def test_train_dit_imports_without_the_modal_sdk() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "ok" in result.stdout
+
+
+def test_modal_image_mounts_every_local_module_train_dit_imports() -> None:
+    """A missing mount fails inside the container, after the slice launched.
+
+    The 2026-10-31 pool run burned two 6h Modal slices on
+    ``ModuleNotFoundError: No module named 'safe_checkpoint'`` because the
+    image mounted train_dit's siblings by hand and this one was absent.
+    """
+    root = Path(__file__).parent.parent
+    source = (root / "src" / "train_dit.py").read_text()
+    imported = set(re.findall(r"^from ([a-z_]+) import", source, re.MULTILINE))
+    local = {name for name in imported if (root / "src" / f"{name}.py").exists()}
+    mounted = set(re.findall(r'add_local_file\("src/([a-z_]+)\.py"', source))
+    missing = sorted(local - mounted)
+    assert not missing, f"Modal image is missing local modules: {missing}"
 
 
 def test_workflow_surfaces_launch_failures() -> None:
