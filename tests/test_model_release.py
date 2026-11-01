@@ -120,12 +120,13 @@ def test_read_package_manifest_validates_records(tmp_path: Path) -> None:
     )
     assert read_package_manifest(good)["files"][0]["path"] == "a.onnx"
 
-    for document in (
+    invalid_documents: list[dict[str, object]] = [
         {"files": [{"path": "a.onnx"}]},
         {"files": [{"path": "a.onnx", "sha256": "short", "bytes": 1}]},
         {"files": [{"path": "a.onnx", "sha256": "0" * 64, "bytes": 0}]},
         {"unexpected": []},
-    ):
+    ]
+    for document in invalid_documents:
         path = tmp_path / "bad.json"
         path.write_text(json.dumps(document))
         with pytest.raises(ReleaseError):
