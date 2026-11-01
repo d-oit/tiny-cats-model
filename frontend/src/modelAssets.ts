@@ -45,6 +45,7 @@ export interface ModelAsset {
   hubRevision: string | null;
   sha256: string;
   size: number;
+  contractHash: string;
   contract: ModelContract;
   onnx?: {
     inputs: Array<{ name: string; dtype: string; shape: Array<number | string | null> }>;
@@ -128,6 +129,9 @@ export function validateModelManifest(manifest: ModelManifest): ModelManifest {
     }
     if (!SHA256_HEX.test(asset.sha256 ?? "")) {
       throw new Error(`Model manifest entry ${key} has no valid SHA-256 digest`);
+    }
+    if (!SHA256_HEX.test(asset.contractHash ?? "")) {
+      throw new Error(`Model manifest entry ${key} has no valid contract hash`);
     }
     if (!Number.isInteger(asset.size) || asset.size <= 0) {
       throw new Error(`Model manifest entry ${key} has no valid byte size`);
