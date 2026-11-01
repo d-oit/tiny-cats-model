@@ -14,6 +14,9 @@ locally):
         model.onnx
         generator_quantized.onnx
     artifacts/
+        classifier/                    # optional (browser release, issue #204)
+            model.onnx
+            model_quantized.onnx
         generator/
             model.pt
             model_ema.pt
@@ -165,6 +168,8 @@ def package_final_artifacts(
     samples_dir: str | Path | None = None,
     onnx: str | Path | None = None,
     quantized: str | Path | None = None,
+    classifier_onnx: str | Path | None = None,
+    classifier_quantized: str | Path | None = None,
     evaluation_report: str | Path | None = None,
     benchmark_report: str | Path | None = None,
     require_completed: int | None = None,
@@ -223,6 +228,21 @@ def package_final_artifacts(
             )
 
     files: list[dict[str, Any]] = []
+
+    # artifacts/classifier/ (optional; the browser release bundles both models)
+    classifier_dir = artifacts / "classifier"
+    classifier_model = Path(classifier_onnx) if classifier_onnx else None
+    if classifier_model is not None and classifier_model.exists():
+        files.append(_copy_into(classifier_model, classifier_dir / "model.onnx"))
+    classifier_quantized_path = (
+        Path(classifier_quantized) if classifier_quantized else None
+    )
+    if classifier_quantized_path is not None and classifier_quantized_path.exists():
+        files.append(
+            _copy_into(
+                classifier_quantized_path, classifier_dir / "model_quantized.onnx"
+            )
+        )
 
     # artifacts/generator/
     generator_dir = artifacts / "generator"

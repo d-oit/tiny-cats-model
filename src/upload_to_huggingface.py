@@ -50,6 +50,7 @@ from auth_utils import (
     require_hf_token,
     setup_auth_logging,
 )
+from model_release import ReleaseError, immutable_commit_sha
 from retry_utils import upload_with_retry
 
 
@@ -636,10 +637,24 @@ def upload_to_huggingface(
             )
 
         try:
-            upload_with_retry(
+            commit = upload_with_retry(
                 upload_folder_func, max_retries=3, initial_delay=2.0, logger=logger
             )
             logger.info(f"✅ Successfully uploaded to https://huggingface.co/{repo_id}")
+            try:
+                revision = immutable_commit_sha(commit)
+            except ReleaseError:
+                revision = None
+                logger.warning(
+                    "Upload result carried no immutable commit SHA; the browser "
+                    "release cannot be pinned from this result."
+                )
+            if revision:
+                logger.info(
+                    "Promote this immutable revision: python "
+                    "scripts/generate_frontend_metadata.py "
+                    f"--revision {revision} --verify-hub"
+                )
         except Exception as e:
             logger.error(f"❌ Upload failed after retries: {e}")
             raise
@@ -647,6 +662,7 @@ def upload_to_huggingface(
         return {
             "repo_id": repo_id,
             "url": f"https://huggingface.co/{repo_id}",
+            "revision": revision,
             "files_uploaded": [
                 "README.md",
                 "classifier/model.pt" if classifier_path else None,

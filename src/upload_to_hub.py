@@ -27,6 +27,7 @@ from typing import Any
 
 import torch
 
+from model_release import ReleaseError, immutable_commit_sha
 from safe_checkpoint import load_torch_checkpoint
 
 # Optional imports (handle gracefully if not installed)
@@ -507,14 +508,30 @@ def upload_to_hub(
     )
 
     url = f"https://huggingface.co/{repo_id}"
+    try:
+        revision = immutable_commit_sha(result)
+    except ReleaseError:
+        revision = None
+        if logger:
+            logger.warning(
+                "Upload result carried no immutable commit SHA; the release "
+                "could not be pinned. Re-run with huggingface_hub>=0.23."
+            )
 
     if logger:
         logger.info(f"Upload complete: {url}")
+        if revision:
+            logger.info(
+                "Pin the browser to this immutable revision with: "
+                "python scripts/generate_frontend_metadata.py "
+                f"--revision {revision} --verify-hub"
+            )
 
     return {
         "status": "success",
         "url": url,
         "repo_id": repo_id,
+        "revision": revision,
         "commit_url": result.commit_url if hasattr(result, "commit_url") else None,
     }
 

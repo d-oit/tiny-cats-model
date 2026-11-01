@@ -84,9 +84,34 @@
         "task": "binary_cat_classification"
       },
       "contractHash": "1268027b9300cae6158dc6ba118e2ee4c8869ee5638ce290637c0eb637d7c9a0",
-      "hubPath": "cats_quantized.onnx",
+      "hubPath": "classifier/model_quantized.onnx",
       "hubRevision": null,
       "localPath": "models/cats_quantized.onnx",
+      "onnx": {
+        "inputs": [
+          {
+            "dtype": "float",
+            "name": "input",
+            "shape": [
+              "batch_size",
+              3,
+              224,
+              224
+            ]
+          }
+        ],
+        "opset": 18,
+        "outputs": [
+          {
+            "dtype": "float",
+            "name": "output",
+            "shape": [
+              "batch_size",
+              2
+            ]
+          }
+        ]
+      },
       "sha256": "6fa0ca5d0242d8ec1532811db2183f208118b695a161567f428df51e5f977df3",
       "size": 11232526
     },
@@ -194,9 +219,50 @@
         "unconditional_index": 13
       },
       "contractHash": "98def2aca471a2b5860c00b8b553936fcee633b361ff1b67f168e5e798ace82e",
-      "hubPath": "generator_quantized.onnx",
+      "hubPath": "generator/model_quantized.onnx",
       "hubRevision": null,
       "localPath": "models/generator_quantized.onnx",
+      "onnx": {
+        "inputs": [
+          {
+            "dtype": "float",
+            "name": "noise",
+            "shape": [
+              "batch_size",
+              3,
+              128,
+              128
+            ]
+          },
+          {
+            "dtype": "float",
+            "name": "timestep",
+            "shape": [
+              "batch_size"
+            ]
+          },
+          {
+            "dtype": "int64",
+            "name": "breed",
+            "shape": [
+              "batch_size"
+            ]
+          }
+        ],
+        "opset": 17,
+        "outputs": [
+          {
+            "dtype": "float",
+            "name": "velocity",
+            "shape": [
+              "batch_size",
+              3,
+              128,
+              128
+            ]
+          }
+        ]
+      },
       "sha256": "9bc1ec5f9409dab23d8284bbc731d3102821769a9a2347659c9906331fe6ef5d",
       "size": 33784433
     }
