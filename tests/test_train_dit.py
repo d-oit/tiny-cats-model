@@ -432,3 +432,63 @@ class TestHeldOutLoss:
         )
 
         assert ema_loss is None
+
+
+class TestModalImageShipsAllLocalModules:
+    """Guard against containers that fail to start with ModuleNotFoundError.
+
+    The Modal image in ``train_dit`` copies each local module into ``/app`` via
+    ``add_local_file``. Any module imported (directly or transitively) by those
+    files must also be copied, otherwise importing ``train_dit`` inside the
+    container raises ``ModuleNotFoundError`` and every ``DiTTrainer`` container
+    fails to start. Issues #195-#207 added such imports without updating the
+    image, which broke container startup.
+    """
+
+    @pytest.mark.parametrize("app_module", ["train_dit.py", "train.py"])
+    def test_every_transitive_local_import_is_copied(self, app_module: str) -> None:
+        import ast
+        import re
+
+        src_dir = Path(__file__).parent.parent / "src"
+        source = (src_dir / app_module).read_text()
+
+        image_modules = set(
+            re.findall(r'add_local_file\("src/([A-Za-z0-9_]+)\.py"', source)
+        )
+        assert image_modules, "could not parse add_local_file entries"
+
+        local_names = {p.stem for p in src_dir.glob("*.py")}
+
+        def local_imports(module: str) -> set[str]:
+            tree = ast.parse((src_dir / f"{module}.py").read_text())
+            found: set[str] = set()
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module
+                    and node.module.split(".")[0] in local_names
+                ):
+                    found.add(node.module.split(".")[0])
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        root = alias.name.split(".")[0]
+                        if root in local_names:
+                            found.add(root)
+            return found
+
+        seen: set[str] = set()
+        stack = list(image_modules)
+        while stack:
+            module = stack.pop()
+            if module in seen:
+                continue
+            seen.add(module)
+            stack.extend(dep for dep in local_imports(module) if dep not in seen)
+
+        missing = sorted(seen - image_modules)
+        assert not missing, (
+            f"{app_module} Modal image is missing local modules that are "
+            "imported at runtime; containers would fail to start with "
+            f"ModuleNotFoundError: {missing}"
+        )
