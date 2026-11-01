@@ -888,6 +888,15 @@ image = (
     .add_local_file("src/auth_utils.py", "/app/auth_utils.py")
     .add_local_file("src/retry_utils.py", "/app/retry_utils.py")
     .add_local_file("src/experiment_tracker.py", "/app/experiment_tracker.py")
+    # Local modules imported (directly or transitively) at import time by the
+    # files above. They must ship in /app or the container fails to start with
+    # ModuleNotFoundError (issues #195-#207 added safe_checkpoint /
+    # dataset_manifest / model_contract / preprocessing / splits).
+    .add_local_file("src/safe_checkpoint.py", "/app/safe_checkpoint.py")
+    .add_local_file("src/model_contract.py", "/app/model_contract.py")
+    .add_local_file("src/dataset_manifest.py", "/app/dataset_manifest.py")
+    .add_local_file("src/preprocessing.py", "/app/preprocessing.py")
+    .add_local_file("src/splits.py", "/app/splits.py")
     .add_local_file("data/download.py", "/app/data/download.py")
     .add_local_file("data/download.sh", "/app/data/download.sh")
 )
