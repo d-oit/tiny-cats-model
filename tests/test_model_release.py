@@ -498,10 +498,16 @@ def test_promote_release_resolves_hub_revision_and_verifies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     captured: list[list[str]] = []
-    monkeypatch.setattr(promoter, "resolve_hub_revision", lambda repo, token: REVISION)
-    monkeypatch.setattr(
-        promoter.generator, "main", lambda argv: captured.append(list(argv)) or 0
-    )
+
+    def fake_resolve(repo: str, token: str | None) -> str:
+        return REVISION
+
+    def fake_main(argv: list[str]) -> int:
+        captured.append(list(argv))
+        return 0
+
+    monkeypatch.setattr(promoter, "resolve_hub_revision", fake_resolve)
+    monkeypatch.setattr(promoter.generator, "main", fake_main)
 
     package = tmp_path / "manifest.json"
     assert (
@@ -532,10 +538,12 @@ def test_promote_release_accepts_explicit_revision(
     def fail_resolve(*args: object, **kwargs: object) -> str:
         raise AssertionError("explicit --revision must not query the Hub")
 
+    def fake_main(argv: list[str]) -> int:
+        captured.append(list(argv))
+        return 0
+
     monkeypatch.setattr(promoter, "resolve_hub_revision", fail_resolve)
-    monkeypatch.setattr(
-        promoter.generator, "main", lambda argv: captured.append(list(argv)) or 0
-    )
+    monkeypatch.setattr(promoter.generator, "main", fake_main)
     assert promoter.main(["--revision", REVISION, "--no-verify-hub"]) == 0
     assert captured[0][captured[0].index("--revision") + 1] == REVISION
     assert "--no-verify-hub" in captured[0]
