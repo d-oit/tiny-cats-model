@@ -355,6 +355,14 @@ def parse_args() -> argparse.Namespace:
         help="Resume despite a manifest mismatch (explicit migration only)",
     )
     parser.add_argument(
+        "--allow-legacy-dataset-hash",
+        action="store_true",
+        help=(
+            "Accept a pre-v2 dataset identity when the saved hash equals the "
+            "legacy fingerprint of the current data"
+        ),
+    )
+    parser.add_argument(
         "--force-download",
         action="store_true",
         help="Materialise the dataset with data/download.py even if a Kaggle dataset is mounted (fingerprint parity)",
@@ -568,6 +576,7 @@ def main() -> int:
             hub_repo=args.hub_repo,
             experiment_id=args.experiment_id,
             allow_experiment_mismatch=args.allow_experiment_mismatch,
+            allow_legacy_dataset_hash=args.allow_legacy_dataset_hash,
             seed=args.seed,
             resume=resume_from,
         )

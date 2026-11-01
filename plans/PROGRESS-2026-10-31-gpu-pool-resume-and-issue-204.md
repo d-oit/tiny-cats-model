@@ -222,3 +222,16 @@ keeping `weights_only=True`; the training-resume call site opts in, every
 inference and export path stays strict, and arbitrary pickles are still
 refused. New checkpoints already store the RNG state as plain lists, so this is
 a one-time migration concern for existing snapshots.
+
+## Pool resumes must accept the pre-v2 dataset identity
+
+The second Kaggle slice (run 41340317961) also stopped after 6 minutes: the
+531,238 checkpoint carries a legacy `path-size-v1` dataset identity while the
+current data hashes as `sha256-content-v2`, so the manifest gate rejected the
+resume (`dataset_hash_version: <missing>`).
+
+Pool launches now pass `--allow-legacy-dataset-hash` (Kaggle slice args and the
+Modal command). That migration is still fingerprint-checked — the saved hash
+must equal the legacy fingerprint of the current data — so it accepts the same
+dataset rather than skipping verification. Once a v2 checkpoint lands, the flag
+is inert.

@@ -438,6 +438,10 @@ def build_launch_command(
     # manifest differs (e.g. a stored warmup_steps). Never emitted by default.
     if allow_experiment_mismatch:
         command.append("--allow-experiment-mismatch")
+    # One-time legacy-identity migration (pre-v2 checkpoints): the trainer
+    # still verifies the legacy fingerprint of the current dataset, but without
+    # this every pool resume of the 531,238 snapshot is rejected.
+    command.append("--allow-legacy-dataset-hash")
     return command
 
 

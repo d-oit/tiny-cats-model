@@ -218,6 +218,12 @@ def build_slice_args(
         args.append("--no-hub-push")
     if allow_experiment_mismatch:
         args.append("--allow-experiment-mismatch")
+    # Pool slices always resume our own Hub checkpoint, and pre-v2 snapshots
+    # carry a legacy (path-size) dataset identity. The trainer still requires
+    # the saved hash to equal the legacy fingerprint of the current data, so
+    # this accepts only the same dataset — without it every slice resumed from
+    # the 531,238 snapshot died after 6 minutes (2026-11-01).
+    args.append("--allow-legacy-dataset-hash")
     if force_download:
         args.append("--force-download")
     return args

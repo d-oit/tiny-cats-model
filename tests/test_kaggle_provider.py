@@ -147,6 +147,9 @@ class TestSliceArgs:
         assert "--hub-push-interval 5000" in joined
         assert "--hub-resume" in args
         assert "--force-download" in args
+        # The 531,238 snapshot's legacy dataset identity must be accepted (and
+        # still fingerprint-checked) or every resumed slice fails in 6 minutes.
+        assert "--allow-legacy-dataset-hash" in args
 
     def test_optional_knobs_are_opt_in(self) -> None:
         args = build_slice_args(
