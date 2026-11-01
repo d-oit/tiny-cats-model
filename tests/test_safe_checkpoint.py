@@ -4,6 +4,7 @@ import hashlib
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 
@@ -52,6 +53,31 @@ def test_safe_dict_round_trip(tmp_path: Path) -> None:
     assert actual["epoch"] == expected["epoch"]
     assert actual["config"] == expected["config"]
     torch.testing.assert_close(actual["weight"], expected["weight"])
+
+
+def test_numpy_rng_bundle_needs_the_resume_opt_in(tmp_path: Path) -> None:
+    # A pre-WP1 checkpoint stores the numpy RNG state as a raw array, which is
+    # what blocked the 531,238 Hub snapshot from resuming on 2026-11-01.
+    checkpoint = tmp_path / "legacy_rng.pt"
+    rng = np.random.get_state(legacy=True)
+    torch.save({"rng_state": rng}, checkpoint)
+
+    with pytest.raises(UnsafeCheckpointError, match="requires unrestricted"):
+        load_torch_checkpoint(checkpoint)
+
+    loaded = load_torch_checkpoint(checkpoint, allow_numpy_globals=True)
+    assert loaded["rng_state"][0] == rng[0]
+    assert loaded["rng_state"][1].tolist() == rng[1].tolist()
+
+
+def test_numpy_opt_in_still_refuses_arbitrary_pickles(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "malicious_numpy_opt_in.pt"
+    marker = tmp_path / "marker"
+    torch.save(_Malicious(marker), checkpoint)
+
+    with pytest.raises(UnsafeCheckpointError):
+        load_torch_checkpoint(checkpoint, allow_numpy_globals=True)
+    assert not marker.exists()
 
 
 def test_sha256_verification_detects_mismatch(tmp_path: Path) -> None:

@@ -764,8 +764,15 @@ def load_checkpoint(
             signature = checkpoint_file.read(4)
         if not (signature.startswith(b"PK") or signature.startswith(b"\x80")):
             raise pickle.UnpicklingError("invalid checkpoint serialization header")
+        # Training resume is the trusted path: pre-WP1 checkpoints carry the
+        # numpy RNG state as a raw array, which weights_only refuses unless
+        # numpy's (code-free) reconstruction globals are allowed. The 531,238
+        # canonical Hub snapshot failed exactly this way on 2026-11-01.
         checkpoint = load_torch_checkpoint(
-            path, map_location="cpu", allow_unsafe_legacy=allow_unsafe_legacy
+            path,
+            map_location="cpu",
+            allow_unsafe_legacy=allow_unsafe_legacy,
+            allow_numpy_globals=True,
         )
     except UnsafeCheckpointError:
         raise

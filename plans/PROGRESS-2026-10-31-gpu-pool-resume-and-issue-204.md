@@ -208,3 +208,17 @@ Slices 555000/570000 reported `target_steps: 540000` because `providers.py
 report` preferred the Hub state file's target (written by the earlier slice)
 over the `--target` that was launched. The report now records the launched
 target, so the artifact names the slice that actually ran.
+
+## Resume of the canonical snapshot required a numpy allowlist
+
+The first Kaggle slice against the canonical snapshot (run 41338652199) failed
+in 6 minutes: `safe_checkpoint` refused `step-531238/dit_model_ema.pt` because
+its pre-WP1 RNG state is a raw numpy array and `weights_only=True` does not
+allow numpy's reconstruction globals by default.
+
+`safe_checkpoint.load_torch_checkpoint` gained `allow_numpy_globals`, which
+allowlists only numpy's array/dtype classes (they cannot execute code) while
+keeping `weights_only=True`; the training-resume call site opts in, every
+inference and export path stays strict, and arbitrary pickles are still
+refused. New checkpoints already store the RNG state as plain lists, so this is
+a one-time migration concern for existing snapshots.
