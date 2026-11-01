@@ -92,6 +92,7 @@ py-modules = [
   "kaggle_provider",
   "model",
   "model_contract",
+  "model_release",
   "optimize_onnx",
   "preprocessing",
   "provider_auto",
