@@ -74,20 +74,75 @@ def extract_zip(archive: Path, dest: Path) -> None:
         zf.extractall(dest)
 
 
+#: Oxford cat breeds, matched as ``<breed>_*.jpg`` filename prefixes.
+CAT_BREEDS: tuple[str, ...] = (
+    "Abyssinian",
+    "Bengal",
+    "Birman",
+    "Bombay",
+    "British_Shorthair",
+    "Egyptian_Mau",
+    "Maine_Coon",
+    "Persian",
+    "Ragdoll",
+    "Russian_Blue",
+    "Siamese",
+    "Sphynx",
+)
+
+
 def find_images_dir(root: Path) -> Path | None:
     """Locate the directory holding the pet JPEGs in an extracted archive.
 
-    The Oxford tarball uses ``images/``; the Zenodo mirror wraps the same files
-    in ``The Oxford-IIIT Pet/images/``. Prefer a directory named ``images`` and
-    otherwise take the directory with the most JPEGs.
+    Two layouts must work: the Oxford tarball puts every JPEG directly in
+    ``images/``, while the Zenodo mirror (the fallback when the Oxford host is
+    unreachable, which is the normal case on Kaggle) nests them by folder under
+    ``The Oxford-IIIT Pet/images/``. Counting only direct children picked a
+    single nested folder — roughly 200 images of one breed — so a Kaggle slice
+    silently trained on a different dataset than Modal (2026-11-02).
+
+    Prefer a directory named ``images``, then the directory holding the most
+    JPEGs *recursively*.
     """
     candidates = [
-        path for path in root.rglob("*") if path.is_dir() and any(path.glob("*.jpg"))
+        path for path in root.rglob("*") if path.is_dir() and any(path.rglob("*.jpg"))
     ]
+    if any(root.rglob("*.jpg")):
+        candidates.append(root)
     if not candidates:
         return None
     named = [path for path in candidates if path.name == "images"]
-    return max(named or candidates, key=lambda path: len(list(path.glob("*.jpg"))))
+    return max(named or candidates, key=lambda path: len(list(path.rglob("*.jpg"))))
+
+
+def copy_images(
+    images_dir: Path, cats_dir: Path, *, max_other: int = 5000
+) -> tuple[int, int]:
+    """Copy cat-breed and negative images into ``cat/`` and ``other/``.
+
+    Walks recursively so flat (Oxford tarball) and nested (Zenodo mirror)
+    layouts produce the identical 7,390-file dataset — and therefore the same
+    ``sha256-content-v2`` identity on every provider.
+
+    Returns:
+        ``(cat_count, other_count)``.
+    """
+    cat_dir = cats_dir / "cat"
+    other_dir = cats_dir / "other"
+    cat_dir.mkdir(parents=True, exist_ok=True)
+    other_dir.mkdir(parents=True, exist_ok=True)
+
+    cat_count = 0
+    other_count = 0
+    for img_path in sorted(images_dir.rglob("*.jpg")):
+        name = img_path.name
+        if any(name.startswith(f"{breed}_") for breed in CAT_BREEDS):
+            (cat_dir / name).write_bytes(img_path.read_bytes())
+            cat_count += 1
+        elif other_count < max_other:
+            (other_dir / name).write_bytes(img_path.read_bytes())
+            other_count += 1
+    return cat_count, other_count
 
 
 def download_images(tmp_path: Path) -> Path:
@@ -144,42 +199,8 @@ def main() -> None:
         # Download and extract images (mirror fallback, see PET_IMAGE_SOURCES)
         images_dir = download_images(tmp_path)
 
-        # Cat breeds (filenames start with capital letter)
-        cat_breeds = [
-            "Abyssinian",
-            "Bengal",
-            "Birman",
-            "Bombay",
-            "British_Shorthair",
-            "Egyptian_Mau",
-            "Maine_Coon",
-            "Persian",
-            "Ragdoll",
-            "Russian_Blue",
-            "Siamese",
-            "Sphynx",
-        ]
-
         print("==> Filtering cat breeds...", file=sys.stderr)
-
-        # Copy cat images
-        cat_count = 0
-        for breed in cat_breeds:
-            for img_path in images_dir.glob(f"{breed}_*.jpg"):
-                dest = cats_dir / "cat" / img_path.name
-                dest.write_bytes(img_path.read_bytes())
-                cat_count += 1
-
-        # Copy other (dog) images as negative samples
-        other_count = 0
-        max_other = 5000
-        for img_path in images_dir.glob("*.jpg"):
-            # Skip cat breeds
-            is_cat = any(img_path.name.startswith(breed) for breed in cat_breeds)
-            if not is_cat and other_count < max_other:
-                dest = cats_dir / "other" / img_path.name
-                dest.write_bytes(img_path.read_bytes())
-                other_count += 1
+        cat_count, other_count = copy_images(images_dir, cats_dir)
 
         print("\n==> Dataset ready:", file=sys.stderr)
         print(f"    cat/   : {cat_count} images", file=sys.stderr)

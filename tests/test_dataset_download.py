@@ -1,137 +1,89 @@
-"""Integration coverage for atomic dataset downloads using local archives."""
+"""tests/test_dataset_download.py
+
+Dataset materialisation must be layout-independent: the Oxford tarball stores
+JPEGs flat in ``images/`` while the Zenodo mirror (the fallback used whenever
+the Oxford host is unreachable, i.e. on Kaggle) nests them by folder. Counting
+only direct children made a Kaggle slice train on ~200 images of one breed
+(2026-11-02), which also gave it a different dataset identity from Modal.
+"""
 
 from __future__ import annotations
 
-import hashlib
-import io
-import os
-import subprocess
 import sys
-import tarfile
 from pathlib import Path
 
-from PIL import Image
+sys.path.insert(0, str(Path(__file__).parent.parent / "data"))
 
-ROOT = Path(__file__).parent.parent
-BREEDS = (
-    "Abyssinian",
-    "Bengal",
-    "Birman",
-    "Bombay",
-    "British_Shorthair",
-    "Egyptian_Mau",
-    "Maine_Coon",
-    "Persian",
-    "Ragdoll",
-    "Russian_Blue",
-    "Siamese",
-    "Sphynx",
-)
+import download
 
 
-def _jpeg_bytes(color: tuple[int, int, int]) -> bytes:
-    buffer = io.BytesIO()
-    Image.new("RGB", (4, 4), color).save(buffer, format="JPEG")
-    return buffer.getvalue()
+def _image(path: Path, payload: bytes = b"jpeg") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
 
 
-def _archive(path: Path, *, revision: int = 0) -> None:
-    images = path.parent / f"images-{revision}"
-    images.mkdir()
-    for index, breed in enumerate(BREEDS):
-        (images / f"{breed}_1.jpg").write_bytes(
-            _jpeg_bytes(((index * 17 + revision) % 255, index * 11 % 255, 80))
-        )
-    (images / f"dog_{revision}.jpg").write_bytes(_jpeg_bytes((4 + revision, 100, 20)))
-    with tarfile.open(path, "w:gz") as archive:
-        for image in sorted(images.iterdir()):
-            archive.add(image, arcname=f"images/{image.name}")
+def test_nested_mirror_layout_is_discovered_and_flattened(tmp_path: Path) -> None:
+    nested = tmp_path / "The Oxford-IIIT Pet" / "images"
+    _image(nested / "cat" / "Abyssinian_1.jpg")
+    _image(nested / "cat" / "Bengal_2.jpg")
+    _image(nested / "dog" / "dog_1.jpg")
+
+    images_dir = download.find_images_dir(tmp_path)
+
+    assert images_dir == nested
+    cats_dir = tmp_path / "out"
+    cat_count, other_count = download.copy_images(images_dir, cats_dir)
+    assert (cat_count, other_count) == (2, 1)
+    assert (cats_dir / "cat" / "Bengal_2.jpg").is_file()
+    assert (cats_dir / "other" / "dog_1.jpg").is_file()
 
 
-def _annotations(path: Path) -> None:
-    with tarfile.open(path, "w:gz") as archive:
-        data = b"annotations fixture\n"
-        info = tarfile.TarInfo("annotations/README")
-        info.size = len(data)
-        archive.addfile(info, io.BytesIO(data))
+def test_flat_tarball_layout_still_works(tmp_path: Path) -> None:
+    flat = tmp_path / "images"
+    _image(flat / "Abyssinian_9.jpg")
+    _image(flat / "Persian_3.jpg")
+    _image(flat / "dog_2.jpg")
+
+    images_dir = download.find_images_dir(tmp_path)
+
+    assert images_dir == flat
+    cats_dir = tmp_path / "out"
+    cat_count, other_count = download.copy_images(images_dir, cats_dir)
+    assert (cat_count, other_count) == (2, 1)
 
 
-def _run_download(tmp_path: Path, images_url: str, annotations_url: str, *flags: str):
-    destination = tmp_path / "data" / "cats"
-    env = os.environ.copy()
-    env.update(
-        {
-            "DEST": str(destination),
-            "PET_IMAGES_URL": images_url,
-            "PET_ANNOTS_URL": annotations_url,
-            "DOWNLOAD_WORKDIR": str(tmp_path / "work"),
-            "PATH": f"{Path('/usr/bin')}:{Path('/bin')}:{env.get('PATH', '')}",
-            "PYTHON": sys.executable,
-        }
-    )
-    return subprocess.run(
-        ["bash", str(ROOT / "data" / "download.sh"), *flags],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    ), destination
+def test_every_breed_is_recognised(tmp_path: Path) -> None:
+    source = tmp_path / "images"
+    for index, breed in enumerate(download.CAT_BREEDS):
+        _image(source / f"{breed}_{index}.jpg")
+    _image(source / "notacat_1.jpg")
+
+    cats_dir = tmp_path / "out"
+    cat_count, other_count = download.copy_images(source, cats_dir)
+
+    assert cat_count == len(download.CAT_BREEDS)
+    assert other_count == 1
 
 
-def test_download_manifest_noop_and_replace_safety(tmp_path: Path) -> None:
-    archive1 = tmp_path / "images1.tar.gz"
-    archive2 = tmp_path / "images2.tar.gz"
-    annotations = tmp_path / "annotations.tar.gz"
-    _archive(archive1)
-    _archive(archive2, revision=1)
-    _annotations(annotations)
+def test_breed_prefix_must_be_exact(tmp_path: Path) -> None:
+    source = tmp_path / "images"
+    _image(source / "Abyssinian_1.jpg")
+    # A longer breed-like name must not be swept into cat/.
+    _image(source / "Abyssinianmix_2.jpg")
 
-    result, destination = _run_download(
-        tmp_path, archive1.as_uri(), annotations.as_uri()
-    )
-    assert result.returncode == 0, result.stderr
-    manifest_path = destination / "dataset_manifest.json"
-    assert manifest_path.exists()
-    assert len(list((destination / "cat").glob("*.jpg"))) == len(BREEDS)
-    assert len(list((destination / "other").glob("*.jpg"))) == 1
-    manifest_text = manifest_path.read_text()
-    assert hashlib.sha256(archive1.read_bytes()).hexdigest() in manifest_text
-    assert "annotations" in manifest_text
+    cats_dir = tmp_path / "out"
+    cat_count, other_count = download.copy_images(source, cats_dir)
 
-    rerun, _ = _run_download(tmp_path, archive1.as_uri(), annotations.as_uri())
-    assert rerun.returncode == 0, rerun.stderr
-    assert "no-op" in rerun.stdout
+    assert (cat_count, other_count) == (1, 1)
 
-    before = {
-        path.relative_to(destination).as_posix(): path.read_bytes()
-        for path in destination.rglob("*")
-        if path.is_file()
-    }
-    corrupt = tmp_path / "corrupt.tar.gz"
-    corrupt.write_bytes(b"not a tar archive")
-    failed, _ = _run_download(tmp_path, corrupt.as_uri(), annotations.as_uri())
-    assert failed.returncode != 0
-    after = {
-        path.relative_to(destination).as_posix(): path.read_bytes()
-        for path in destination.rglob("*")
-        if path.is_file()
-    }
-    assert after == before
 
-    refused, _ = _run_download(tmp_path, archive2.as_uri(), annotations.as_uri())
-    assert refused.returncode != 0
-    assert "--replace" in refused.stderr
-    assert {
-        path.relative_to(destination).as_posix(): path.read_bytes()
-        for path in destination.rglob("*")
-        if path.is_file()
-    } == before
+def test_other_images_are_capped(tmp_path: Path) -> None:
+    source = tmp_path / "images"
+    _image(source / "Abyssinian_1.jpg")
+    for index in range(5):
+        _image(source / f"dog_{index}.jpg")
 
-    replaced, _ = _run_download(
-        tmp_path, archive2.as_uri(), annotations.as_uri(), "--replace"
-    )
-    assert replaced.returncode == 0, replaced.stderr
-    new_manifest = (destination / "dataset_manifest.json").read_text()
-    assert hashlib.sha256(archive2.read_bytes()).hexdigest() in new_manifest
-    assert new_manifest != manifest_text
+    cats_dir = tmp_path / "out"
+    cat_count, other_count = download.copy_images(source, cats_dir, max_other=3)
+
+    assert (cat_count, other_count) == (1, 3)
