@@ -4,7 +4,7 @@
 
 # Core ML dependencies
 torch==2.14.1
-torchvision==0.29.1
+torchvision==0.29.2
 
 # Image processing
 pillow==12.3.0
@@ -13,10 +13,10 @@ pillow==12.3.0
 tqdm==4.70.1
 
 # Modal SDK (for local development)
-modal==1.6.2
+modal==1.6.3
 
 # HuggingFace Hub integration (ADR-026)
-huggingface_hub==2.3.0
+huggingface_hub==2.4.0
 safetensors==0.8.0
 
 # Experiment tracking (ADR-027)
