@@ -34,8 +34,12 @@ REVISION = "a" * 40
 
 @pytest.fixture(autouse=True)
 def _no_onnx(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep the tests independent of an installed ONNX runtime."""
-    monkeypatch.setattr(metadata, "_onnx_io", lambda _path: None)
+    """Keep the tests independent of an installed ONNX runtime.
+
+    The generator delegates artifact metadata to ``model_manifest`` after the
+    #204 merge, so the optional ONNX summary is stubbed there.
+    """
+    monkeypatch.setattr("model_manifest._onnx_io", lambda _path: None)
 
 
 def _artifacts(
@@ -98,7 +102,7 @@ class TestImmutableRevisions:
     def test_mutable_or_malformed_revisions_are_rejected(
         self, tmp_path: Path, revision: str
     ) -> None:
-        with pytest.raises(SystemExit, match="40-hex"):
+        with pytest.raises(SystemExit, match="40-character"):
             metadata.build_manifest(_artifacts(tmp_path), revision)
 
     def test_full_commit_sha_is_pinned_everywhere(self, tmp_path: Path) -> None:
@@ -129,7 +133,9 @@ class TestVerifiedPackageSource:
             ],
         )
 
-        manifest = metadata.build_manifest(artifact_dir, None, package)
+        manifest = metadata.build_manifest(
+            artifact_dir, None, package_manifest_path=package
+        )
         assert manifest["models"]["generator"]["size"] == len(b"generator-bytes")
 
     def test_bytes_outside_the_verified_package_are_refused(
@@ -152,8 +158,8 @@ class TestVerifiedPackageSource:
             ],
         )
 
-        with pytest.raises(SystemExit, match="verified artifact package"):
-            metadata.build_manifest(artifact_dir, None, package)
+        with pytest.raises(SystemExit, match="Refusing stale artifact"):
+            metadata.build_manifest(artifact_dir, None, package_manifest_path=package)
 
     def test_unreadable_package_manifest_is_rejected(self, tmp_path: Path) -> None:
         artifact_dir = _artifacts(tmp_path)
@@ -161,7 +167,7 @@ class TestVerifiedPackageSource:
         broken.write_text("{not json")
 
         with pytest.raises(SystemExit, match="Cannot read artifact package"):
-            metadata.build_manifest(artifact_dir, None, broken)
+            metadata.build_manifest(artifact_dir, None, package_manifest_path=broken)
 
 
 class TestCheckMode:

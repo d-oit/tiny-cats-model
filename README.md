@@ -51,6 +51,7 @@ For the Gradio demo, install `pip install -e ".[demo]"` as well.
 
 - 📚 [Tutorial Notebooks](notebooks/README.md) - Interactive guides with Colab
 - 🤗 [HuggingFace Model](https://huggingface.co/d4oit/tiny-cats-model) - Download models
+- 🔐 [Model Release Runbook](docs/MODEL_RELEASE.md) - Immutable Hub pinning, SHA-256 verification and rollback
 - 📖 [Documentation](docs/) - Setup guides and ADRs
 - 🧪 [E2E Tests](tests/e2e/) - Playwright test suite
 

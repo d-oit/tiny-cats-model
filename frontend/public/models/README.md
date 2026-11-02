@@ -66,25 +66,34 @@ instead of bypassing the manifest with direct `fetch()` or
 
 ## Model Promotion and Rollback
 
+See [docs/MODEL_RELEASE.md](../../../docs/MODEL_RELEASE.md) for the full
+runbook. The short version:
+
 1. Place the release-ready classifier and generator artifacts in
-   `frontend/public/models/`; the manifest generator reads their bytes and
-   inspects ONNX graph metadata.
+   `frontend/public/models/`; source their digests and sizes from the verified
+   artifact package manifest (`artifacts/manifest.json`).
 2. Upload those exact files to the Hugging Face repository and record the
    resulting immutable commit SHA. Never use a branch name or tag as a
    revision.
-3. Generate and review the frontend contract and manifest:
+3. Generate the contract, manifest and release-history entry, verifying the
+   uploaded bytes:
 
    ```bash
-   python scripts/generate_frontend_metadata.py --revision <40-character-commit-sha>
-   python scripts/generate_frontend_metadata.py --revision <40-character-commit-sha> --check
+   python scripts/generate_frontend_metadata.py \
+     --package-manifest artifacts/manifest.json \
+     --revision <40-character-commit-sha> --verify-hub
+   python scripts/generate_frontend_metadata.py --check
    ```
 
-4. Commit the model files and both generated JSON files together. The generated
-   SHA-256 values must match the uploaded bytes; the frontend rejects mismatched
-   remote or bundled artifacts before inference.
-5. To roll back, restore the previous known-good model files and matching
-   `modelManifest.json` revision as one release, then run the generator with the
-   previous commit SHA and `--check`. Do not edit a SHA by hand.
+4. Commit the model files, both generated JSON files and
+   `modelReleases.json` together. The generated SHA-256 values must match the
+   uploaded bytes; the frontend rejects mismatched remote or bundled artifacts
+   before inference.
+5. To roll back, restore the previous known-good model files and run
+   `python scripts/generate_frontend_metadata.py --rollback <commit-sha>`
+   (or `--rollback` for the latest recorded release). Rollback fails if the
+   bundled bytes do not match the recorded release, so do not edit a SHA by
+   hand.
 
 When no immutable Hub revision is configured, the frontend performs no remote
 model request and uses only digest-verified bundled artifacts.

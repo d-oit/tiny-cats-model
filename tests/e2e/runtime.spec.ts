@@ -1,5 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { generateTestImage, testImages } from "./setup";
 
 const VALID_PNG = generateTestImage(1, 1);
@@ -222,6 +224,53 @@ test.describe("browser runtime contract", () => {
     });
     await page.goto("/tiny-cats-model/#/classify");
     await expect(page.getByRole("alert").filter({ hasText: "digest mismatch" })).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByTestId("classify-file-input")).toBeDisabled();
+  });
+
+  test("@runtime fetches only an immutable Hub revision and verifies its bytes", async ({
+    page,
+  }) => {
+    const revision = "a".repeat(40);
+    const modelBytes = fs.readFileSync(
+      path.join(__dirname, "..", "..", "frontend", "public", "models", "cats_quantized.onnx")
+    );
+    const hubRequests: string[] = [];
+    await page.context().route("https://huggingface.co/**", async (route) => {
+      hubRequests.push(route.request().url());
+      await route.fulfill({
+        status: 200,
+        contentType: "application/octet-stream",
+        body: modelBytes,
+        headers: { "access-control-allow-origin": "*" },
+      });
+    });
+    await page.addInitScript((sha256Revision) => {
+      window.__TINY_CATS_TEST_ASSETS__ = {
+        cats: { hubRevision: sha256Revision },
+      };
+    }, revision);
+
+    await page.goto("/tiny-cats-model/#/classify");
+    await expect(page.getByText(/Verified model · hub · WASM/)).toBeVisible({
+      timeout: 90_000,
+    });
+    expect(hubRequests.length).toBeGreaterThan(0);
+    for (const url of hubRequests) {
+      expect(url).toContain(`/resolve/${revision}/`);
+      expect(url).not.toContain("/resolve/main/");
+    }
+  });
+
+  test("@runtime rejects a stale bundled fallback whose size disagrees with the release", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      window.__TINY_CATS_TEST_ASSETS__ = { cats: { size: 1 } };
+    });
+    await page.goto("/tiny-cats-model/#/classify");
+    await expect(page.getByRole("alert").filter({ hasText: "size mismatch" })).toBeVisible({
       timeout: 60_000,
     });
     await expect(page.getByTestId("classify-file-input")).toBeDisabled();

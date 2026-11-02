@@ -215,6 +215,11 @@ pytest tests/ -v
 # GPU pool abstraction tests
 pytest tests/test_gpu_pool.py -v
 
+# Browser model manifest + release history: bundled artifacts, digests and
+# immutable Hub revision (issue #204)
+python scripts/generate_frontend_metadata.py --check
+pytest tests/test_model_release.py -v
+
 # Eval metric math (confusion matrix, P/R/F1, aggregate F1) + report regression
 # evaluation_report.json is the golden source; a retrain regenerating it
 # auto-refreshes the report-driven regression test (no constant edits).

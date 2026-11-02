@@ -432,9 +432,10 @@ image = (
         "onnx==1.17.0",
         "onnxruntime==1.20.0",
     )
-    # ADR-068: mount the whole package, not a hand-maintained whitelist. The
-    # previous list omitted safe_checkpoint/dataset_manifest and the classifier
-    # slice died inside the container on a missing module.
+    # ADR-068: mount the whole package, not a hand-maintained whitelist. Both
+    # sides of this merge proved the whitelist drifts: main added
+    # safe_checkpoint/model_contract/dataset_manifest/preprocessing/splits by
+    # hand, and this branch had already been broken by two of them.
     .add_local_dir("src", "/app", ignore=["__pycache__", "*.pyc"])
     .add_local_file("data/download.py", "/app/data/download.py")
     .add_local_file("data/download.sh", "/app/data/download.sh")
