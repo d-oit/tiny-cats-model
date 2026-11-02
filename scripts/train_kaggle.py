@@ -236,6 +236,11 @@ def prepare_kaggle_data(data_dir: str | Path, *, force_download: bool = False) -
         )
         if result.returncode == 0:
             logger.info("Dataset downloaded successfully")
+            # Surface the image counts: a silently small dataset (one nested
+            # breed folder, ~200 images) is indistinguishable from success
+            # otherwise, and it changes the checkpoint's dataset identity.
+            for line in (result.stderr or "").strip().splitlines()[-4:]:
+                logger.info(f"  {line.strip()}")
             return True
         else:
             logger.error(f"Download failed: {result.stderr[:500]}")
