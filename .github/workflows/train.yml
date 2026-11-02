@@ -328,6 +328,14 @@ jobs:
           # overwrites an existing secret.
           modal secret create --force huggingface-secret HF_TOKEN="$HF_TOKEN" \
             || echo "::warning::Failed to sync Modal secret 'huggingface-secret'"
+      - name: Record canonical pool pointer (before slice)
+        # The pointer is flipped last on every push, so it is the only
+        # truthful record of campaign progress (see the post-slice check below).
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          mkdir -p verify
+          python scripts/check_pool_pointer.py --record verify/pointer_before.json
       - name: Launch DiT slice (control plane)
         id: train
         run: |
@@ -392,6 +400,17 @@ jobs:
           if [ "$rc" = "3" ]; then
             echo "::warning::partial run (preempted/interrupted) — checkpoint is resumable, publication skipped"
           fi
+      - name: Verify canonical Hub pointer advanced
+        # A slice can exit 0, package artifacts and still leave the campaign at
+        # the previous snapshot (2026-11-02). Only the pointer proves progress.
+        if: steps.train.outcome == 'success' && inputs.push_to_hub
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python scripts/check_pool_pointer.py \
+            --record-file verify/pointer_before.json \
+            --expect-advanced \
+            --target ${{ inputs.steps }}
       - name: Write provider report
         if: always()
         run: |

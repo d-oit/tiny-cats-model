@@ -468,6 +468,21 @@ def _fetch_pool_pointer(
     return document if isinstance(document, dict) else None
 
 
+def fetch_pool_pointer(
+    hub_repo: str = "d4oit/tiny-cats-model",
+    experiment_id: str | None = None,
+    token: str | None = None,
+) -> dict[str, Any] | None:
+    """Return the canonical ``latest/manifest.json`` pointer, or None.
+
+    The pointer is flipped last on every push (ADR-064), so it is the only
+    truthful record of how far the campaign actually got. Callers use it to
+    assert a slice advanced instead of trusting the job's exit status.
+    """
+    base = f"{POOL_ROOT}/{experiment_id}" if experiment_id else POOL_ROOT
+    return _fetch_pool_pointer(hub_repo, base, token)
+
+
 def push_checkpoint_to_hub(
     checkpoint_path: str | Path,
     hub_repo: str = "d4oit/tiny-cats-model",
