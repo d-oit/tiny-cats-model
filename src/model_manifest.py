@@ -232,7 +232,13 @@ def build_manifest(
             for key, record in expected_models(release_entry).items()
         }
     elif package_manifest_path is not None:
-        package = read_package_manifest(package_manifest_path)
+        try:
+            package = read_package_manifest(package_manifest_path)
+        except ReleaseError as error:
+            # Match the revision path: the builder is CLI-facing, so an
+            # unusable package manifest must be a clean SystemExit, not a
+            # traceback from a library exception.
+            raise SystemExit(str(error)) from error
         expected = package_expectations(package)
     else:
         expected = {}

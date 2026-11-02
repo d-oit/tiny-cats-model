@@ -43,15 +43,52 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import modal
+# Modal is only needed for the remote training wrapper. Kaggle kernels run
+# ``train_dit_local`` directly and ship no Modal SDK, but they still import
+# this module (via scripts/train_kaggle.py) — so the SDK must be optional.
+try:
+    import modal
+
+    _HAS_MODAL = True
+except ImportError:  # pragma: no cover - exercised on the Kaggle kernel
+    _HAS_MODAL = False
+
+    class _ModalStub:
+        """Minimal decorator-argument surface used by the wrapper below."""
+
+        class Secret:
+            @staticmethod
+            def from_name(*_args: Any, **_kwargs: Any) -> None:
+                return None
+
+        class Retries:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                pass
+
+    modal = _ModalStub()  # type: ignore[assignment]
+
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 
-from safe_checkpoint import UnsafeCheckpointError, load_torch_checkpoint
+# Modal mounts the entrypoint module at /root and imports it during container
+# hydration, *before* any function body (and before @modal.enter) runs. The
+# image's copies live in /app, so module-level local imports must resolve from
+# there without relying on cwd or on the later /app setup. Without this
+# bootstrap `modal run src/train_dit.py` dies at import with
+# `ModuleNotFoundError: No module named 'safe_checkpoint'` (ADR-068).
+_HERE = Path(__file__).resolve().parent
+for _import_root in (_HERE, Path("/app")):
+    if _import_root.is_dir() and str(_import_root) not in sys.path:
+        sys.path.insert(0, str(_import_root))
+
+from safe_checkpoint import (  # noqa: E402 - must follow the bootstrap above
+    UnsafeCheckpointError,
+    load_torch_checkpoint,
+)
 
 # Optional auth utilities import (for enhanced error handling)
 try:
@@ -114,16 +151,14 @@ except ImportError:
             pass
 
 
-# Add project root to path (for local development)
-sys.path.insert(0, str(Path(__file__).parent))
+# Local imports already resolved against a bootstrapped sys.path above
+# (module directory + /app image mount) — do not re-insert here (ADR-068).
 
 # Note: Modal imports (DiT modules) are done inside train_dit_local and
 # DiTTrainer.train() — container init is handled by @modal.enter() (ADR-025).
 # This avoids ModuleNotFoundError when running on Modal (ADR-030, ADR-042).
 
-# Type hints only (not imported at runtime) - ADR-042
-from typing import TYPE_CHECKING
-
+# Type hints only (TYPE_CHECKING is imported at the top) - ADR-042
 if TYPE_CHECKING:
     from flow_matching import EMA
 
@@ -741,8 +776,15 @@ def load_checkpoint(
             signature = checkpoint_file.read(4)
         if not (signature.startswith(b"PK") or signature.startswith(b"\x80")):
             raise pickle.UnpicklingError("invalid checkpoint serialization header")
+        # Training resume is the trusted path: pre-WP1 checkpoints carry the
+        # numpy RNG state as a raw array, which weights_only refuses unless
+        # numpy's (code-free) reconstruction globals are allowed. The 531,238
+        # canonical Hub snapshot failed exactly this way on 2026-11-01.
         checkpoint = load_torch_checkpoint(
-            path, map_location="cpu", allow_unsafe_legacy=allow_unsafe_legacy
+            path,
+            map_location="cpu",
+            allow_unsafe_legacy=allow_unsafe_legacy,
+            allow_numpy_globals=True,
         )
     except UnsafeCheckpointError:
         raise
@@ -848,57 +890,79 @@ class TrainingError(Exception):
 
 
 # Modal setup (ADR-022, ADR-023, ADR-024, ADR-025)
-app = modal.App("tiny-dit-training")
+class _StubApp:
+    """Import-safe stand-in: the wrapper is never invoked off Modal."""
 
-# Volume definitions (ADR-024: organized storage with explicit commits)
-volume_outputs = modal.Volume.from_name("dit-outputs", create_if_missing=True)
-volume_data = modal.Volume.from_name("dit-dataset", create_if_missing=True)
+    def cls(self, **_kwargs: Any) -> Callable[[type], type]:
+        return lambda cls: cls
+
+    def local_entrypoint(self, *_args: Any, **_kwargs: Any) -> Callable:
+        return lambda fn: fn
+
+
+def _stub_decorator() -> Callable:
+    """Decorator stand-in used when the Modal SDK is absent (ADR-042)."""
+    return lambda fn: fn
+
+
+# Any: the real Modal objects and the import-safe stubs are mutually exclusive,
+# and off-Modal callers never touch them. Without this, mypy cannot unify the
+# two branches (App vs _StubApp, Volume vs None, modal.enter vs a stub).
+app: Any
+volume_outputs: Any
+volume_data: Any
+enter: Any
+method: Any
+
+if _HAS_MODAL:
+    app = modal.App("tiny-dit-training")
+
+    # Volume definitions (ADR-024: organized storage with explicit commits)
+    volume_outputs = modal.Volume.from_name("dit-outputs", create_if_missing=True)
+    volume_data = modal.Volume.from_name("dit-dataset", create_if_missing=True)
+    enter = modal.enter
+    method = modal.method
+else:  # pragma: no cover - Kaggle/local training path
+    app = _StubApp()
+    volume_outputs = None
+    volume_data = None
+    enter = _stub_decorator
+    method = _stub_decorator
+
 
 # Optimized container image (ADR-022: fast builds with uv_pip_install)
 # Download scripts added for dataset download fallback (ADR-031)
 image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .apt_install("wget", "tar", "curl", "git")
-    .env(
-        {
-            "HF_XET_HIGH_PERFORMANCE": "1",  # Faster HuggingFace downloads
-            "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512",  # Memory optimization
-        }
+    (
+        modal.Image.debian_slim(python_version="3.12")
+        .apt_install("wget", "tar", "curl", "git")
+        .env(
+            {
+                "HF_XET_HIGH_PERFORMANCE": "1",  # Faster HuggingFace downloads
+                "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512",  # Memory optimization
+                # ADR-068: the entrypoint module is hydrated from /root, so
+                # every image copy in /app must be importable without cwd.
+                "PYTHONPATH": "/app",
+            }
+        )
+        .uv_pip_install(
+            "torch==2.5.1",
+            "torchvision==0.20.1",
+            "pillow==11.0.0",
+            "tqdm==4.67.1",
+            "onnx==1.17.0",
+            "onnxruntime==1.20.0",
+            "huggingface_hub",
+        )
+        # ADR-068: mount the whole package instead of a hand-maintained list.
+        # The whitelist silently drifted twice (safe_checkpoint, then
+        # dataset_manifest) and each gap killed an already-dispatched slice.
+        .add_local_dir("src", "/app", ignore=["__pycache__", "*.pyc"])
+        .add_local_file("data/download.py", "/app/data/download.py")
+        .add_local_file("data/download.sh", "/app/data/download.sh")
     )
-    .uv_pip_install(
-        "torch==2.5.1",
-        "torchvision==0.20.1",
-        "pillow==11.0.0",
-        "tqdm==4.67.1",
-        "onnx==1.17.0",
-        "onnxruntime==1.20.0",
-        "huggingface_hub",
-    )
-    .add_local_file("src/train_dit.py", "/app/train_dit.py")
-    .add_local_file("src/training_state.py", "/app/training_state.py")
-    .add_local_file("src/artifacts.py", "/app/artifacts.py")
-    .add_local_file("src/dit.py", "/app/dit.py")
-    .add_local_file("src/flow_matching.py", "/app/flow_matching.py")
-    .add_local_file("src/dit_validation.py", "/app/dit_validation.py")
-    .add_local_file("src/dataset.py", "/app/dataset.py")
-    .add_local_file("src/gpu_pool.py", "/app/gpu_pool.py")
-    .add_local_file("src/export_dit_onnx.py", "/app/export_dit_onnx.py")
-    .add_local_file("src/optimize_onnx.py", "/app/optimize_onnx.py")
-    .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
-    .add_local_file("src/auth_utils.py", "/app/auth_utils.py")
-    .add_local_file("src/retry_utils.py", "/app/retry_utils.py")
-    .add_local_file("src/experiment_tracker.py", "/app/experiment_tracker.py")
-    # Local modules imported (directly or transitively) at import time by the
-    # files above. They must ship in /app or the container fails to start with
-    # ModuleNotFoundError (issues #195-#207 added safe_checkpoint /
-    # dataset_manifest / model_contract / preprocessing / splits).
-    .add_local_file("src/safe_checkpoint.py", "/app/safe_checkpoint.py")
-    .add_local_file("src/model_contract.py", "/app/model_contract.py")
-    .add_local_file("src/dataset_manifest.py", "/app/dataset_manifest.py")
-    .add_local_file("src/preprocessing.py", "/app/preprocessing.py")
-    .add_local_file("src/splits.py", "/app/splits.py")
-    .add_local_file("data/download.py", "/app/data/download.py")
-    .add_local_file("data/download.sh", "/app/data/download.sh")
+    if _HAS_MODAL
+    else None
 )
 
 
@@ -931,7 +995,7 @@ class DiTTrainer:
     per function invocation — cutting cold start latency.
     """
 
-    @modal.enter()
+    @enter()
     def enter(self):
         """One-time container init: paths, heavy imports, CUDA warm-up.
 
@@ -997,7 +1061,7 @@ class DiTTrainer:
         except Exception as e:
             logger.warning(f"GPU pool: hub push skipped ({e})")
 
-    @modal.method()
+    @method()
     def train(
         self,
         data_dir: str = "/data/cats",
@@ -1322,6 +1386,15 @@ class DiTTrainer:
             # (train-pool.yml --no-hub-push disables; degrades gracefully).
             if not no_hub_push:
                 logger.info("GPU pool: pushing checkpoints to HuggingFace Hub...")
+                # Re-read the sidecar: `pool_state` was captured *before*
+                # training, so a slice that reached its target pushed the
+                # previous step and HuggingFace skipped it as an empty commit
+                # (step 540,100 never reached the canonical pointer,
+                # 2026-11-02).
+                latest_state = (
+                    read_training_state(Path(output).parent / TRAINING_STATE_FILENAME)
+                    or pool_state
+                )
                 self._push_to_hub(
                     hub_repo=hub_repo,
                     output=output,
@@ -1329,11 +1402,13 @@ class DiTTrainer:
                     logger=logger,
                     experiment_id=experiment_id,
                     completed_steps=(
-                        int(pool_state["completed_steps"]) if pool_state else None
+                        int(latest_state["completed_steps"])
+                        if latest_state and "completed_steps" in latest_state
+                        else None
                     ),
                     training_state_path=(
                         str(Path(output).parent / TRAINING_STATE_FILENAME)
-                        if pool_state
+                        if latest_state
                         else None
                     ),
                 )

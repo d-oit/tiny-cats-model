@@ -54,6 +54,10 @@ KAGGLE_CHECKPOINT_DIR = os.environ.get(
 )
 KAGGLE_HUB_REPO = os.environ.get("KAGGLE_HUB_REPO", "d4oit/tiny-cats-model")
 KAGGLE_MAX_SESSION_HOURS = 9  # Kaggle session limit
+# The Oxford host is unreliable; the Zenodo mirror is ~789 MB and measured at
+# ~0.5 MB/s (2026-10-31), i.e. ~27 minutes. The old 15-minute cap killed the
+# kernel mid-download (run 41238847231), so allow the full download + extract.
+KAGGLE_DATA_PREP_TIMEOUT_SECONDS = 2_700
 
 logger = logging.getLogger("kaggle_train")
 
@@ -160,10 +164,25 @@ def prepare_kaggle_data(data_dir: str | Path, *, force_download: bool = False) -
     """
     data_path = Path(data_dir)
 
-    # Already has data
-    if data_path.exists() and list(data_path.iterdir()):
+    # A pre-existing directory is only reusable when fingerprint parity is not
+    # required. /kaggle/working survives across kernel versions, so a copy left
+    # by an earlier mounted-dataset run silently defeated --force-download and
+    # produced a checkpoint with a different dataset identity (step-540000,
+    # 2026-11-02: sha256-content-v2 446f… instead of the canonical 160d…).
+    if not force_download and data_path.exists() and any(data_path.iterdir()):
         logger.info(f"Dataset ready at {data_dir}")
         return True
+
+    if force_download and data_path.exists() and any(data_path.iterdir()):
+        logger.info(
+            f"Discarding pre-existing {data_dir} so the dataset fingerprint "
+            "matches the canonical download"
+        )
+        try:
+            shutil.rmtree(data_path)
+        except OSError as exc:
+            logger.error(f"Cannot clear {data_dir} for fingerprint parity: {exc}")
+            return False
 
     # Try Kaggle dataset inputs
     kaggle_inputs = [
@@ -213,7 +232,7 @@ def prepare_kaggle_data(data_dir: str | Path, *, force_download: bool = False) -
             },
             capture_output=True,
             text=True,
-            timeout=900,
+            timeout=KAGGLE_DATA_PREP_TIMEOUT_SECONDS,
         )
         if result.returncode == 0:
             logger.info("Dataset downloaded successfully")
@@ -351,6 +370,14 @@ def parse_args() -> argparse.Namespace:
         help="Resume despite a manifest mismatch (explicit migration only)",
     )
     parser.add_argument(
+        "--allow-legacy-dataset-hash",
+        action="store_true",
+        help=(
+            "Accept a pre-v2 dataset identity when the saved hash equals the "
+            "legacy fingerprint of the current data"
+        ),
+    )
+    parser.add_argument(
         "--force-download",
         action="store_true",
         help="Materialise the dataset with data/download.py even if a Kaggle dataset is mounted (fingerprint parity)",
@@ -419,6 +446,33 @@ def push_progress_backstop(
         logger.info(f"Backstop push complete at step {completed:,}")
 
 
+def pull_resume_checkpoint(
+    *,
+    hub_repo: str,
+    checkpoint_dir: Path,
+    experiment_id: str,
+    token: str | None = None,
+) -> Path | None:
+    """Pull the newest committed snapshot for a campaign slice.
+
+    Resolves the canonical ``latest`` pointer (issue #163 WP3) instead of the
+    legacy flat ``pool/dit_model_ema.pt`` file. That flat file is a pre-WP3
+    leftover: resuming a 2026-10-31 Kaggle slice from it replayed steps
+    60k->87.5k while the Hub already held 531,238, so the stale-push guard
+    discarded the whole session.
+    """
+    from gpu_pool import pull_checkpoint_from_hub
+
+    pulled = pull_checkpoint_from_hub(
+        hub_repo=hub_repo,
+        checkpoint_name="dit_model_ema.pt",
+        output_dir=str(checkpoint_dir),
+        token=token,
+        experiment_id=experiment_id,
+    )
+    return Path(pulled) if pulled else None
+
+
 def main() -> int:
     """Main entry point for Kaggle training."""
     args = parse_args()
@@ -449,12 +503,10 @@ def main() -> int:
     # Sync-only mode
     if args.sync_only:
         logger.info("Sync-only mode — pulling checkpoint from Hub")
-        from gpu_pool import pull_checkpoint_from_hub
-
-        pulled = pull_checkpoint_from_hub(
+        pulled = pull_resume_checkpoint(
             hub_repo=args.hub_repo,
-            checkpoint_name="dit_model_ema.pt",
-            output_dir=str(checkpoint_dir),
+            checkpoint_dir=checkpoint_dir,
+            experiment_id=args.experiment_id,
             token=args.hub_token,
         )
         if pulled:
@@ -471,12 +523,10 @@ def main() -> int:
     # Pull checkpoint from Hub for resume
     resume_from: str | None = None
     if args.hub_resume:
-        from gpu_pool import pull_checkpoint_from_hub
-
-        pulled = pull_checkpoint_from_hub(
+        pulled = pull_resume_checkpoint(
             hub_repo=args.hub_repo,
-            checkpoint_name="dit_model_ema.pt",
-            output_dir=str(checkpoint_dir),
+            checkpoint_dir=checkpoint_dir,
+            experiment_id=args.experiment_id,
             token=args.hub_token,
         )
         if pulled:
@@ -541,6 +591,7 @@ def main() -> int:
             hub_repo=args.hub_repo,
             experiment_id=args.experiment_id,
             allow_experiment_mismatch=args.allow_experiment_mismatch,
+            allow_legacy_dataset_hash=args.allow_legacy_dataset_hash,
             seed=args.seed,
             resume=resume_from,
         )

@@ -1,0 +1,56 @@
+{
+  "skill_name": "modal-container-contract",
+  "version": "1.0.0",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "A Modal run failed with ModuleNotFoundError for a local module at /root/train_dit.py during container startup. What is the cause and the fix?",
+      "expected_output": "Container hydration imports the /root-mounted entrypoint before any function body runs; the image copies live in /app, so sys.path must include /app before the first local import, and the image sets PYTHONPATH=/app.",
+      "files": [],
+      "dim": "effectiveness",
+      "kind": "explicit",
+      "assertions": [
+        "contains:.agents/skills/modal-container-contract/SKILL.md|container hydration",
+        "contains:.agents/skills/modal-container-contract/SKILL.md|sys.path",
+        "contains:.agents/skills/modal-container-contract/SKILL.md|PYTHONPATH"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I added a new src module that src/train_dit.py imports. What must exist before dispatching a GPU slice?",
+      "expected_output": "The whole src/ package is mounted with add_local_dir into /app, and scripts/check_modal_container_contract.py passes before dispatch.",
+      "files": [],
+      "dim": "effectiveness",
+      "kind": "explicit",
+      "assertions": [
+        "contains:.agents/skills/modal-container-contract/SKILL.md|add_local_dir",
+        "contains:.agents/skills/modal-container-contract/SKILL.md|check_modal_container_contract.py",
+        "exists:scripts/check_modal_container_contract.py"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "The container startup import fails. Can we wrap it in try/except so training continues?",
+      "expected_output": "No. Removing the import or swallowing the error would silently downgrade checkpoint verification; it must fail loudly.",
+      "files": [],
+      "dim": "correctness",
+      "kind": "negative",
+      "assertions": [
+        "contains:.agents/skills/modal-container-contract/SKILL.md|removing the import",
+        "contains:.agents/skills/modal-container-contract/SKILL.md|fail loudly"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Does the same contract cover the classifier and the Kaggle slice?",
+      "expected_output": "Yes: src/train.py mounts the same package, and the Kaggle workspace must pack every src/*.py plus EXTRA_KERNEL_FILES.",
+      "files": [],
+      "dim": "discoverability",
+      "kind": "explicit",
+      "assertions": [
+        "contains:.agents/skills/modal-container-contract/SKILL.md|src/train.py",
+        "contains:.agents/skills/modal-container-contract/SKILL.md|EXTRA_KERNEL_FILES"
+      ]
+    }
+  ]
+}

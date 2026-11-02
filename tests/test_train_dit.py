@@ -453,8 +453,14 @@ class TestModalImageShipsAllLocalModules:
         src_dir = Path(__file__).parent.parent / "src"
         source = (src_dir / app_module).read_text()
 
-        image_modules = set(
-            re.findall(r'add_local_file\("src/([A-Za-z0-9_]+)\.py"', source)
+        # ADR-068: a whole-package mount (`add_local_dir("src", "/app")`)
+        # covers every local module by construction; a per-file whitelist is
+        # still parsed for images that have not migrated yet.
+        whole_package = re.search(r'add_local_dir\(\s*"src"\s*,\s*"/app"', source)
+        image_modules = (
+            {p.stem for p in src_dir.glob("*.py")}
+            if whole_package
+            else set(re.findall(r'add_local_file\("src/([A-Za-z0-9_]+)\.py"', source))
         )
         assert image_modules, "could not parse add_local_file entries"
 

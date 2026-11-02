@@ -265,9 +265,27 @@ class TestKaggleAndAutoLaunch:
         assert "--schedule-steps 600000" in joined
         assert "--hub-resume" in command
 
-    def test_kaggle_without_kernel_id_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="kernel-id"):
-            build_launch_command("kaggle", 60_000)
+    def test_kaggle_without_kernel_id_defers_resolution(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # ADR-067: the owner is resolved from the authenticated Kaggle account
+        # at run time, so a fresh repository (only KAGGLE_API_TOKEN) can still
+        # fall back from a blocked Modal workspace.
+        monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
+        command = build_launch_command("kaggle", 60_000)
+        assert command[:2] == ["python", "src/kaggle_provider.py"]
+        assert "--kernel-id" not in command
+
+    def test_kaggle_settings_fall_back_to_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KAGGLE_KERNEL_ID", "env-owner/tiny-cats-dit-slice")
+        monkeypatch.setenv("KAGGLE_HF_TOKEN_DATASET", "env-owner/tiny-cats-hf-token")
+
+        command = build_launch_command("kaggle", 60_000)
+        joined = " ".join(command)
+        assert "--kernel-id env-owner/tiny-cats-dit-slice" in joined
+        assert "--hf-token-dataset env-owner/tiny-cats-hf-token" in joined
 
     def test_auto_dispatches_through_the_fallback_script(self) -> None:
         command = build_launch_command(
@@ -1091,6 +1109,46 @@ class TestProviderReport:
         assert code == 0
         assert json.loads(out.read_text())["exit_reason"] == "partial"
         assert capsys.readouterr().out
+
+    def test_report_cli_prefers_the_launched_target_over_the_state(
+        self, tmp_path: Path
+    ) -> None:
+        # The pulled state file can still describe the previous slice's target:
+        # reporting only that target made a 555000 slice look like it had been
+        # mis-planned as 540000 (2026-10-31 pool run).
+        state = {
+            "experiment_id": "exp-v9",
+            "target_steps": 540_000,
+            "completed_steps": 531_238,
+        }
+        state_file = tmp_path / "training_state.json"
+        state_file.write_text(json.dumps(state))
+        out = tmp_path / "provider_report.json"
+
+        code = main(
+            [
+                "report",
+                "--provider",
+                "kaggle",
+                "--job-id",
+                "run-1-slice-555000",
+                "--started-at",
+                "2026-10-31T20:00:00Z",
+                "--target",
+                "555000",
+                "--state-file",
+                str(state_file),
+                "--outcome",
+                "success",
+                "--out",
+                str(out),
+            ]
+        )
+
+        document = json.loads(out.read_text())
+        assert document["target_steps"] == 555_000
+        assert document["exit_reason"] == "partial"
+        assert code == 0
 
     def test_report_cli_writes_file_and_status_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture

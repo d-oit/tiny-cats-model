@@ -10,10 +10,28 @@ Usage:
 
 from __future__ import annotations
 
+import socket
 import sys
 import tarfile
 import urllib.request
+import zipfile
 from pathlib import Path
+
+# The Oxford host is intermittently unreachable (it timed out from both a
+# GitHub runner and a Kaggle kernel on 2026-10-31). Zenodo mirrors the original
+# archive byte-for-byte, so the dataset fingerprint still matches the Modal
+# slices that produced the checkpoint (ADR-063).
+PET_IMAGE_SOURCES: tuple[tuple[str, str], ...] = (
+    (
+        "tar",
+        "https://www.robots.ox.ac.uk/~vgg/data/pets/data/images.tar.gz",
+    ),
+    (
+        "zip",
+        "https://zenodo.org/api/records/8067751/files/"
+        "The%20Oxford-IIIT%20Pet.zip/content",
+    ),
+)
 
 
 def download_file(url: str, dest: Path, show_progress: bool = True) -> None:
@@ -49,9 +67,59 @@ def extract_tar_gz(archive: Path, dest: Path) -> None:
         tar.extractall(dest)
 
 
+def extract_zip(archive: Path, dest: Path) -> None:
+    """Extract a zip archive."""
+    print(f"Extracting {archive} to {dest}...", file=sys.stderr)
+    with zipfile.ZipFile(archive) as zf:
+        zf.extractall(dest)
+
+
+def find_images_dir(root: Path) -> Path | None:
+    """Locate the directory holding the pet JPEGs in an extracted archive.
+
+    The Oxford tarball uses ``images/``; the Zenodo mirror wraps the same files
+    in ``The Oxford-IIIT Pet/images/``. Prefer a directory named ``images`` and
+    otherwise take the directory with the most JPEGs.
+    """
+    candidates = [
+        path for path in root.rglob("*") if path.is_dir() and any(path.glob("*.jpg"))
+    ]
+    if not candidates:
+        return None
+    named = [path for path in candidates if path.name == "images"]
+    return max(named or candidates, key=lambda path: len(list(path.glob("*.jpg"))))
+
+
+def download_images(tmp_path: Path) -> Path:
+    """Download and extract the images, trying each known source in order."""
+    errors: list[str] = []
+    for index, (kind, url) in enumerate(PET_IMAGE_SOURCES):
+        suffix = "tar.gz" if kind == "tar" else "zip"
+        archive = tmp_path / f"images-{index}.{suffix}"
+        try:
+            download_file(url, archive)
+            if kind == "tar":
+                extract_tar_gz(archive, tmp_path)
+            else:
+                extract_zip(archive, tmp_path)
+            images_dir = find_images_dir(tmp_path)
+            if images_dir is not None:
+                return images_dir
+            errors.append(f"{url}: archive contained no images")
+        except Exception as exc:
+            errors.append(f"{url}: {exc}")
+    raise RuntimeError(
+        "could not download the dataset from any source: " + "; ".join(errors)
+    )
+
+
 def main() -> None:
     """Main download function."""
     import os
+
+    # A hanging mirror must not stall the kernel forever; urlretrieve honours
+    # the default socket timeout.
+    socket.setdefaulttimeout(120)
 
     # Setup paths - respect environment variables for Modal container
     if "CATS_DIR" in os.environ:
@@ -67,19 +135,14 @@ def main() -> None:
     (cats_dir / "cat").mkdir(exist_ok=True)
     (cats_dir / "other").mkdir(exist_ok=True)
 
-    # Oxford IIIT Pet Dataset URLs
-    pet_images_url = "https://www.robots.ox.ac.uk/~vgg/data/pets/data/images.tar.gz"
-
     # Create temp directory
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
 
-        # Download and extract images
-        images_archive = tmp_path / "images.tar.gz"
-        download_file(pet_images_url, images_archive)
-        extract_tar_gz(images_archive, tmp_path)
+        # Download and extract images (mirror fallback, see PET_IMAGE_SOURCES)
+        images_dir = download_images(tmp_path)
 
         # Cat breeds (filenames start with capital letter)
         cat_breeds = [
@@ -100,7 +163,6 @@ def main() -> None:
         print("==> Filtering cat breeds...", file=sys.stderr)
 
         # Copy cat images
-        images_dir = tmp_path / "images"
         cat_count = 0
         for breed in cat_breeds:
             for img_path in images_dir.glob(f"{breed}_*.jpg"):

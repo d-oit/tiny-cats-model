@@ -16,6 +16,37 @@ After each task, capture learnings here. Use this for continuous improvement.
 
 ## Key Learnings
 
+### fix: Modal container import contract (November 2026)
+
+**Date**: 2026-11-02
+**Type**: bug fix + guardrail
+**Areas**: modal, container image, agent workflow
+**Related**: ADR-068, scripts/check_modal_container_contract.py,
+`.agents/skills/modal-container-contract`
+
+**What failed**: the live Modal app `ap-22eiZTSjSQ8chxvTD5VGA8` failed every
+container startup with
+`ModuleNotFoundError: No module named 'safe_checkpoint'` at
+`/root/train_dit.py:54`.
+
+**Root cause**: `modal run` hydrates the entrypoint from `/root`, importing it
+before any function body runs. The image copies modules into `/app`, and
+`sys.path` only gained `/app` inside `@modal.enter` — after the import. The
+earlier 2026-10-31 fix added the missing mount, which was necessary but not
+sufficient: the mount existed, the import order was still wrong.
+
+**Fix**: bootstrap `sys.path` (module dir + `/app`) above the first local
+import, and set `PYTHONPATH=/app` in the image env.
+
+**Pattern extracted**:
+1. Container hydration imports run before any in-function setup; anything the
+   module imports at top level must resolve from the image, not the cwd.
+2. A guardrail must test *ordering and reachability*, not just file presence.
+3. Reproduce container-only failures by importing the module from a directory
+   with no sibling modules.
+4. Wire the check into a computational sensor (`do-harness`) so it fires before
+   a GPU slice is dispatched, not inside one.
+
 ### fix: Classifier Training Data Directory Path (March 2026)
 
 **Date**: 2026-03-04
@@ -1402,6 +1433,39 @@ modal run src/train_dit.py::train_dit_on_gpu \
 - scripts/train_dit_high_accuracy.sh: Added modes and checks
 
 ---
+
+## Cross-provider resume: three defects the production slice exposed (2026-11-02)
+
+A bounded `train.yml`-style Hub-resume slice (Modal, 100 steps past the pool's
+540,000 checkpoint) failed three times before finishing. Each failure was a real
+defect that unit tests alone never reached, because they only appear when a
+Kaggle-produced checkpoint is resumed on Modal:
+
+1. **Dataset identity diverged.** The 540k snapshot carried
+   `dataset_hash=446f…` (`provider=kaggle`) while Modal's canonical download is
+   `160d…`. `--force-download` *was* requested, but `prepare_kaggle_data` returned
+   early whenever `/kaggle/working/cats-data` already had files — and Kaggle
+   persists that directory across kernel versions. The flag now discards a
+   pre-existing copy before materialising the data.
+2. **CUDA RNG restore crashed.** Kaggle saved RNG state for 2 T4s;
+   `torch.cuda.set_rng_state_all` indexes every saved state against
+   `default_generators`, so the surplus state raised `IndexError` on Modal's
+   single T4. Restore now clamps to `torch.cuda.device_count()` and treats a
+   restore failure as a warning, not a crash.
+3. **Generator packaging demanded impossible provenance.**
+   `optimize_onnx(..., model_type="generator")` validates on synthetic inputs,
+   so `provenance` is legitimately `None`; the guard required it anyway and
+   failed *after* 100 steps of training had completed. Only real-image
+   validation now requires validation provenance.
+
+A fourth defect surfaced during verification: the end-of-run Hub push used the
+`completed_steps` captured *before* training, so a slice that reached its target
+pushed the previous step and HuggingFace skipped it as an empty commit. The push
+re-reads `training_state.json` first.
+
+**Pattern extracted**: a "bounded production slice" is not a smoke test — run it
+on the *other* provider from the one that produced the checkpoint, and assert the
+canonical Hub pointer advanced, not merely that the job exited 0.
 
 ## Open Questions
 

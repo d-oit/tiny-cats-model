@@ -17,6 +17,7 @@ Load skills using the `@skill` command when the task matches:
 | `git-workflow` | Branches, commits, PRs | "commit", "branch", "PR", "quality gate", "pre-commit" |
 | `goap` | Planning, ADR, project goals | "plan", "GOAP", "ADR", "action item", "priority" |
 | `model-training` | GPU training, Modal | "GPU", "Modal", "hyperparameter" |
+| `modal-container-contract` | Modal startup import failures | "ModuleNotFoundError", "failed during startup", "modal run fails" |
 | `security` | Secrets, credentials | "secret", "token", "credential" |
 | `skill-creator` | Author new skills | "create skill", "new skill template" |
 | `skill-evaluator` | Evaluate / validate a skill | "evaluate skill", "skill check", "skill benchmark" |

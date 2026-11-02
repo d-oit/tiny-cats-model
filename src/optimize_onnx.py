@@ -937,24 +937,36 @@ def optimize_onnx(
         results["accuracy_validation"] = accuracy_results
         calibration_provenance = results.get("calibration_provenance")
         validation_provenance = accuracy_results.get("provenance")
-        if not isinstance(calibration_provenance, dict) or not isinstance(
+        if not isinstance(calibration_provenance, dict):
+            raise ValueError("Calibration provenance is required")
+        # Generator validation is synthetic (no dataset), so only a real-image
+        # classifier run can carry validation provenance. Demanding it
+        # unconditionally made every generator package fail after training
+        # finished (step-540000, 2026-11-02).
+        if accuracy_results.get("real_images") and not isinstance(
             validation_provenance, dict
         ):
-            raise ValueError("Calibration and validation provenance are required")
+            raise ValueError("Validation provenance is required for real-image parity")
         calibration_selected_paths = calibration_provenance.get("selected_paths")
-        validation_selected_paths = validation_provenance.get("selected_paths")
-        if (
-            not isinstance(calibration_selected_paths, list)
-            or not all(isinstance(path, str) for path in calibration_selected_paths)
-            or not isinstance(validation_selected_paths, list)
-            or not all(isinstance(path, str) for path in validation_selected_paths)
+        validation_selected_paths = (
+            validation_provenance.get("selected_paths")
+            if isinstance(validation_provenance, dict)
+            else None
+        )
+        if not isinstance(calibration_selected_paths, list) or not all(
+            isinstance(path, str) for path in calibration_selected_paths
         ):
-            raise ValueError("Calibration and validation paths must be string lists")
-        overlap = set(calibration_selected_paths) & set(validation_selected_paths)
-        if overlap:
-            raise ValueError(
-                f"Calibration and validation datasets overlap ({len(overlap)} images)"
-            )
+            raise ValueError("Calibration paths must be a string list")
+        if validation_selected_paths is not None:
+            if not isinstance(validation_selected_paths, list) or not all(
+                isinstance(path, str) for path in validation_selected_paths
+            ):
+                raise ValueError("Validation paths must be a string list")
+            overlap = set(calibration_selected_paths) & set(validation_selected_paths)
+            if overlap:
+                raise ValueError(
+                    f"Calibration and validation datasets overlap ({len(overlap)} images)"
+                )
         if model_type == "classifier":
             agreement = accuracy_results.get("prediction_match_rate")
             accuracy = accuracy_results.get("accuracy", {})

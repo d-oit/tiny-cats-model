@@ -79,6 +79,7 @@ def check_generated(
     *,
     manifest_path: Path | None = None,
     contract_path: Path | None = None,
+    revision: str | None = None,
 ) -> int:
     """Verify committed generated metadata still matches the artifacts."""
     manifest_path = manifest_path or MANIFEST_PATH
@@ -101,7 +102,16 @@ def check_generated(
         return 1
 
     current = _read_json(manifest_path)
-    revision = current.get("hub", {}).get("revision")
+    current_revision = current.get("hub", {}).get("revision")
+    # `--check --revision X` must compare against X: silently ignoring the
+    # requested pin certified a manifest that pinned something else (or
+    # nothing at all).
+    if revision is not None and revision != current_revision:
+        print(
+            f"STALE: {manifest_path} pins {current_revision!r}, expected {revision!r}"
+        )
+        return 1
+    revision = current_revision if revision is None else revision
     try:
         rebuilt = build_manifest(
             artifact_dir,
@@ -189,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.check:
-        return check_generated(args.artifact_dir)
+        return check_generated(args.artifact_dir, revision=args.revision)
     if args.rollback and args.revision:
         raise SystemExit(
             "--rollback re-pins a recorded revision; do not pass --revision"

@@ -1,0 +1,25 @@
+# do-harness.toml — sensor pack for this workspace.
+language = "generic"
+
+[hooks]
+pre-commit = ["modal-container-contract"]
+pre-push = []
+
+# A sensor is a command with an exit code, not advice. `verify` runs these in
+# order; a failing sensor means the change is not evidence-backed.
+[[sensors]]
+name = "modal-container-contract"
+argv = ["python", "scripts/check_modal_container_contract.py"]
+severity = "error"
+timeout = 300
+when-changed = [
+  "src/train_dit.py",
+  "scripts/check_modal_container_contract.py",
+  "tests/test_modal_container_contract.py",
+  "do-harness.toml",
+]
+
+[signal-sets]
+feedback = ["modal-container-contract"]
+verification = ["modal-container-contract"]
+release = ["modal-container-contract"]

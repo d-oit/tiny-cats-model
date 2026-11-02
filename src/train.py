@@ -419,6 +419,9 @@ image = (
         {
             "HF_XET_HIGH_PERFORMANCE": "1",  # Faster HuggingFace downloads
             "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512",  # Memory optimization
+            # ADR-068: the entrypoint is hydrated from /root, so image
+            # copies under /app must be importable without cwd.
+            "PYTHONPATH": "/app",
         }
     )
     .uv_pip_install(
@@ -429,24 +432,11 @@ image = (
         "onnx==1.17.0",
         "onnxruntime==1.20.0",
     )
-    .add_local_file("src/train.py", "/app/train.py")
-    .add_local_file("src/dataset.py", "/app/dataset.py")
-    .add_local_file("src/model.py", "/app/model.py")
-    .add_local_file("src/export_onnx.py", "/app/export_onnx.py")
-    .add_local_file("src/optimize_onnx.py", "/app/optimize_onnx.py")
-    .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
-    .add_local_file("src/auth_utils.py", "/app/auth_utils.py")
-    .add_local_file("src/retry_utils.py", "/app/retry_utils.py")
-    .add_local_file("src/experiment_tracker.py", "/app/experiment_tracker.py")
-    # Local modules imported (directly or transitively) at import time by the
-    # files above. They must ship in /app or the container fails to start with
-    # ModuleNotFoundError (issues #195-#207 added safe_checkpoint /
-    # dataset_manifest / model_contract / preprocessing / splits).
-    .add_local_file("src/safe_checkpoint.py", "/app/safe_checkpoint.py")
-    .add_local_file("src/model_contract.py", "/app/model_contract.py")
-    .add_local_file("src/dataset_manifest.py", "/app/dataset_manifest.py")
-    .add_local_file("src/preprocessing.py", "/app/preprocessing.py")
-    .add_local_file("src/splits.py", "/app/splits.py")
+    # ADR-068: mount the whole package, not a hand-maintained whitelist. Both
+    # sides of this merge proved the whitelist drifts: main added
+    # safe_checkpoint/model_contract/dataset_manifest/preprocessing/splits by
+    # hand, and this branch had already been broken by two of them.
+    .add_local_dir("src", "/app", ignore=["__pycache__", "*.pyc"])
     .add_local_file("data/download.py", "/app/data/download.py")
     .add_local_file("data/download.sh", "/app/data/download.sh")
 )

@@ -275,6 +275,19 @@ def _build_auto_command(
     return command
 
 
+def _env_fallback(value: str | None, env_name: str) -> str | None:
+    """Explicit flag wins; otherwise fall back to the workflow environment.
+
+    The pool workflow forwards ``vars.KAGGLE_KERNEL_ID`` /
+    ``vars.KAGGLE_HF_TOKEN_DATASET``; when a repository variable is unset the
+    provider must still be able to read the corresponding environment value
+    instead of being permanently unlaunchable (ADR-067).
+    """
+    if value:
+        return value
+    return os.environ.get(env_name) or None
+
+
 def build_launch_command(
     provider: str,
     target: int,
@@ -303,6 +316,9 @@ def build_launch_command(
     headless adapter raise :class:`UnsupportedProviderError` — the control
     plane never falls back to CPU simulation (WP5).
     """
+    kernel_id = _env_fallback(kernel_id, "KAGGLE_KERNEL_ID")
+    hf_token_dataset = _env_fallback(hf_token_dataset, "KAGGLE_HF_TOKEN_DATASET")
+
     if provider.strip().lower() == "auto":
         return _build_auto_command(
             target=target,
@@ -327,18 +343,16 @@ def build_launch_command(
         raise ValueError(f"target must be positive, got {target}")
 
     if adapter.name == "kaggle":
-        if not kernel_id:
-            raise ValueError(
-                "the kaggle provider needs --kernel-id owner/slug (the private "
-                "kernel its slices are pushed to)"
-            )
+        # A kernel id is optional here: when neither --kernel-id nor
+        # KAGGLE_KERNEL_ID is set, kaggle_provider.py resolves
+        # ``<authenticated-account>/tiny-cats-dit-slice`` at run time. That is
+        # what keeps the ``auto`` fallback launchable from a fresh repository
+        # (only KAGGLE_API_TOKEN configured) instead of dying at the gate.
         kaggle_command = [
             "python",
             "src/kaggle_provider.py",
             "--target",
             str(target),
-            "--kernel-id",
-            kernel_id,
             "--hub-repo",
             hub_repo,
             "--experiment-id",
@@ -352,6 +366,8 @@ def build_launch_command(
             "--hub-push-interval",
             str(hub_push_interval),
         ]
+        if kernel_id:
+            kaggle_command.extend(["--kernel-id", kernel_id])
         for flag, value in (
             ("--warmup-steps", warmup_steps),
             ("--min-lr", min_lr),
@@ -422,6 +438,10 @@ def build_launch_command(
     # manifest differs (e.g. a stored warmup_steps). Never emitted by default.
     if allow_experiment_mismatch:
         command.append("--allow-experiment-mismatch")
+    # One-time legacy-identity migration (pre-v2 checkpoints): the trainer
+    # still verifies the legacy fingerprint of the current dataset, but without
+    # this every pool resume of the 531,238 snapshot is rejected.
+    command.append("--allow-legacy-dataset-hash")
     return command
 
 
@@ -1055,11 +1075,11 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 def _cmd_report(args: argparse.Namespace) -> int:
     state = _read_state(args.state_file)
     completed = int(state["completed_steps"]) if state else None
-    target = (
-        int(state["target_steps"])
-        if state and state.get("target_steps")
-        else args.target
-    )
+    # Record the target that was actually launched. The state file's target
+    # belongs to whichever checkpoint the Hub held when it was written: a
+    # 2026-10-31 slice with matrix target 555000 reported 540000 because the
+    # pulled state still carried the previous slice's target.
+    target = args.target
     # Strictly boolean, mirroring verify_checkpoint: a stringified "false" is
     # truthy in Python, so a report must not coerce a malformed flag into a
     # converged run and relabel a partial slice as completed.
@@ -1144,7 +1164,10 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument(
         "--kernel-id",
         default=None,
-        help="owner/slug of the Kaggle slice kernel (required for --provider kaggle)",
+        help=(
+            "owner/slug of the Kaggle slice kernel; defaults to $KAGGLE_KERNEL_ID "
+            "or <authenticated-account>/tiny-cats-dit-slice"
+        ),
     )
     launch.add_argument(
         "--hf-token-dataset",

@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -87,8 +88,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--warmup-steps", default=None)
     parser.add_argument("--min-lr", default=None)
     parser.add_argument("--schedule-steps", default=None)
-    parser.add_argument("--kernel-id", default=None)
-    parser.add_argument("--hf-token-dataset", default=None)
+    parser.add_argument(
+        "--kernel-id",
+        default=os.environ.get("KAGGLE_KERNEL_ID"),
+        help=(
+            "owner/slug of the Kaggle kernel (defaults to $KAGGLE_KERNEL_ID or "
+            "the authenticated account's tiny-cats-dit-slice)"
+        ),
+    )
+    parser.add_argument(
+        "--hf-token-dataset", default=os.environ.get("KAGGLE_HF_TOKEN_DATASET")
+    )
     parser.add_argument("--hub-resume", action="store_true")
     parser.add_argument("--no-hub-push", action="store_true")
     parser.add_argument("--allow-experiment-mismatch", action="store_true")

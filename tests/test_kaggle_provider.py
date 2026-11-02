@@ -13,8 +13,12 @@ Unit coverage for the Kaggle slice adapter (ADR-067):
 
 from __future__ import annotations
 
+import base64
+import io
 import json
+import re
 import sys
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,9 +37,12 @@ from kaggle_provider import (
     KaggleLaunchError,
     build_kernel_workspace,
     build_slice_args,
+    ensure_hf_token_dataset,
     fetch_kernel_logs,
     main,
     push_kernel,
+    push_kernel_with_retry,
+    resolve_kernel_id,
     status_name,
     wait_for_kernel,
 )
@@ -140,6 +147,9 @@ class TestSliceArgs:
         assert "--hub-push-interval 5000" in joined
         assert "--hub-resume" in args
         assert "--force-download" in args
+        # The 531,238 snapshot's legacy dataset identity must be accepted (and
+        # still fingerprint-checked) or every resumed slice fails in 6 minutes.
+        assert "--allow-legacy-dataset-hash" in args
 
     def test_optional_knobs_are_opt_in(self) -> None:
         args = build_slice_args(
@@ -191,6 +201,29 @@ class TestKernelWorkspace:
         assert metadata["dataset_sources"] == ["d-oit/tiny-cats-hf-token"]
         # Title must satisfy kaggle-api's >=5 chars rule and slugify to the id.
         assert metadata["title"] == "tiny cats dit slice"
+
+    def test_entrypoint_embeds_the_workspace(self, tmp_path: Path) -> None:
+        # Kaggle script kernels upload ONLY train.py, so sibling files must
+        # travel inside the entrypoint (embedding) rather than beside it.
+        repo = _fake_repo(tmp_path / "repo")
+        workspace = build_kernel_workspace(
+            repo,
+            tmp_path / "kernel",
+            kernel_id="d-oit/slice",
+            slice_args=["--steps", "1"],
+        )
+        entry = (workspace / ENTRY_FILE).read_text()
+        match = re.search(r"WORKSPACE_B64 = '([^']+)'", entry)
+        assert match is not None
+        payload = base64.b64decode(match.group(1))
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            names = set(archive.namelist())
+        assert {
+            "src/train_dit.py",
+            "scripts/train_kaggle.py",
+            "data/download.py",
+        } <= names
+        assert ENTRY_FILE not in names
 
     def test_tokens_are_not_embedded_in_the_kernel(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -337,6 +370,47 @@ class TestPush:
         with pytest.raises(KaggleLaunchError, match="invalid sources"):
             push_kernel(api, tmp_path)
 
+    def test_fresh_dataset_source_is_retried_until_ready(self, tmp_path: Path) -> None:
+        class Api:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def kernels_push(self, folder: str, timeout: str | None = None) -> object:
+                self.calls += 1
+                if self.calls < 3:
+                    return SimpleNamespace(
+                        ref=None,
+                        kernel_id=None,
+                        version_number=None,
+                        url=None,
+                        error=None,
+                        invalid_dataset_sources=["owner/not-processed"],
+                    )
+                return SimpleNamespace(
+                    ref="owner/slice",
+                    kernel_id=1,
+                    version_number=9,
+                    url=None,
+                    error=None,
+                    invalid_dataset_sources=[],
+                )
+
+        api = Api()
+        info = push_kernel_with_retry(
+            api, tmp_path, attempts=3, delay_seconds=0, sleep=lambda _s: None
+        )
+
+        assert api.calls == 3
+        assert info["version"] == 9
+
+    def test_other_push_errors_are_not_retried(self, tmp_path: Path) -> None:
+        api = FakeApi(push_error="invalid kernel")
+        with pytest.raises(KaggleLaunchError, match="invalid kernel"):
+            push_kernel_with_retry(
+                api, tmp_path, attempts=3, delay_seconds=0, sleep=lambda _s: None
+            )
+        assert len(api.push_calls) == 1
+
     def test_missing_version_is_rejected(self, tmp_path: Path) -> None:
         api = FakeApi(version=None)
         with pytest.raises(KaggleLaunchError, match="no version number"):
@@ -356,6 +430,38 @@ class TestLogs:
         assert result == log_file
         assert "line two" in log_file.read_text()
 
+    def test_log_fetch_uses_a_valid_regex(self, tmp_path: Path) -> None:
+        seen: dict[str, str | None] = {}
+
+        class Api:
+            def kernels_output(
+                self,
+                kernel: str,
+                path: str,
+                file_pattern: str | None = None,
+                force: bool = False,
+            ) -> tuple[list[str], str]:
+                seen["pattern"] = file_pattern
+                target = Path(path) / "slice.log"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("step 1\n")
+                return ([], "")
+
+        result = fetch_kernel_logs(
+            Api(),
+            "d-oit/slice",
+            download_dir=tmp_path / "out",
+            log_file=tmp_path / "l.log",
+        )
+
+        assert result is not None
+        # Kaggle parses this server-side as a regex; a glob raised
+        # "nothing to repeat at position 0" and discarded the kernel log.
+        pattern = seen["pattern"]
+        assert pattern is not None
+        assert re.compile(pattern).search("training.log")
+        assert not re.compile(pattern).search("training.txt")
+
     def test_missing_log_is_not_fatal(self, tmp_path: Path) -> None:
         api = FakeApi(log_text=None)
         result = fetch_kernel_logs(
@@ -365,6 +471,106 @@ class TestLogs:
             log_file=tmp_path / "l.log",
         )
         assert result is None
+
+
+class TestHfTokenDataset:
+    """ADR-067: the private token dataset replaces unattached secrets."""
+
+    def test_private_dataset_carries_the_token(self) -> None:
+        captured: dict[str, str] = {}
+
+        class Api:
+            username = "slice-owner"
+
+            def dataset_create_new(
+                self, folder: str, public: bool = False, quiet: bool = False
+            ) -> None:
+                captured.update({p.name: p.read_text() for p in Path(folder).iterdir()})
+
+        ref = ensure_hf_token_dataset(Api(), "hf_sentinel_value")
+
+        assert ref == "slice-owner/tiny-cats-hf-token"
+        metadata = json.loads(captured["dataset-metadata.json"])
+        assert metadata["id"] == ref
+        assert metadata["title"]
+        assert captured["HF_TOKEN"].strip() == "hf_sentinel_value"
+
+    def test_existing_dataset_is_versioned(self) -> None:
+        class Api:
+            username = "slice-owner"
+
+            def __init__(self) -> None:
+                self.notes: str | None = None
+
+            def dataset_create_new(
+                self, folder: str, public: bool = False, quiet: bool = False
+            ) -> None:
+                raise RuntimeError("dataset already exists")
+
+            def dataset_create_version(
+                self, folder: str, notes: str, quiet: bool = False
+            ) -> None:
+                self.notes = notes
+
+        api = Api()
+        assert (
+            ensure_hf_token_dataset(api, "rotated-token")
+            == "slice-owner/tiny-cats-hf-token"
+        )
+        assert api.notes == "refresh HF_TOKEN"
+
+
+class TestKernelIdResolution:
+    """ADR-067: flag → env → authenticated account, never a hard failure."""
+
+    def test_explicit_id_wins_over_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KAGGLE_KERNEL_ID", "env/slice")
+        assert resolve_kernel_id(FakeApi(), "d-oit/slice") == "d-oit/slice"
+
+    def test_environment_id_is_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KAGGLE_KERNEL_ID", "env/slice")
+        assert resolve_kernel_id(FakeApi(), None) == "env/slice"
+
+    def test_owner_comes_from_the_authenticated_username(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
+        api = SimpleNamespace(username="d-oit")
+        assert resolve_kernel_id(api, None) == "d-oit/tiny-cats-dit-slice"
+
+    def test_owner_comes_from_config_values(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
+        api = SimpleNamespace(config_values={"username": "config-owner"})
+        assert resolve_kernel_id(api, None) == "config-owner/tiny-cats-dit-slice"
+
+    def test_owner_comes_from_the_config_getter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
+
+        class Api:
+            def get_config_value(self, key: str) -> str | None:
+                return "getter-owner" if key == "username" else None
+
+        assert resolve_kernel_id(Api(), None) == "getter-owner/tiny-cats-dit-slice"
+
+    def test_unresolvable_owner_fails_loudly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
+        with pytest.raises(KaggleLaunchError, match="cannot resolve"):
+            resolve_kernel_id(SimpleNamespace(), None)
+
+    def test_malformed_environment_id_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KAGGLE_KERNEL_ID", "not-a-slug")
+        with pytest.raises(ValueError, match="owner/slug"):
+            resolve_kernel_id(FakeApi(), None)
 
 
 class TestCli:
@@ -399,6 +605,38 @@ class TestCli:
             ]
         )
         assert code == EXIT_CONFIG
+
+    def test_dry_run_without_kernel_id_exits_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
+        code = main(
+            [
+                "--target",
+                "15000",
+                "--workspace",
+                str(tmp_path / "kernel"),
+                "--dry-run",
+            ]
+        )
+        assert code == EXIT_CONFIG
+
+    def test_dry_run_accepts_the_environment_kernel_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KAGGLE_KERNEL_ID", "env-owner/slice")
+        code = main(
+            [
+                "--target",
+                "15000",
+                "--workspace",
+                str(tmp_path / "kernel"),
+                "--dry-run",
+            ]
+        )
+        assert code == EXIT_COMPLETE
+        metadata = json.loads((tmp_path / "kernel" / KERNEL_METADATA_FILE).read_text())
+        assert metadata["id"] == "env-owner/slice"
 
     def test_auth_failure_exits_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -9,6 +9,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from provider_auto import EXIT_CONFIG, main
@@ -75,20 +77,25 @@ def test_blocked_with_no_provider_left_returns_the_exit_code(tmp_path: Path) -> 
     assert len(runner.commands) == 1
 
 
-def test_unconfigured_provider_is_skipped_for_the_next_one(tmp_path: Path) -> None:
+def test_kaggle_is_launchable_without_a_configured_kernel_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     used = tmp_path / "used"
     runner = Runner([(0, False)])
+    monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
 
     code = main(
         [*BASE_ARGS, "--providers", "kaggle,modal", "--provider-used-file", str(used)],
         runner=runner,
     )
 
-    # kaggle needs --kernel-id; unavailable providers are skipped, not fatal.
+    # ADR-067: the adapter resolves <account>/tiny-cats-dit-slice at run time,
+    # so a fresh repository's fallback is not skipped as "unconfigured".
     assert code == 0
     assert len(runner.commands) == 1
-    assert runner.commands[0][:2] == ["modal", "run"]
-    assert used.read_text().strip() == "modal"
+    assert runner.commands[0][:2] == ["python", "src/kaggle_provider.py"]
+    assert "--kernel-id" not in runner.commands[0]
+    assert used.read_text().strip() == "kaggle"
 
 
 def test_all_providers_unavailable_is_a_config_error(tmp_path: Path) -> None:
@@ -96,7 +103,7 @@ def test_all_providers_unavailable_is_a_config_error(tmp_path: Path) -> None:
     runner = Runner([])
 
     code = main(
-        [*BASE_ARGS, "--providers", "kaggle", "--provider-used-file", str(used)],
+        [*BASE_ARGS, "--providers", "colab", "--provider-used-file", str(used)],
         runner=runner,
     )
 

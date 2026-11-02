@@ -1,0 +1,250 @@
+# Progress 2026-10-31 — GPU pool resume + issue #204
+
+- **Branch:** `feat/open-issues-contract-hardening`
+- **Related:** ADR-063 (exact global-step resume), ADR-064 (canonical Hub
+  layout), ADR-065 (control plane), ADR-066 (bounded slices), ADR-067
+  (Kaggle adapter + auto fallback), issue #204
+
+## GPU pool: why the campaign stopped
+
+Three scheduled `Train (GPU Pool)` runs failed on 2026-10-31
+(runs 41221001996, 41197538754, 41165937975). Every one failed inside
+`Launch slice on the selected provider`:
+
+```
+launching modal: modal run src/train_dit.py ... --steps 540000 ...
+Error: Workspace ac-yWabHo1HEkyjRi6HzZAzxH has exceeded its spend limit
+modal is blocked by a launch precondition; falling back to kaggle
+skipping kaggle: the kaggle provider needs --kernel-id owner/slug
+provider unavailable: kaggle: ...
+PROVIDER_AUTO_JSON={"exit_code": 5, "provider": null}
+```
+
+So the Modal spend limit was handled correctly (ADR-067 fallback), but the
+fallback itself was not launchable: `KAGGLE_KERNEL_ID` was never set as a
+repository variable (only `MIN_LR` exists), and `build_launch_command` treated
+a missing kernel id as a hard configuration error. `KAGGLE_API_TOKEN` *is*
+configured. The pool therefore made no progress despite a valid second
+provider, and the run-page annotation that exists to surface this was skipped.
+
+### Changes
+
+1. **Kaggle kernel id auto-resolution** (`src/kaggle_provider.py`)
+   - `resolve_kernel_id(api, kernel_id)`: explicit flag → `KAGGLE_KERNEL_ID`
+     env → `<authenticated-account>/tiny-cats-dit-slice`.
+   - `--kernel-id` is no longer `required=True`; `main()` authenticates early
+     only when it must resolve the owner, then reuses that client for push/poll.
+   - `--hf-token-dataset` also falls back to `KAGGLE_HF_TOKEN_DATASET`.
+   - Kaggle creates the kernel on first push, so a fresh repository now needs
+     only `KAGGLE_API_TOKEN`.
+2. **Control plane** (`src/providers.py`, `src/provider_auto.py`)
+   - `build_launch_command` reads `KAGGLE_KERNEL_ID` /
+     `KAGGLE_HF_TOKEN_DATASET` from the environment and no longer rejects a
+     Kaggle launch that omits the flag; the fallback dispatcher can attempt
+     Kaggle instead of pre-skipping it.
+3. **Workflow** (`.github/workflows/train-pool.yml`)
+   - Failure annotation now uses `if: always() && steps.train.outcome ==
+     'failure'`. Without `always()` it inherited "all previous steps
+     succeeded" and was skipped in exactly the failing runs it exists for.
+   - `KAGGLE_KERNEL_ID` / `KAGGLE_HF_TOKEN_DATASET` are forwarded to the launch
+     step (optional).
+   - The provider-report step no longer double-fails a failed slice: the report
+     file is still written and uploaded, the non-zero exit becomes a warning.
+
+### Expected next scheduled run
+
+`plan-slices` reads the Hub pointer and emits 540000 → 600000. Modal is tried
+first; on the spend-limit error the dispatcher now launches Kaggle as
+`<account>/tiny-cats-dit-slice`, which resumes from the Hub checkpoint at
+540000 and reports through the same provider-report/verify pipeline.
+
+## Issue #204: pin browser artifacts and verify integrity
+
+The model contract/manifest and digest verification landed with #195–#207
+(`frontend/src/modelAssets.ts`, `frontend/src/generated/modelManifest.json`,
+Web Crypto check before session creation, and the e2e test
+`@runtime rejects a stale bundled fallback digest`). Remaining gaps closed
+here:
+
+- `scripts/generate_frontend_metadata.py --package-manifest
+  artifacts/manifest.json` generates/validates the release manifest from the
+  *verified* artifact package: a bundled model whose `(sha256, bytes)` is not
+  listed in the package manifest is refused.
+- Tests (`tests/test_frontend_metadata.py`) cover digest/size mismatch,
+  mutable revisions (`main`, tags) being rejected, 40-hex pinning, unverified
+  package bytes, and `--check` detecting a stale artifact or revision.
+- `hubRevision` stays `null` until a release uploads the exact ONNX bytes and
+  records the resulting Hub commit SHA; the browser then makes no request to a
+  mutable `main` ref and uses digest-verified bundled files.
+
+## Verification
+
+```bash
+bash .agents/skills/token_safe_exec.sh \
+  "python -m pytest tests/test_providers.py tests/test_kaggle_provider.py tests/test_frontend_metadata.py -q"
+python .agents/skills/smart_lint.py \
+  "python -m ruff check src/providers.py src/kaggle_provider.py src/provider_auto.py scripts/generate_frontend_metadata.py tests/test_frontend_metadata.py tests/test_providers.py tests/test_kaggle_provider.py"
+```
+
+## Follow-up execution status (2026-10-31)
+
+- **Blocked-Modal → Kaggle end to end:** done. `tests/test_pool_fallback_e2e.py`
+  runs the real dispatcher and kernel packaging with only the Kaggle client
+  faked: the blocked Modal command falls back, the Kaggle launch carries no
+  `--kernel-id`, the generated `kernel-metadata.json` resolves to
+  `<authenticated-account>/tiny-cats-dit-slice`, the slice keeps
+  `--steps 540000` / `--schedule-steps 600000` / `--hub-resume`, and the
+  provider register records `kaggle`. A second test asserts the workflow's
+  failure annotation uses `always() &&`.
+- **Live pool dispatch:** not run from this session. The workflow changes are
+  uncommitted and `feat/open-issues-contract-hardening` does not exist on
+  `origin` (GitHub API: 404), so `gh workflow run --ref` would execute the
+  pre-fix workflow and stall at the same kernel-id gate. Dispatching also
+  launches a real ~6 h GPU slice, so it needs an explicit commit/push decision.
+- **Manifest pinning:** blocked locally — `huggingface_hub.get_token()` is
+  empty and the model repo is private (401 anonymously), so no immutable
+  commit SHA can be resolved. Once the exact bundled ONNX files are uploaded,
+  pin with `python scripts/generate_frontend_metadata.py --revision <40-hex>`
+  followed by `--check`; until then the frontend makes no mutable `main`
+  request and uses digest-verified bundled bytes.
+
+## Live run 41234934096 (2026-10-31 19:35Z)
+
+The dispatched run reached the fallback: Modal was blocked, Kaggle was
+attempted through `src/kaggle_provider.py` (the annotation ran this time), and
+the run failed on two follow-on issues rather than the original gate:
+
+1. `No module named 'kaggle'` — the SDK was not in `requirements.txt`, so the
+   GitHub runner could build the launch command but not authenticate/push.
+   Added `kaggle>=1.7.0`.
+2. `slice_verification_540000.json` reported
+   `training state unreadable: training_state.json` while the checkpoint was
+   valid: `pull_checkpoint_from_hub` zip-validated every downloaded file and
+   quarantined the JSON sidecar. Zip validation is now limited to checkpoint
+   suffixes (`.pt/.pth/.bin/.ckpt`), with a regression test.
+
+After both fixes the control plane can fetch the state that travels with a
+Hub snapshot, so a 540000 slice that is still short of target reports
+`partial` (resumable) instead of a false invalid checkpoint.
+
+### Run 41235455797 (19:44Z)
+
+This re-dispatch did launch Kaggle: kernel version 1 was pushed to
+`dominikoswald/tiny-cats-dit-slice` and the credentials/auth path worked. The
+kernel then errored within a minute, and two more issues surfaced:
+
+1. The kernel log was lost because `kernels_output(file_pattern="*.log")`
+   passed a glob where Kaggle expects a regex (`nothing to repeat at position
+   0`). Now `.*\.log$`, with a regression test that compiles the pattern.
+2. The kernel error is `import modal` in `train_dit.py`: Kaggle ships no Modal
+   SDK, yet the kernel imports `train_dit` through `scripts/train_kaggle.py`.
+   `modal` is now optional (a stub provides the decorator-argument surface),
+   so local/Kaggle training imports cleanly; a subprocess test proves it with
+   `modal` blocked.
+3. Kaggle script kernels upload only `train.py`; the packaged `src/` and
+   `scripts/` never reached the kernel
+   (`FileNotFoundError: /kaggle/src/scripts/train_kaggle.py`). The entrypoint
+   now embeds a base64 zip of the workspace and extracts it under
+   `/kaggle/working/` before running.
+4. No `HF_TOKEN` reached the kernel (the `KAGGLE_HF_TOKEN_DATASET` variable was
+   unset), so a slice could neither resume nor push. The launcher now publishes
+   the token as a private `tiny-cats-hf-token` Kaggle dataset (new version when
+   it already exists) and attaches it to the kernel.
+
+Run 41237445797 confirmed both: the dataset was published
+(`dominikoswald/tiny-cats-hf-token`), but the immediate push was rejected as
+`invalid sources` because Kaggle had not finished processing it. The push now
+retries on that specific error (bounded, 30s) before failing.
+
+Run 41238009001 got the kernel running and training setup started (GPU T4
+detected), then the dataset download failed: `robots.ox.ac.uk` timed out (it
+also times out from this workstation). `data/download.py` now falls back to the
+Zenodo mirror of the same archive (`The Oxford-IIIT Pet.zip`, 789 MB), which
+preserves the original JPEG bytes and therefore the `relpath:size` fingerprint
+used by the resume manifest gate. A socket timeout keeps a dead mirror from
+stalling the kernel.
+
+Run 41238847231 got the kernel running (status RUNNING for 15 min) but the
+dataset prep was capped at 15 minutes. Zenodo measured ~0.5 MB/s here, so the
+789 MB archive needs ~27 minutes; the cap is now 45 minutes. Full-slice
+confirmation therefore takes hours (download + training), not minutes.
+
+## Follow-ups
+
+- After the next Kaggle slice succeeds, set the `KAGGLE_KERNEL_ID` repository
+  variable only if a non-default kernel name is wanted; it is now optional.
+- Pin the production manifest (`--revision <40-hex>`) as part of the next model
+  release so remote artifacts are traceable independently of frontend builds.
+
+## Live run 41240500640 — two post-launch blockers found and fixed
+
+The Kaggle adapter now launches, but the first real slices exposed defects that
+no dry run could reach:
+
+1. **Modal containers crashed at startup** —
+   `ModuleNotFoundError: No module named 'safe_checkpoint'` (slices 555000 and
+   570000). The image mounts `train_dit.py`'s local siblings by hand and this
+   one was missing, so every Modal slice failed after launch and burned its
+   window. Fixed by adding `src/safe_checkpoint.py` to the image, plus a
+   regression test that every local module `train_dit` imports is mounted.
+2. **Kaggle resumed from the stale flat checkpoint** — the slice pulled
+   `checkpoints/pool/dit_model_ema.pt` (60,000 steps) instead of the canonical
+   `latest` snapshot (531,238), trained 60k→87.5k, then the stale-push guard
+   correctly refused to overwrite 531,238. `pull_checkpoint_from_hub` now
+   receives `experiment_id`, so `--hub-resume` resolves the canonical pointer.
+   Fixing this is what makes slices after the first actually advance.
+
+Run 41240500640 was cancelled (its remaining slices could only repeat the
+Modal startup crash), and a verification slice was re-dispatched against the
+fixed branch.
+
+Verification: `tests/test_train_kaggle.py`, `tests/test_pool_fallback_e2e.py`,
+`tests/test_hub_transport.py`, `tests/test_kaggle_provider.py`,
+`tests/test_providers.py` all pass; `ruff check` clean.
+
+## Provider report recorded the wrong slice target
+
+Slices 555000/570000 reported `target_steps: 540000` because `providers.py
+report` preferred the Hub state file's target (written by the earlier slice)
+over the `--target` that was launched. The report now records the launched
+target, so the artifact names the slice that actually ran.
+
+## Resume of the canonical snapshot required a numpy allowlist
+
+The first Kaggle slice against the canonical snapshot (run 41338652199) failed
+in 6 minutes: `safe_checkpoint` refused `step-531238/dit_model_ema.pt` because
+its pre-WP1 RNG state is a raw numpy array and `weights_only=True` does not
+allow numpy's reconstruction globals by default.
+
+`safe_checkpoint.load_torch_checkpoint` gained `allow_numpy_globals`, which
+allowlists only numpy's array/dtype classes (they cannot execute code) while
+keeping `weights_only=True`; the training-resume call site opts in, every
+inference and export path stays strict, and arbitrary pickles are still
+refused. New checkpoints already store the RNG state as plain lists, so this is
+a one-time migration concern for existing snapshots.
+
+## Pool resumes must accept the pre-v2 dataset identity
+
+The second Kaggle slice (run 41340317961) also stopped after 6 minutes: the
+531,238 checkpoint carries a legacy `path-size-v1` dataset identity while the
+current data hashes as `sha256-content-v2`, so the manifest gate rejected the
+resume (`dataset_hash_version: <missing>`).
+
+Pool launches now pass `--allow-legacy-dataset-hash` (Kaggle slice args and the
+Modal command). That migration is still fingerprint-checked — the saved hash
+must equal the legacy fingerprint of the current data — so it accepts the same
+dataset rather than skipping verification. Once a v2 checkpoint lands, the flag
+is inert.
+
+## The legacy fingerprint is layout-specific
+
+Run 41341376287 did pass `--allow-legacy-dataset-hash` (confirmed in the kernel
+config) but the gate still rejected the resume: the checkpoint's
+`path-size-v1` identity was computed on the Modal volume layout, and Kaggle's
+downloaded layout fingerprints differently, so the legacy comparison cannot
+match across providers.
+
+The documented one-off override is `--allow-experiment-mismatch`, which the
+pool workflow already forwards from its `allow_experiment_mismatch` input; the
+migration slice is dispatched with it. Once that slice pushes a v2
+(content-hash) checkpoint, every later slice resumes without an override.

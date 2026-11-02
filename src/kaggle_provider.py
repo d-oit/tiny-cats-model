@@ -31,11 +31,16 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+import base64
+import io
 import json
 import logging
+import os
 import shutil
 import sys
+import tempfile
 import time
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,6 +66,12 @@ EXIT_CANCELLED = 3
 EXIT_TIMEOUT = 4
 EXIT_CONFIG = 5
 
+# Default kernel slug: the owner is resolved from the authenticated Kaggle
+# account, so a fresh repository only needs KAGGLE_API_TOKEN (ADR-067).
+DEFAULT_KERNEL_SLUG = "tiny-cats-dit-slice"
+
+DEFAULT_PUSH_RETRY_ATTEMPTS = 4
+DEFAULT_PUSH_RETRY_DELAY_SECONDS = 30
 DEFAULT_POLL_INTERVAL_SECONDS = 60
 DEFAULT_POLL_TIMEOUT_SECONDS = 19_800  # 5.5 h — inside the 360-min job cap
 DEFAULT_SESSION_TIMEOUT_SECONDS = 21_600  # 6 h kernel session cap
@@ -74,12 +85,18 @@ what ran (slice target, LR horizon, experiment identity).
 
 from __future__ import annotations
 
+import base64
+import io
 import os
 import runpy
+import shutil
 import sys
+import zipfile
 from pathlib import Path
 
-WORKSPACE = Path(__file__).resolve().parent
+# Kaggle script kernels upload ONLY this file; the workspace travels embedded
+# so src/, data/ and scripts/ exist inside the kernel.
+WORKSPACE_B64 = {workspace!r}
 HF_TOKEN_DATASET = {dataset!r}
 SLICE_ARGS = {args!r}
 
@@ -103,7 +120,19 @@ def resolve_hf_token() -> str | None:
         return None
 
 
+def materialise_workspace() -> Path:
+    """Extract the embedded workspace into Kaggle's writable output dir."""
+    target = Path("/kaggle/working/slice-workspace")
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(io.BytesIO(base64.b64decode(WORKSPACE_B64))) as archive:
+        archive.extractall(target)
+    return target
+
+
 def main() -> None:
+    workspace = materialise_workspace()
     token = resolve_hf_token()
     if token:
         os.environ["HF_TOKEN"] = token
@@ -115,7 +144,7 @@ def main() -> None:
         )
     sys.argv = ["train_kaggle.py", *SLICE_ARGS]
     runpy.run_path(
-        str(WORKSPACE / "scripts" / "train_kaggle.py"), run_name="__main__"
+        str(workspace / "scripts" / "train_kaggle.py"), run_name="__main__"
     )
 
 
@@ -189,6 +218,12 @@ def build_slice_args(
         args.append("--no-hub-push")
     if allow_experiment_mismatch:
         args.append("--allow-experiment-mismatch")
+    # Pool slices always resume our own Hub checkpoint, and pre-v2 snapshots
+    # carry a legacy (path-size) dataset identity. The trainer still requires
+    # the saved hash to equal the legacy fingerprint of the current data, so
+    # this accepts only the same dataset — without it every slice resumed from
+    # the 531,238 snapshot died after 6 minutes (2026-11-01).
+    args.append("--allow-legacy-dataset-hash")
     if force_download:
         args.append("--force-download")
     return args
@@ -202,6 +237,61 @@ def _validate_kernel_id(kernel_id: str) -> tuple[str, str]:
             "(e.g. d-oit/tiny-cats-dit-slice)"
         )
     return parts[0], parts[1]
+
+
+def _kaggle_username(api: Any) -> str | None:
+    """Best-effort authenticated Kaggle username from the API client.
+
+    ``kaggle-api`` exposes it differently across versions (an attribute, a
+    config getter, or the parsed ``config_values`` dict), so all three are
+    tried before giving up.
+    """
+    direct = getattr(api, "username", None)
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+
+    getter = getattr(api, "get_config_value", None)
+    if callable(getter):
+        for key in ("username", "KAGGLE_USERNAME"):
+            try:
+                value = getter(key)
+            except Exception:  # pragma: no cover - version-specific lookup
+                continue
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    config = getattr(api, "config_values", None)
+    if isinstance(config, dict):
+        value = config.get("username")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def resolve_kernel_id(api: Any, kernel_id: str | None) -> str:
+    """Resolve the slice kernel ref: flag → env → authenticated account.
+
+    Kaggle creates the kernel on first push, so a fresh repository does not
+    need a pre-created kernel or a manually set repository variable: the
+    owner comes from the authenticated account and the slug is fixed.
+
+    Raises:
+        KaggleLaunchError: When no owner can be resolved; the caller reports
+            an actionable configuration error instead of guessing.
+    """
+    explicit = kernel_id or os.environ.get("KAGGLE_KERNEL_ID")
+    if explicit:
+        _validate_kernel_id(explicit)
+        return explicit.strip()
+
+    username = _kaggle_username(api)
+    if not username:
+        raise KaggleLaunchError(
+            "cannot resolve the Kaggle kernel id: pass --kernel-id owner/slug "
+            "or set KAGGLE_KERNEL_ID (the authenticated account did not expose "
+            "a username)"
+        )
+    return f"{username}/{DEFAULT_KERNEL_SLUG}"
 
 
 def _prepare_workspace(workspace: Path) -> None:
@@ -218,6 +308,55 @@ def _prepare_workspace(workspace: Path) -> None:
             else:
                 child.unlink()
     workspace.mkdir(parents=True, exist_ok=True)
+
+
+def _workspace_b64(workspace: Path) -> str:
+    """Base64 zip of everything the kernel entrypoint needs at run time."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(workspace.rglob("*")):
+            if not path.is_file() or path.name in (ENTRY_FILE, KERNEL_METADATA_FILE):
+                continue
+            archive.write(path, path.relative_to(workspace).as_posix())
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def ensure_hf_token_dataset(api: Any, token: str) -> str:
+    """Publish ``HF_TOKEN`` as a private Kaggle dataset and return its ref.
+
+    Kaggle cannot attach secrets at kernel-push time (kaggle-api#582), so the
+    documented workaround is a private dataset the kernel mounts. Creating it
+    here keeps unattended slices resumable without a manual repo variable.
+    """
+    username = _kaggle_username(api)
+    if not username:
+        raise KaggleLaunchError(
+            "cannot publish the HF token dataset: the authenticated account did "
+            "not expose a username"
+        )
+    dataset_ref = f"{username}/tiny-cats-hf-token"
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp) / "tiny-cats-hf-token"
+        folder.mkdir()
+        (folder / "HF_TOKEN").write_text(token.strip() + "\n")
+        (folder / "dataset-metadata.json").write_text(
+            json.dumps(
+                {
+                    "title": "tiny cats hf token",
+                    "id": dataset_ref,
+                    "licenses": [{"name": "CC0-1.0"}],
+                },
+                indent=2,
+            )
+        )
+        try:
+            api.dataset_create_new(str(folder), public=False, quiet=True)
+        except Exception:
+            # Dataset already exists: publish a new version with the current
+            # token instead of failing the launch (rotated/expired tokens are
+            # the common case; see ADR-041).
+            api.dataset_create_version(str(folder), "refresh HF_TOKEN", quiet=True)
+    return dataset_ref
 
 
 def write_kernel_metadata(
@@ -289,7 +428,11 @@ def build_kernel_workspace(
         shutil.copy2(source, target)
 
     (workspace / ENTRY_FILE).write_text(
-        ENTRY_TEMPLATE.format(dataset=hf_token_dataset, args=slice_args)
+        ENTRY_TEMPLATE.format(
+            workspace=_workspace_b64(workspace),
+            dataset=hf_token_dataset,
+            args=slice_args,
+        )
     )
     write_kernel_metadata(
         workspace,
@@ -384,6 +527,42 @@ def push_kernel(
     return info
 
 
+def push_kernel_with_retry(
+    api: Any,
+    workspace: str | Path,
+    *,
+    session_timeout_seconds: int | None = DEFAULT_SESSION_TIMEOUT_SECONDS,
+    attempts: int = DEFAULT_PUSH_RETRY_ATTEMPTS,
+    delay_seconds: int = DEFAULT_PUSH_RETRY_DELAY_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """Push, retrying while Kaggle has not processed a fresh dataset source.
+
+    A dataset created (or versioned) moments before the push is rejected as an
+    ``invalid dataset source`` until Kaggle finishes processing it; the push is
+    otherwise a cheap metadata upload, so a bounded retry is safe. Any other
+    push error is raised immediately.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return push_kernel(
+                api, workspace, session_timeout_seconds=session_timeout_seconds
+            )
+        except Exception as exc:
+            retryable = "invalid sources" in str(exc).lower()
+            if not retryable or attempt == attempts:
+                raise
+            logger.info(
+                "kernel sources not ready (attempt %d/%d): %s; retrying in %ss",
+                attempt,
+                attempts,
+                exc,
+                delay_seconds,
+            )
+            sleep(delay_seconds)
+    raise KaggleLaunchError("kernel push retries exhausted")  # pragma: no cover
+
+
 def wait_for_kernel(
     api: Any,
     kernel_id: str,
@@ -461,8 +640,11 @@ def fetch_kernel_logs(
     download_dir = Path(download_dir)
     download_dir.mkdir(parents=True, exist_ok=True)
     try:
+        # Kaggle treats file_pattern as a *regex*: "*.log" raises
+        # "nothing to repeat at position 0" and loses the only diagnostic a
+        # failed kernel leaves behind.
         api.kernels_output(
-            kernel_id, path=str(download_dir), file_pattern="*.log", force=True
+            kernel_id, path=str(download_dir), file_pattern=r".*\.log$", force=True
         )
     except Exception as exc:
         logger.warning("could not fetch kernel logs: %s", exc)
@@ -495,9 +677,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--target", type=int, required=True, help="Global step target")
     parser.add_argument(
-        "--kernel-id", required=True, help="owner/slug of the slice kernel"
-    )
-    parser.add_argument(
         "--kernel-title", default=None, help="Kernel title (default: slug)"
     )
     parser.add_argument("--hub-repo", default="d4oit/tiny-cats-model")
@@ -516,6 +695,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--hf-token-dataset",
         default=None,
         help="Private Kaggle dataset (owner/slug) holding an HF_TOKEN file",
+    )
+    parser.add_argument(
+        "--kernel-id",
+        default=None,
+        help=(
+            "owner/slug of the slice kernel; defaults to $KAGGLE_KERNEL_ID or "
+            f"<authenticated-account>/{DEFAULT_KERNEL_SLUG}"
+        ),
     )
     parser.add_argument("--no-force-download", action="store_true")
     parser.add_argument(
@@ -547,6 +734,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     repo_root = Path(__file__).resolve().parent.parent
+    # Kernel id and HF-token dataset resolve from flags → env → account. The
+    # control plane therefore launches Kaggle with only KAGGLE_API_TOKEN set.
+    hf_token_dataset = args.hf_token_dataset or os.environ.get(
+        "KAGGLE_HF_TOKEN_DATASET"
+    )
     slice_args = build_slice_args(
         steps=args.target,
         batch_size=args.batch_size,
@@ -563,13 +755,50 @@ def main(argv: list[str] | None = None) -> int:
         allow_experiment_mismatch=args.allow_experiment_mismatch,
         force_download=not args.no_force_download,
     )
+
+    kernel_id: str | None = args.kernel_id or os.environ.get("KAGGLE_KERNEL_ID")
+    hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+    api: Any | None = None
+    if not args.dry_run and (not kernel_id or (hf_token and not hf_token_dataset)):
+        # Resolving the owner / publishing the token dataset need an
+        # authenticated client, which a dry run deliberately avoids touching.
+        try:
+            api = _load_api()
+        except Exception as exc:
+            logger.error("Kaggle authentication failed (%s)", exc)
+            return EXIT_CONFIG
+        if not kernel_id:
+            try:
+                kernel_id = resolve_kernel_id(api, None)
+            except Exception as exc:
+                logger.error("could not resolve the Kaggle kernel id (%s)", exc)
+                return EXIT_CONFIG
+            logger.info(
+                "resolved kernel id %s from the authenticated account", kernel_id
+            )
+        if hf_token and not hf_token_dataset:
+            try:
+                hf_token_dataset = ensure_hf_token_dataset(api, hf_token)
+            except Exception as exc:
+                # A slice without the token cannot resume from or push to the
+                # Hub, so burning GPU time on it is worse than failing here.
+                logger.error("could not publish the HF token dataset (%s)", exc)
+                return EXIT_CONFIG
+            logger.info("HF token dataset ready: %s", hf_token_dataset)
+
+    if not kernel_id:
+        logger.error(
+            "no kernel id: pass --kernel-id owner/slug or set KAGGLE_KERNEL_ID"
+        )
+        return EXIT_CONFIG
+
     try:
         workspace = build_kernel_workspace(
             repo_root,
             args.workspace,
-            kernel_id=args.kernel_id,
+            kernel_id=kernel_id,
             slice_args=slice_args,
-            hf_token_dataset=args.hf_token_dataset,
+            hf_token_dataset=hf_token_dataset,
             title=args.kernel_title,
         )
     except (ValueError, OSError) as exc:
@@ -582,18 +811,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"KAGGLE_DRY_RUN workspace={workspace}")
         return EXIT_COMPLETE
 
-    try:
-        api = _load_api()
-    except Exception as exc:
-        logger.error(
-            "Kaggle authentication failed (%s); set KAGGLE_API_TOKEN or "
-            "~/.kaggle/access_token",
-            exc,
-        )
-        return EXIT_CONFIG
+    if api is None:
+        try:
+            api = _load_api()
+        except Exception as exc:
+            logger.error(
+                "Kaggle authentication failed (%s); set KAGGLE_API_TOKEN or "
+                "~/.kaggle/access_token",
+                exc,
+            )
+            return EXIT_CONFIG
 
     try:
-        info = push_kernel(
+        info = push_kernel_with_retry(
             api,
             workspace,
             session_timeout_seconds=args.session_timeout_seconds,
@@ -603,14 +833,14 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_CONFIG
     logger.info(
         "pushed %s version %s%s",
-        info.get("ref") or args.kernel_id,
+        info.get("ref") or kernel_id,
         info.get("version"),
         f" — {info['url']}" if info.get("url") else "",
     )
 
     outcome = wait_for_kernel(
         api,
-        args.kernel_id,
+        kernel_id,
         pushed_version=info.get("version"),
         poll_interval_seconds=args.poll_interval_seconds,
         timeout_seconds=args.poll_timeout_seconds,
@@ -620,12 +850,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     log_path = fetch_kernel_logs(
         api,
-        args.kernel_id,
+        kernel_id,
         download_dir=args.download_dir,
         log_file=args.log_file,
     )
     summary = {
-        "kernel": args.kernel_id,
+        "kernel": kernel_id,
         "version": info.get("version"),
         "status": outcome.status,
         "failure_message": outcome.failure_message,
