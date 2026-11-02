@@ -200,6 +200,14 @@ Kaggle cannot attach secrets at kernel-push time (kaggle-api#582), so the
 kernel reads `HF_TOKEN` from the private dataset
 (`/kaggle/input/<dataset>/HF_TOKEN`), the environment, or Kaggle Secrets.
 
+Cross-provider resume needs *dataset-identity parity*: a Kaggle slice must
+materialise the data with `data/download.py` (`--force-download`, on by
+default) and discard any leftover `/kaggle/working` copy. A stale copy from a
+mounted dataset silently changes the `sha256-content-v2` identity, so every
+later resume on another provider is rejected (step-540000, 2026-11-02).
+Kaggle exposes 2 T4s while Modal exposes 1, so RNG restore clamps saved CUDA
+states to the local device count instead of raising `IndexError`.
+
 ## Code Style
 
 - Ruff linting + formatting (88 char line)

@@ -8,8 +8,10 @@ ended exactly on a boundary does not re-upload the same snapshot (ADR-064/067).
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
@@ -112,6 +114,49 @@ def test_hub_resume_uses_the_canonical_snapshot(tmp_path: Path, monkeypatch) -> 
     assert calls[0]["experiment_id"] == "dit-breed-conditioned-v4"
     assert calls[0]["checkpoint_name"] == "dit_model_ema.pt"
     assert calls[0]["output_dir"] == str(tmp_path)
+
+
+def test_force_download_discards_a_stale_staged_copy(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A leftover /kaggle/working copy must not survive --force-download.
+
+    Kaggle persists the working directory across kernel versions; a copy from
+    an earlier mounted-dataset run previously short-circuited the download and
+    gave the slice a different dataset identity (step-540000, 2026-11-02).
+    """
+    data_dir = tmp_path / "cats-data"
+    (data_dir / "cat").mkdir(parents=True)
+    stale = data_dir / "cat" / "Abyssinian_1.jpg"
+    stale.write_bytes(b"stale")
+    calls: list[list[str]] = []
+
+    envs: list[dict] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        calls.append(command)
+        envs.append(kwargs["env"])  # type: ignore[arg-type]
+        assert not stale.exists(), "stale data must be gone before downloading"
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    # ``prepare_kaggle_data`` imports subprocess inside the function, so the
+    # module attribute is the seam.
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert train_kaggle.prepare_kaggle_data(data_dir, force_download=True) is True
+    assert calls and calls[0][0] == "python"
+    assert envs[0]["DATA_DIR"] == str(data_dir)
+
+
+def test_existing_data_is_reused_without_force_download(
+    tmp_path: Path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "cats-data"
+    data_dir.mkdir()
+    (data_dir / "cat.jpg").write_bytes(b"x")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest_fail())
+
+    assert train_kaggle.prepare_kaggle_data(data_dir, force_download=False) is True
 
 
 def pytest_fail() -> bool:  # pragma: no cover - only reached on regression

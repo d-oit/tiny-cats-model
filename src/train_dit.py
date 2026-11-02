@@ -1386,6 +1386,15 @@ class DiTTrainer:
             # (train-pool.yml --no-hub-push disables; degrades gracefully).
             if not no_hub_push:
                 logger.info("GPU pool: pushing checkpoints to HuggingFace Hub...")
+                # Re-read the sidecar: `pool_state` was captured *before*
+                # training, so a slice that reached its target pushed the
+                # previous step and HuggingFace skipped it as an empty commit
+                # (step 540,100 never reached the canonical pointer,
+                # 2026-11-02).
+                latest_state = (
+                    read_training_state(Path(output).parent / TRAINING_STATE_FILENAME)
+                    or pool_state
+                )
                 self._push_to_hub(
                     hub_repo=hub_repo,
                     output=output,
@@ -1393,11 +1402,13 @@ class DiTTrainer:
                     logger=logger,
                     experiment_id=experiment_id,
                     completed_steps=(
-                        int(pool_state["completed_steps"]) if pool_state else None
+                        int(latest_state["completed_steps"])
+                        if latest_state and "completed_steps" in latest_state
+                        else None
                     ),
                     training_state_path=(
                         str(Path(output).parent / TRAINING_STATE_FILENAME)
-                        if pool_state
+                        if latest_state
                         else None
                     ),
                 )

@@ -164,10 +164,25 @@ def prepare_kaggle_data(data_dir: str | Path, *, force_download: bool = False) -
     """
     data_path = Path(data_dir)
 
-    # Already has data
-    if data_path.exists() and list(data_path.iterdir()):
+    # A pre-existing directory is only reusable when fingerprint parity is not
+    # required. /kaggle/working survives across kernel versions, so a copy left
+    # by an earlier mounted-dataset run silently defeated --force-download and
+    # produced a checkpoint with a different dataset identity (step-540000,
+    # 2026-11-02: sha256-content-v2 446f… instead of the canonical 160d…).
+    if not force_download and data_path.exists() and any(data_path.iterdir()):
         logger.info(f"Dataset ready at {data_dir}")
         return True
+
+    if force_download and data_path.exists() and any(data_path.iterdir()):
+        logger.info(
+            f"Discarding pre-existing {data_dir} so the dataset fingerprint "
+            "matches the canonical download"
+        )
+        try:
+            shutil.rmtree(data_path)
+        except OSError as exc:
+            logger.error(f"Cannot clear {data_dir} for fingerprint parity: {exc}")
+            return False
 
     # Try Kaggle dataset inputs
     kaggle_inputs = [

@@ -1434,6 +1434,39 @@ modal run src/train_dit.py::train_dit_on_gpu \
 
 ---
 
+## Cross-provider resume: three defects the production slice exposed (2026-11-02)
+
+A bounded `train.yml`-style Hub-resume slice (Modal, 100 steps past the pool's
+540,000 checkpoint) failed three times before finishing. Each failure was a real
+defect that unit tests alone never reached, because they only appear when a
+Kaggle-produced checkpoint is resumed on Modal:
+
+1. **Dataset identity diverged.** The 540k snapshot carried
+   `dataset_hash=446f…` (`provider=kaggle`) while Modal's canonical download is
+   `160d…`. `--force-download` *was* requested, but `prepare_kaggle_data` returned
+   early whenever `/kaggle/working/cats-data` already had files — and Kaggle
+   persists that directory across kernel versions. The flag now discards a
+   pre-existing copy before materialising the data.
+2. **CUDA RNG restore crashed.** Kaggle saved RNG state for 2 T4s;
+   `torch.cuda.set_rng_state_all` indexes every saved state against
+   `default_generators`, so the surplus state raised `IndexError` on Modal's
+   single T4. Restore now clamps to `torch.cuda.device_count()` and treats a
+   restore failure as a warning, not a crash.
+3. **Generator packaging demanded impossible provenance.**
+   `optimize_onnx(..., model_type="generator")` validates on synthetic inputs,
+   so `provenance` is legitimately `None`; the guard required it anyway and
+   failed *after* 100 steps of training had completed. Only real-image
+   validation now requires validation provenance.
+
+A fourth defect surfaced during verification: the end-of-run Hub push used the
+`completed_steps` captured *before* training, so a slice that reached its target
+pushed the previous step and HuggingFace skipped it as an empty commit. The push
+re-reads `training_state.json` first.
+
+**Pattern extracted**: a "bounded production slice" is not a smoke test — run it
+on the *other* provider from the one that produced the checkpoint, and assert the
+canonical Hub pointer advanced, not merely that the job exited 0.
+
 ## Open Questions
 
 - [ ] How to handle large dataset uploads to Modal volumes?

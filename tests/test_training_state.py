@@ -286,6 +286,41 @@ class TestRngState:
         old = np.random.get_state()
         restore_rng_state({"numpy": old})
 
+    def test_cuda_states_are_clamped_to_local_device_count(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A 2-GPU Kaggle checkpoint must resume on Modal's single T4.
+
+        ``torch.cuda.set_rng_state_all`` indexes every saved state against
+        ``default_generators``, so the surplus second state raised IndexError
+        and killed every cross-provider resume (2026-11-02, step-540000).
+        """
+        calls: list[list[Any]] = []
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+        monkeypatch.setattr(
+            torch.cuda,
+            "set_rng_state_all",
+            lambda states: calls.append(list(states)),
+        )
+
+        restore_rng_state({"cuda": ["device-0", "device-1"]})
+
+        assert calls == [["device-0"]]
+
+    def test_cuda_restore_failure_is_not_fatal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+
+        def boom(states: Any) -> None:
+            raise IndexError("tuple index out of range")
+
+        monkeypatch.setattr(torch.cuda, "set_rng_state_all", boom)
+
+        restore_rng_state({"cuda": ["device-0"]})  # must not raise
+
 
 class TestFingerprints:
     def test_dataset_fingerprint_is_stable(self, tmp_path: Path) -> None:

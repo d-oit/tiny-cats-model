@@ -135,6 +135,37 @@ def test_optimize_writes_report_and_raises_when_required_gate_fails(
     assert document["calibration_provenance"]["source"] == "not_required_weight_only"
 
 
+def test_generator_package_accepts_synthetic_validation_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Generator validation is synthetic, so it carries no provenance.
+
+    The guard required calibration *and* validation provenance, which made
+    every generator artifact package fail after training had finished
+    (step-540000, 2026-11-02). Only a real-image run can supply provenance.
+    """
+    model = tmp_path / "generator.onnx"
+    model.write_bytes(b"fake model")
+    monkeypatch.setattr(optimizer, "apply_dynamic_quantization", _fake_dynamic)
+    monkeypatch.setattr(
+        optimizer,
+        "validate_accuracy",
+        lambda *args, **kwargs: {
+            "model_type": "generator",
+            "real_images": False,
+            "provenance": None,
+            "prediction_match_rate": None,
+        },
+    )
+
+    result = optimizer.optimize_onnx(
+        model, tmp_path / "output", method="dynamic", model_type="generator"
+    )
+
+    assert result["accuracy_validation"]["provenance"] is None
+    assert result["calibration_provenance"]["selected_paths"] == []
+
+
 def test_optimize_passes_parity_gate_with_real_validation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

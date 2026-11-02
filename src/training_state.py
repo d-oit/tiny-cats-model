@@ -356,10 +356,17 @@ def restore_rng_state(state: dict[str, Any]) -> None:
     """
     if "torch" in state:
         torch.set_rng_state(state["torch"])
-    if "cuda" in state and torch.cuda.is_available():
+    cuda_states = state.get("cuda")
+    if cuda_states and torch.cuda.is_available():
+        # Device counts differ across providers (Kaggle exposes 2 T4s, Modal 1).
+        # ``set_rng_state_all`` indexes every saved state against
+        # ``default_generators`` and raises IndexError for the surplus ones, so
+        # restore only the devices this process actually has. The campaign's
+        # single-device training only depends on device 0.
+        available = torch.cuda.device_count()
         try:
-            torch.cuda.set_rng_state_all(state["cuda"])
-        except RuntimeError as exc:  # device count changed across providers
+            torch.cuda.set_rng_state_all(list(cuda_states)[:available])
+        except (RuntimeError, IndexError) as exc:  # device count changed
             logger.warning("Could not restore CUDA RNG state: %s", exc)
     if "python" in state:
         random.setstate(state["python"])
