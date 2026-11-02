@@ -89,7 +89,7 @@ jobs:
         # pack before anything is dispatched.
         run: python scripts/check_modal_container_contract.py
 
-      - name: End-to-end training pipeline verification (issue #163 WP8)
+      - name: "End-to-end training pipeline verification (issue #163 WP8)"
         run: |
           # CPU smoke + exact resume (10 -> 20) + ONNX export/runtime inference
           # + quantized ONNX + final artifact package/refusal gates.

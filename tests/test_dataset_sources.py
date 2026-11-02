@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 import zipfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
@@ -54,7 +55,7 @@ class TestSourceFallback:
 
         def fake_download(url: str, dest: Path, show_progress: bool = True) -> None:
             calls.append(url)
-            if "robots.ox.ac.uk" in url:
+            if urlparse(url).hostname == "robots.ox.ac.uk":
                 raise OSError("timed out")
             _write_zip(
                 dest,
@@ -86,7 +87,7 @@ class TestSourceFallback:
 
         def fake_download(url: str, dest: Path, show_progress: bool = True) -> None:
             calls.append(url)
-            if "robots.ox.ac.uk" in url:
+            if urlparse(url).hostname == "robots.ox.ac.uk":
                 dest.write_bytes(b"not a tar")
                 return
             _write_zip(dest, {"The Oxford-IIIT Pet/images/Bengal_1.jpg": b"x"})
