@@ -419,6 +419,9 @@ image = (
         {
             "HF_XET_HIGH_PERFORMANCE": "1",  # Faster HuggingFace downloads
             "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512",  # Memory optimization
+            # ADR-068: the entrypoint is hydrated from /root, so image
+            # copies under /app must be importable without cwd.
+            "PYTHONPATH": "/app",
         }
     )
     .uv_pip_install(
@@ -429,15 +432,10 @@ image = (
         "onnx==1.17.0",
         "onnxruntime==1.20.0",
     )
-    .add_local_file("src/train.py", "/app/train.py")
-    .add_local_file("src/dataset.py", "/app/dataset.py")
-    .add_local_file("src/model.py", "/app/model.py")
-    .add_local_file("src/export_onnx.py", "/app/export_onnx.py")
-    .add_local_file("src/optimize_onnx.py", "/app/optimize_onnx.py")
-    .add_local_file("src/volume_utils.py", "/app/volume_utils.py")
-    .add_local_file("src/auth_utils.py", "/app/auth_utils.py")
-    .add_local_file("src/retry_utils.py", "/app/retry_utils.py")
-    .add_local_file("src/experiment_tracker.py", "/app/experiment_tracker.py")
+    # ADR-068: mount the whole package, not a hand-maintained whitelist. The
+    # previous list omitted safe_checkpoint/dataset_manifest and the classifier
+    # slice died inside the container on a missing module.
+    .add_local_dir("src", "/app", ignore=["__pycache__", "*.pyc"])
     .add_local_file("data/download.py", "/app/data/download.py")
     .add_local_file("data/download.sh", "/app/data/download.sh")
 )

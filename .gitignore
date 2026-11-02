@@ -154,3 +154,5 @@ train_fail_log.txt
 # =============================================================================
 .mimocode/
 .cron-lock
+.do-harness/
+.agents/events/

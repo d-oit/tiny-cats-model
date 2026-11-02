@@ -191,7 +191,10 @@ def test_modal_image_mounts_every_local_module_train_dit_imports() -> None:
     imported = set(re.findall(r"^from ([a-z_]+) import", source, re.MULTILINE))
     local = {name for name in imported if (root / "src" / f"{name}.py").exists()}
     mounted = set(re.findall(r'add_local_file\("src/([a-z_]+)\.py"', source))
-    missing = sorted(local - mounted)
+    # ADR-068: a whole-package mount covers every local module by construction;
+    # a per-file whitelist drifted twice and broke dispatched slices.
+    whole_package = re.search(r'add_local_dir\(\s*"src"\s*,\s*"/app"', source)
+    missing = [] if whole_package else sorted(local - mounted)
     assert not missing, f"Modal image is missing local modules: {missing}"
 
 

@@ -75,11 +75,16 @@ def _numpy_safe_globals() -> list[Any]:
         import numpy as np
     except ImportError:  # pragma: no cover - numpy is a hard dependency
         return []
+    from importlib import import_module
+
+    # One name, two module layouts: importing the attribute directly in both
+    # branches makes mypy treat the second import as a redefinition.
     try:
-        from numpy._core.multiarray import _reconstruct
+        _multiarray = import_module("numpy._core.multiarray")
     except ImportError:  # pragma: no cover - numpy < 2
-        from numpy.core.multiarray import _reconstruct
-    allowed: list[Any] = [np.ndarray, np.dtype, _reconstruct]
+        _multiarray = import_module("numpy.core.multiarray")
+    reconstruct = vars(_multiarray)["_reconstruct"]
+    allowed: list[Any] = [np.ndarray, np.dtype, reconstruct]
     # numpy >= 2 pickles the dtype as e.g. numpy.dtypes.UInt32DType, which
     # weights_only also refuses; numpy 1.x only needs the dtype class above.
     dtype_module = getattr(np, "dtypes", None)

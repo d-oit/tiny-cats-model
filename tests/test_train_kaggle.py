@@ -94,11 +94,10 @@ def test_hub_resume_uses_the_canonical_snapshot(tmp_path: Path, monkeypatch) -> 
 
     import gpu_pool
 
-    monkeypatch.setattr(
-        gpu_pool,
-        "pull_checkpoint_from_hub",
-        lambda **kwargs: calls.append(kwargs) or None,
-    )
+    def fake_pull(**kwargs: object) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(gpu_pool, "pull_checkpoint_from_hub", fake_pull)
 
     pulled = train_kaggle.pull_resume_checkpoint(
         hub_repo="d-oit/tiny-cats-model",

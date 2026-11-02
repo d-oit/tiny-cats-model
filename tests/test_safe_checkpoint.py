@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -59,15 +60,19 @@ def test_numpy_rng_bundle_needs_the_resume_opt_in(tmp_path: Path) -> None:
     # A pre-WP1 checkpoint stores the numpy RNG state as a raw array, which is
     # what blocked the 531,238 Hub snapshot from resuming on 2026-11-01.
     checkpoint = tmp_path / "legacy_rng.pt"
-    rng = np.random.get_state(legacy=True)
+    # numpy's stubs type get_state(legacy=True) as a dict; at runtime it is the
+    # legacy tuple (name, keys, pos, has_gauss, cached_gaussian).
+    rng: Any = np.random.get_state(legacy=True)
     torch.save({"rng_state": rng}, checkpoint)
 
     with pytest.raises(UnsafeCheckpointError, match="requires unrestricted"):
         load_torch_checkpoint(checkpoint)
 
     loaded = load_torch_checkpoint(checkpoint, allow_numpy_globals=True)
-    assert loaded["rng_state"][0] == rng[0]
-    assert loaded["rng_state"][1].tolist() == rng[1].tolist()
+    state: Any = loaded["rng_state"]
+    assert isinstance(state, tuple)
+    assert state[0] == rng[0]
+    assert state[1].tolist() == rng[1].tolist()
 
 
 def test_numpy_opt_in_still_refuses_arbitrary_pickles(tmp_path: Path) -> None:

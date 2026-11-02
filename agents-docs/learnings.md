@@ -16,6 +16,37 @@ After each task, capture learnings here. Use this for continuous improvement.
 
 ## Key Learnings
 
+### fix: Modal container import contract (November 2026)
+
+**Date**: 2026-11-02
+**Type**: bug fix + guardrail
+**Areas**: modal, container image, agent workflow
+**Related**: ADR-068, scripts/check_modal_container_contract.py,
+`.agents/skills/modal-container-contract`
+
+**What failed**: the live Modal app `ap-22eiZTSjSQ8chxvTD5VGA8` failed every
+container startup with
+`ModuleNotFoundError: No module named 'safe_checkpoint'` at
+`/root/train_dit.py:54`.
+
+**Root cause**: `modal run` hydrates the entrypoint from `/root`, importing it
+before any function body runs. The image copies modules into `/app`, and
+`sys.path` only gained `/app` inside `@modal.enter` — after the import. The
+earlier 2026-10-31 fix added the missing mount, which was necessary but not
+sufficient: the mount existed, the import order was still wrong.
+
+**Fix**: bootstrap `sys.path` (module dir + `/app`) above the first local
+import, and set `PYTHONPATH=/app` in the image env.
+
+**Pattern extracted**:
+1. Container hydration imports run before any in-function setup; anything the
+   module imports at top level must resolve from the image, not the cwd.
+2. A guardrail must test *ordering and reachability*, not just file presence.
+3. Reproduce container-only failures by importing the module from a directory
+   with no sibling modules.
+4. Wire the check into a computational sensor (`do-harness`) so it fires before
+   a GPU slice is dispatched, not inside one.
+
 ### fix: Classifier Training Data Directory Path (March 2026)
 
 **Date**: 2026-03-04

@@ -83,6 +83,12 @@ jobs:
           pytest tests/ -v --cov=. --cov-report=xml --cov-report=term-missing
           # test_gpu_pool.py is discovered automatically by pytest tests/
 
+      - name: Harness guardrail - container import contract (ADR-068)
+        # A Modal slice that fails container hydration burns its whole window.
+        # This sensor proves mounts, PYTHONPATH, bootstrap order and the Kaggle
+        # pack before anything is dispatched.
+        run: python scripts/check_modal_container_contract.py
+
       - name: End-to-end training pipeline verification (issue #163 WP8)
         run: |
           # CPU smoke + exact resume (10 -> 20) + ONNX export/runtime inference

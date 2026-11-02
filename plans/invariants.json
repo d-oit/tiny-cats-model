@@ -1,0 +1,8 @@
+[
+  {
+    "invariant": "Computational sensors strictly supersede LLM self-assessment",
+    "rationale": "Automated exit codes are the only proof a subtask is complete",
+    "sensor": "do-harness verify",
+    "category": "verification"
+  }
+]

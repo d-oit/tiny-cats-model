@@ -16,7 +16,17 @@ python src/train_dit.py --data-dir data/cats --steps 100 --batch-size 8
 
 # Quality gate
 bash scripts/quality-gate.sh
+
+# Harness sensors (do-harness): computational guardrails, not self-assessment
+npx -y do-harness verify --set verification --changed
+python scripts/check_modal_container_contract.py
 ```
+
+> **do-harness versions:** git hooks prefer `command -v do-harness` over the npx
+> package. Keep the PATH binary at the same version as the workspace schema
+> (`do-harness doctor` / `do-harness init-db --check`); a stale binary fails
+> every commit with `state database has migration N, newer than this binary`.
+> Set `DO_HARNESS_BIN` to override.
 
 ## Training
 
@@ -71,6 +81,23 @@ python src/train_dit.py --data-dir data/cats --config configs/dit_train_config.y
 > (positional args fail with `Got unexpected extra argument`). See ADR-048/ADR-051/ADR-054.
 > Selection and early stopping use the held-out validation loss (EMA weights when available),
 > not the augmented training-batch average.
+
+### Modal Container Import Contract (ADR-068)
+
+`modal run` mounts the entrypoint at `/root/train_dit.py` and imports it during
+container hydration — before `@modal.enter`, before `chdir`. The image copies
+live in `/app`, so `src/train_dit.py` bootstraps `sys.path` **above** its first
+local import and the image sets `PYTHONPATH=/app`.
+
+```bash
+# Guardrail: mounts + PYTHONPATH + bootstrap order + foreign-cwd import
+python scripts/check_modal_container_contract.py
+```
+
+Rules: a module imported by `train_dit.py` must be mounted with
+`add_local_file` into the `PYTHONPATH` directory; local imports stay below the
+bootstrap; never fix a startup `ModuleNotFoundError` by deleting the import or
+wrapping it in `try/except`. See `@skill modal-container-contract`.
 
 ### Early Stopping
 
