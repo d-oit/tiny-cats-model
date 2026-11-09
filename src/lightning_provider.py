@@ -340,9 +340,9 @@ def _watch_job(job: Any, status_type: Any, log_file: str | Path) -> tuple[int, s
                 status = "unknown"
             code = EXIT_CONFIG
     finally:
-        for sig, previous in previous_handlers.items():
+        for signal_number, previous in previous_handlers.items():
             with suppress(ValueError):
-                signal.signal(sig, previous)
+                signal.signal(signal_number, previous)
         _collect_logs(job, log_file)
     if interrupted:
         code = EXIT_CANCELLED

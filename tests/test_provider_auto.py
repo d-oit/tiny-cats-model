@@ -217,7 +217,7 @@ def test_exit_six_is_a_definite_prelaunch_block(
     import provider_auto
 
     class FakeProcess:
-        stdout = iter([])
+        stdout: tuple[str, ...] = ()
 
         def wait(self) -> int:
             return EXIT_LAUNCH_BLOCKED
