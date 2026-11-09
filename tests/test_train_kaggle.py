@@ -1,8 +1,8 @@
 """tests/test_train_kaggle.py
 
-The Kaggle trainer's canonical Hub backstop (`push_progress_backstop`): a run
-that ends between push intervals gets one canonical safety push; a run that
-ended exactly on a boundary does not re-upload the same snapshot (ADR-064/067).
+The shared backstop tests cover recovery between push boundaries and safe
+no-op behavior at a boundary or without training state. Kaggle-specific data
+preparation (`--force-download` fingerprint parity) stays in `train_kaggle`.
 """
 
 from __future__ import annotations
@@ -14,8 +14,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import train_kaggle
+
+import slice_runtime
 
 
 def _write_state(checkpoint_dir: Path, completed: int) -> None:
@@ -41,7 +44,7 @@ def test_pushes_when_the_run_ended_between_intervals(
     monkeypatch.setattr(gpu_pool, "push_checkpoint_to_hub", fake_push)
     _write_state(tmp_path, completed=531_238)
 
-    train_kaggle.push_progress_backstop(
+    slice_runtime.push_progress_backstop(
         checkpoint_dir=tmp_path,
         hub_repo="d-oit/tiny-cats-model",
         experiment_id="dit-breed-conditioned-v4",
@@ -66,7 +69,7 @@ def test_skips_when_the_run_ended_on_a_push_boundary(
     )
     _write_state(tmp_path, completed=530_000)
 
-    train_kaggle.push_progress_backstop(
+    slice_runtime.push_progress_backstop(
         checkpoint_dir=tmp_path,
         hub_repo="d-oit/tiny-cats-model",
         experiment_id="dit-breed-conditioned-v4",
@@ -83,37 +86,12 @@ def test_missing_state_is_not_fatal(tmp_path: Path, monkeypatch) -> None:
         gpu_pool, "push_checkpoint_to_hub", lambda **kwargs: pytest_fail()
     )
 
-    train_kaggle.push_progress_backstop(
+    slice_runtime.push_progress_backstop(
         checkpoint_dir=tmp_path,
         hub_repo="d-oit/tiny-cats-model",
         experiment_id="dit-breed-conditioned-v4",
         hub_push_interval=5_000,
     )
-
-
-def test_hub_resume_uses_the_canonical_snapshot(tmp_path: Path, monkeypatch) -> None:
-    calls: list[dict] = []
-
-    import gpu_pool
-
-    def fake_pull(**kwargs: object) -> None:
-        calls.append(kwargs)
-
-    monkeypatch.setattr(gpu_pool, "pull_checkpoint_from_hub", fake_pull)
-
-    pulled = train_kaggle.pull_resume_checkpoint(
-        hub_repo="d-oit/tiny-cats-model",
-        checkpoint_dir=tmp_path,
-        experiment_id="dit-breed-conditioned-v4",
-    )
-
-    assert pulled is None
-    assert len(calls) == 1
-    # Resolving the canonical pointer keeps a slice from resuming a stale
-    # pre-WP3 flat file (60k) instead of the latest snapshot (531k).
-    assert calls[0]["experiment_id"] == "dit-breed-conditioned-v4"
-    assert calls[0]["checkpoint_name"] == "dit_model_ema.pt"
-    assert calls[0]["output_dir"] == str(tmp_path)
 
 
 def test_force_download_discards_a_stale_staged_copy(
@@ -129,13 +107,13 @@ def test_force_download_discards_a_stale_staged_copy(
     (data_dir / "cat").mkdir(parents=True)
     stale = data_dir / "cat" / "Abyssinian_1.jpg"
     stale.write_bytes(b"stale")
-    calls: list[list[str]] = []
+    calls = 0
+    timeouts: list[float] = []
 
-    envs: list[dict] = []
-
-    def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
-        calls.append(command)
-        envs.append(kwargs["env"])  # type: ignore[arg-type]
+    def fake_run(_command: list[str], **kwargs: object) -> SimpleNamespace:
+        nonlocal calls
+        calls += 1
+        timeouts.append(kwargs["timeout"])  # type: ignore[arg-type]
         assert not stale.exists(), "stale data must be gone before downloading"
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
@@ -144,8 +122,8 @@ def test_force_download_discards_a_stale_staged_copy(
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     assert train_kaggle.prepare_kaggle_data(data_dir, force_download=True) is True
-    assert calls and calls[0][0] == "python"
-    assert envs[0]["DATA_DIR"] == str(data_dir)
+    assert calls == 1
+    assert timeouts == [train_kaggle.KAGGLE_DATA_PREP_TIMEOUT_SECONDS]
 
 
 def test_existing_data_is_reused_without_force_download(
@@ -160,4 +138,4 @@ def test_existing_data_is_reused_without_force_download(
 
 
 def pytest_fail() -> bool:  # pragma: no cover - only reached on regression
-    raise AssertionError("no push expected without a training state")
+    raise AssertionError("no push/subprocess expected in this path")

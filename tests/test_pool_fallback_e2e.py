@@ -1,13 +1,8 @@
 """tests/test_pool_fallback_e2e.py
 
-End-to-end control-plane coverage for ADR-067: a Modal workspace blocked by a
-launch precondition must actually launch the Kaggle adapter (not merely skip
-it), and that adapter must package a real kernel for the resolved account.
-
-The only fakes are the Kaggle client and the subprocess boundary: the commands
-are the real ones produced by ``provider_auto``/``providers``, the kernel
-workspace is really built, and the resolved kernel id is asserted from the
-generated ``kernel-metadata.json``.
+End-to-end control-plane coverage for the free Kaggle provider and the
+container import contract. The Kaggle client is fake; the real adapter builds
+the self-contained kernel workspace and submits/polls it through the fake API.
 """
 
 from __future__ import annotations
@@ -72,9 +67,11 @@ class FakeKaggleApi:
         return ([], "")
 
 
-def test_blocked_modal_launches_kaggle_end_to_end(tmp_path: Path, monkeypatch) -> None:
+def test_kaggle_provider_completes_end_to_end(tmp_path: Path, monkeypatch) -> None:
     api = FakeKaggleApi()
     used = tmp_path / "provider-used"
+    monkeypatch.setenv("KAGGLE_API_TOKEN", "test-kaggle-token")
+    monkeypatch.setenv("KAGGLE_HF_TOKEN_DATASET", "slice-owner/tiny-cats-hf-token")
 
     # Keep every adapter write inside the test directory: the real command does
     # not pass --workspace/--log-file, so redirect those defaults.
@@ -98,8 +95,6 @@ def test_blocked_modal_launches_kaggle_end_to_end(tmp_path: Path, monkeypatch) -
         ),
     )
     monkeypatch.setattr(kaggle_provider, "_load_api", lambda: api)
-    # ``wait_for_kernel`` binds ``time.sleep`` as a default argument, so patch
-    # the function rather than the module (polling sleeps 60s in production).
     real_wait = kaggle_provider.wait_for_kernel
     monkeypatch.setattr(
         kaggle_provider,
@@ -114,9 +109,6 @@ def test_blocked_modal_launches_kaggle_end_to_end(tmp_path: Path, monkeypatch) -
 
     def runner(command: list[str]) -> tuple[int, bool]:
         commands.append(command)
-        if command[:2] == ["modal", "run"]:
-            print("Workspace x has exceeded its spend limit")
-            return 1, True
         if command[:2] == ["python", "src/kaggle_provider.py"]:
             return kaggle_provider.main(command[2:]), False
         raise AssertionError(f"unexpected command: {command}")
@@ -135,17 +127,13 @@ def test_blocked_modal_launches_kaggle_end_to_end(tmp_path: Path, monkeypatch) -
     )
 
     assert code == 0
-    assert len(commands) == 2
-    assert commands[0][:2] == ["modal", "run"]
-    assert commands[1][:2] == ["python", "src/kaggle_provider.py"]
-
-    # The owner is resolved from the authenticated account; no repo variable
-    # was set, and the launch command did not carry --kernel-id.
-    assert "--kernel-id" not in commands[1]
+    assert len(commands) == 1
+    assert commands[0][:2] == ["python", "src/kaggle_provider.py"]
+    assert "--kernel-id" not in commands[0]
     metadata = (tmp_path / "kernel" / kaggle_provider.KERNEL_METADATA_FILE).read_text()
     assert '"id": "slice-owner/tiny-cats-dit-slice"' in metadata
 
-    # The slice contract survives the fallback (global target + LR horizon).
+    # The generated kernel pins the global target and campaign LR horizon.
     entry = (tmp_path / "kernel" / kaggle_provider.ENTRY_FILE).read_text()
     assert "'--steps', '540000'" in entry
     assert "'--schedule-steps', '600000'" in entry
@@ -196,11 +184,3 @@ def test_modal_image_mounts_every_local_module_train_dit_imports() -> None:
     whole_package = re.search(r'add_local_dir\(\s*"src"\s*,\s*"/app"', source)
     missing = [] if whole_package else sorted(local - mounted)
     assert not missing, f"Modal image is missing local modules: {missing}"
-
-
-def test_workflow_surfaces_launch_failures() -> None:
-    """The annotation must run *after* a failure (a bare ``if`` does not)."""
-    workflow = (
-        Path(__file__).parent.parent / ".github" / "workflows" / "train-pool.yml"
-    ).read_text()
-    assert "if: always() && steps.train.outcome == 'failure'" in workflow

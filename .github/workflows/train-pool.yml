@@ -4,18 +4,17 @@
 # Architecture (ADR-065):
 #   - GitHub Actions plans bounded training slices and launches real GPU
 #     provider sessions; it never trains on CPU itself.
-#   - Providers with a real headless adapter (Modal, and Kaggle since ADR-067)
-#     are launched; every other provider FAILS CLEARLY via `providers.py gate`
-#     instead of silently simulating on CPU. `provider=auto` walks the
-#     launchable chain and only falls back on a launch-precondition failure.
+#   - Kaggle and eligibility-approved Lightning are the automatic providers;
+#     Modal is not part of this free-only workflow.
+#     `provider=auto` falls back only on a definite prelaunch refusal.
 #   - HF Hub is the state transport (checkpoints/pool/<exp>/latest pointer);
 #     each slice resumes exactly to its global target and reports a
 #     machine-readable provider_report_<target>.json artifact.
 #
 # Usage:
-#   gh workflow run train-pool.yml                                  # 400k plan, 25k slices
-#   gh workflow run train-pool.yml -f steps=400000 -f slice_size=60000
-#   gh workflow run train-pool.yml -f provider=kaggle               # fails clearly (gate)
+#   gh workflow run train-pool.yml -f provider=auto                 # free-only order
+#   gh workflow run train-pool.yml -f steps=615000 -f slice_size=15000
+#   gh workflow run train-pool.yml -f provider=modal                # rejected
 #
 # See: src/providers.py, src/gpu_pool.py, plans/ADR-065-*
 
@@ -25,9 +24,9 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: "Provider to launch: modal, kaggle, auto (modal→kaggle on a launch block), or a gated provider (fails clearly)"
+        description: "Provider: auto (Kaggle → Lightning), kaggle, or lightning; modal/all are rejected as paid"
         required: false
-        default: "modal"
+        default: "auto"
         type: string
       steps:
         description: "Global training target (slices resume toward this, never additive)"
@@ -83,8 +82,7 @@ on:
         default: false
         type: boolean
   schedule:
-    # Run pool training every 6 hours to maximize free GPU usage.
-    # On schedule, defaults to modal provider (first in chain).
+    # On schedule, the free-only default is Kaggle, then eligible Lightning.
     - cron: "0 */6 * * *"
 
 permissions:
@@ -104,6 +102,9 @@ jobs:
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      completed_steps: ${{ steps.plan.outputs.completed_steps }}
+      campaign_complete: ${{ steps.plan.outputs.campaign_complete }}
+      slice_count: ${{ steps.plan.outputs.slice_count }}
     steps:
       - uses: actions/checkout@v7
 
@@ -124,16 +125,19 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          EXTRA=()
-          if [ -n "$HF_TOKEN" ]; then
-            EXTRA+=(--remote-completed --token "$HF_TOKEN")
+          set -euo pipefail
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HF_TOKEN is required to resume this campaign from its canonical Hub pointer"
+            exit 1
           fi
           MATRIX="$(python src/providers.py plan \
             --steps ${{ github.event.inputs.steps || '600000' }} \
             --slice-size ${{ github.event.inputs.slice_size || '15000' }} \
             --experiment-id dit-breed-conditioned-v4 \
             --hub-repo d4oit/tiny-cats-model \
-            "${EXTRA[@]}")"
+            --remote-completed \
+            --token "$HF_TOKEN" \
+            --github-output "$GITHUB_OUTPUT")"
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           echo "Planned slices: $MATRIX"
 
@@ -143,11 +147,12 @@ jobs:
   # ────────────────────────────────────────────────────────
   provider-gate:
     name: Provider support gate
+    needs: [plan-slices]
+    if: |
+      needs.plan-slices.result == 'success' &&
+      needs.plan-slices.outputs.campaign_complete != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: |
-      github.event_name == 'workflow_dispatch' &&
-      inputs.provider != 'modal'
     steps:
       - uses: actions/checkout@v7
 
@@ -156,32 +161,31 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Gate provider
+      - name: Gate free-only provider
+        env:
+          PROVIDER: ${{ inputs.provider || 'auto' }}
         run: |
-          if [ "${{ inputs.provider }}" = "all" ]; then
-            python src/providers.py gate --provider all
-          else
-            python src/providers.py gate --provider "${{ inputs.provider }}" --strict
+          set -euo pipefail
+          if [ "$PROVIDER" = "modal" ] || [ "$PROVIDER" = "all" ]; then
+            echo "::error::Paid provider '$PROVIDER' is disabled in this free-only workflow. Choose auto, kaggle, or lightning."
+            exit 1
           fi
+          python src/providers.py gate --provider "$PROVIDER" --strict
 
   # ────────────────────────────────────────────────────────
-  # Train slices: one bounded Modal GPU session per slice target,
-  # run sequentially (max-parallel: 1) with fail-fast so a broken
-  # slice never lets a later one run on stale state.
+  # Train slices: one bounded free-provider session per target, sequentially
+  # (max-parallel: 1) with fail-fast so later slices never resume stale state.
   # ────────────────────────────────────────────────────────
   train-slice:
     name: Slice → ${{ matrix.target }}
-    # Never launch a slice when an unsupported provider was requested: the
-    # provider gate runs for every non-modal provider, so a `skipped` gate is
-    # the (only) signal that modal was actually requested, and a `success`
-    # gate admits the other launchable adapters (kaggle, auto). `always()`
-    # keeps the matrix alive when the gate is skipped rather than failed.
+    # Completed campaigns retain the nonempty sentinel matrix but never
+    # allocate a provider session; their provider gate is skipped too.
     needs: [plan-slices, provider-gate]
     if: |
       always() &&
       needs.plan-slices.result == 'success' &&
-      (needs.provider-gate.result == 'skipped' ||
-       needs.provider-gate.result == 'success')
+      needs.plan-slices.outputs.campaign_complete != 'true' &&
+      needs.provider-gate.result == 'success'
     runs-on: ubuntu-latest
     environment: modal-training
     timeout-minutes: 360
@@ -204,61 +208,59 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Ensure Modal HuggingFace secret
-        # Modal-only: a kaggle-only dispatch has no Modal container to sync.
-        if: github.event.inputs.provider != 'kaggle'
+
+      - name: Record and validate canonical pointer
+        id: pointer_before
+        if: |
+          github.event_name == 'schedule' ||
+          inputs.push_to_hub == true
         env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          if [ -z "$HF_TOKEN" ]; then
-            echo "::warning::HF_TOKEN is unset; Hub checkpoint sync will degrade gracefully"
-            exit 0
-          fi
-          # Always refresh the Modal secret from the current GitHub secret.
-          # Skipping when it already existed let a rotated/expired HF_TOKEN
-          # linger inside the container, silently breaking Hub pulls — which is
-          # how every 2026-09-24 slice fell back to a stale local checkpoint and
-          # died on the manifest gate. `--force` overwrites an existing secret.
-          modal secret create --force huggingface-secret HF_TOKEN="$HF_TOKEN" \
-            || echo "::warning::Failed to sync Modal secret 'huggingface-secret'"
+          set -euo pipefail
+          RECORD="pool_pointer_${{ matrix.target }}.json"
+          python scripts/check_pool_pointer.py \
+            --record "$RECORD" \
+            --hub-repo d4oit/tiny-cats-model \
+            --experiment-id dit-breed-conditioned-v4
+          python - "$RECORD" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1]) as source:
+              pointer = json.load(source)
+          if pointer.get("recorded_failure") or pointer.get("pointer_found") is not True:
+              raise SystemExit("required canonical pre-slice pointer is unavailable")
+          print(f"Validated canonical pointer at step {pointer['completed_steps']}")
+          PY
 
       - name: Launch slice on the selected provider
         id: train
         env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          PROVIDER: ${{ inputs.provider || 'auto' }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-          # Optional: when unset, kaggle_provider resolves
-          # <authenticated-account>/tiny-cats-dit-slice, so the modal→kaggle
-          # fallback never dies on a missing repo variable (ADR-067).
           KAGGLE_KERNEL_ID: ${{ vars.KAGGLE_KERNEL_ID }}
           KAGGLE_HF_TOKEN_DATASET: ${{ vars.KAGGLE_HF_TOKEN_DATASET }}
+          LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
+          LIGHTNING_TEAMSPACE: ${{ vars.LIGHTNING_TEAMSPACE }}
+          LIGHTNING_FREE_ONLY_VERIFIED: ${{ vars.LIGHTNING_FREE_ONLY_VERIFIED }}
         run: |
-          set -o pipefail
-          # Schedule runs default to `auto` (modal, then kaggle on a launch
-          # block); dispatches keep their explicit provider (default modal).
-          PROVIDER="${{ github.event.inputs.provider || 'auto' }}"
+          set -euo pipefail
           HUBFLAGS=()
           if [ "${{ github.event_name }}" = "schedule" ] || \
-             [ "${{ github.event.inputs.hub_resume }}" = "true" ]; then
+             [ "${{ inputs.hub_resume }}" = "true" ]; then
             HUBFLAGS+=(--hub-resume)
           fi
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
-             [ "${{ github.event.inputs.push_to_hub }}" != "true" ]; then
+             [ "${{ inputs.push_to_hub }}" != "true" ]; then
             HUBFLAGS+=(--no-hub-push)
           fi
           MIGRATEFLAGS=()
-          if [ "${{ github.event.inputs.allow_experiment_mismatch }}" = "true" ]; then
+          if [ "${{ inputs.allow_experiment_mismatch }}" = "true" ]; then
             MIGRATEFLAGS+=(--allow-experiment-mismatch)
           fi
           LRFLAGS=()
-          # Optional LR floor (docs/LR-PLATEAU-DIAGNOSIS-2026-10-02.md): unset
-          # repo variable = trainer default 1e-6, i.e. byte-for-byte the same
-          # command as before. Set it with `gh variable set MIN_LR -b 2e-5` to
-          # lift the cosine floor when resuming a run past its decay.
+          # Keep MIN_LR at the approved 1e-5 floor for this campaign.
           if [ -n "${{ vars.MIN_LR }}" ]; then
             LRFLAGS+=(--min-lr "${{ vars.MIN_LR }}")
           fi
@@ -267,12 +269,12 @@ jobs:
             --kernel-id "${{ vars.KAGGLE_KERNEL_ID }}" \
             --hf-token-dataset "${{ vars.KAGGLE_HF_TOKEN_DATASET }}" \
             --target ${{ matrix.target }} \
-            --batch-size ${{ github.event.inputs.batch_size || '32' }} \
-            --lr ${{ github.event.inputs.lr || '5e-5' }} \
+            --batch-size ${{ inputs.batch_size || '32' }} \
+            --lr ${{ inputs.lr || '5e-5' }} \
             --save-interval 2500 \
-            --hub-push-interval ${{ github.event.inputs.hub_push_interval || '5000' }} \
+            --hub-push-interval ${{ inputs.hub_push_interval || '5000' }} \
             --experiment-id dit-breed-conditioned-v4 \
-            --schedule-steps ${{ github.event.inputs.steps || '600000' }} \
+            --schedule-steps ${{ inputs.steps || '600000' }} \
             "${HUBFLAGS[@]}" "${MIGRATEFLAGS[@]}" "${LRFLAGS[@]}")"
           if [ -z "$CMD" ]; then
             echo "::error::could not build a launch command for provider '$PROVIDER'"
@@ -280,43 +282,79 @@ jobs:
           fi
           echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           echo "Launch: $CMD"
-          eval "$CMD" 2>&1 | tee modal-training.log
+          eval "$CMD" 2>&1 | tee provider-launch.log
 
-      - name: Annotate launch failure
-        # Surface the provider's own error on the run page: the 2026-10-03 ->
-        # 2026-10-16 stall was a one-line "Workspace ... has exceeded its
-        # spend limit" buried in the launch step log.
-        #
-        # `always() &&` is required: a bare `if: steps.train.outcome == ...`
-        # inherits the implicit "all previous steps succeeded" condition, so
-        # this annotation was skipped in exactly the runs it exists for.
-        if: always() && steps.train.outcome == 'failure'
+      - name: Assert canonical pointer advancement
+        id: pointer_after
+        if: |
+          steps.train.outcome == 'success' &&
+          (github.event_name == 'schedule' || inputs.push_to_hub == true)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          ERR="$(grep -aiE 'exceeded its spend limit|error' modal-training.log kaggle-training.log 2>/dev/null \
+          python scripts/check_pool_pointer.py \
+            --record-file "pool_pointer_${{ matrix.target }}.json" \
+            --target ${{ matrix.target }} \
+            --hub-repo d4oit/tiny-cats-model \
+            --experiment-id dit-breed-conditioned-v4 \
+            --expect-advanced \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Persist pointer progression evidence
+        if: |
+          always() &&
+          steps.pointer_before.outcome == 'success' &&
+          (github.event_name == 'schedule' || inputs.push_to_hub == true)
+        env:
+          POINTER_FILE: pool_pointer_${{ matrix.target }}.json
+          POINTER_AFTER: ${{ steps.pointer_after.outputs.pointer_after }}
+          ASSERTION_OUTCOME: ${{ steps.pointer_after.outcome }}
+          TRAIN_OUTCOME: ${{ steps.train.outcome }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          path = Path(os.environ["POINTER_FILE"])
+          record = json.loads(path.read_text())
+          after = os.environ.get("POINTER_AFTER")
+          if not after and int(record["completed_steps"]) >= int(os.environ["TARGET"]):
+              after = str(record["completed_steps"])
+          record.update(
+              pointer_after=int(after) if after else None,
+              assertion_outcome=os.environ.get("ASSERTION_OUTCOME"),
+              train_outcome=os.environ.get("TRAIN_OUTCOME"),
+              target=int(os.environ["TARGET"]),
+          )
+          path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+          PY
+
+      - name: Annotate slice failure
+        if: |
+          always() &&
+          (steps.train.outcome == 'failure' ||
+           steps.pointer_before.outcome == 'failure' ||
+           steps.pointer_after.outcome == 'failure')
+        run: |
+          ERR="$(grep -aiE 'exceeded its spend limit|error' provider-launch.log kaggle-training.log lightning-training.log 2>/dev/null \
             | head -3 | tr '\n' ' ' || true)"
-          echo "::error title=Slice ${{ matrix.target }} launch failed::${ERR:-see launch step log}"
+          echo "::error title=Slice ${{ matrix.target }} failed::${ERR:-see provider launch log}"
 
       - name: Write provider report
         if: always()
         env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           ENDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          # The dispatcher records the provider that actually ran; direct
-          # launches fall back to the requested one (never the `auto` alias).
-          PROVIDER="$(cat .provider-used 2>/dev/null || echo "${{ github.event.inputs.provider || 'modal' }}")"
-          if [ "$PROVIDER" = "auto" ]; then PROVIDER=modal; fi
+          PROVIDER="$(cat .provider-used 2>/dev/null || echo "${{ inputs.provider || 'auto' }}")"
+          if [ "$PROVIDER" = "auto" ]; then PROVIDER=kaggle; fi
           python src/providers.py fetch-artifacts \
             --provider "$PROVIDER" --name training_state.json --dest . \
             || echo "::warning::training_state.json not available for $PROVIDER"
-          # `report` exits 1 for a failed/cancelled slice (by design). The
-          # report file is still written, so record a warning here instead of
-          # masking the launch failure with a second step failure.
           if ! python src/providers.py report \
             --provider "$PROVIDER" \
-            --gpu-model ${{ github.event.inputs.gpu_model || 'T4' }} \
+            --gpu-model ${{ inputs.gpu_model || 'T4' }} \
             --job-id "${{ github.run_id }}/${{ github.job }}/${{ matrix.target }}" \
             --started-at "${{ steps.train.outputs.started_at }}" \
             --ended-at "$ENDED_AT" \
@@ -332,18 +370,16 @@ jobs:
         id: verify
         if: always()
         env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           set -o pipefail
           mkdir -p verify
-          PROVIDER="$(cat .provider-used 2>/dev/null || echo "${{ github.event.inputs.provider || 'modal' }}")"
-          if [ "$PROVIDER" = "auto" ]; then PROVIDER=modal; fi
+          PROVIDER="$(cat .provider-used 2>/dev/null || echo "${{ inputs.provider || 'auto' }}")"
+          if [ "$PROVIDER" = "auto" ]; then PROVIDER=kaggle; fi
           (python src/providers.py fetch-artifacts \
              --provider "$PROVIDER" --name dit_model.pt --dest verify \
              && echo "fetched dit_model.pt from $PROVIDER") 2>&1 \
-            | tee -a modal-training.log \
+            | tee -a provider-launch.log \
             || echo "::warning::dit_model.pt not available for $PROVIDER"
           set +e
           python src/providers.py verify \
@@ -354,30 +390,26 @@ jobs:
           rc=$?
           set -e
           echo "verify_exit_code=$rc" >> "$GITHUB_OUTPUT"
-          # 1 = no usable checkpoint. A later slice would resume from stale
-          # state, so fail loudly (WP7: never report success on a failed run).
           if [ "$rc" = "1" ]; then
             echo "::error::slice ${{ matrix.target }} produced no usable checkpoint"
             exit 1
           fi
-          # 3 = valid but short of target (preemption/interruption). The
-          # checkpoint is resumable by design, so continue to the next slice.
           if [ "$rc" = "3" ]; then
             echo "::warning::slice ${{ matrix.target }} is partial — checkpoint is resumable"
           fi
-
-      - name: Upload training log
+      - name: Upload provider training log
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: modal-training-log-${{ matrix.target }}
+          name: provider-training-log-${{ matrix.target }}
           path: |
-            modal-training.log
+            provider-launch.log
             kaggle-training.log
+            lightning-training.log
           retention-days: 7
           if-no-files-found: warn
 
-      - name: Upload provider report
+      - name: Upload provider report and pointer evidence
         uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -385,6 +417,7 @@ jobs:
           path: |
             provider_report_${{ matrix.target }}.json
             slice_verification_${{ matrix.target }}.json
+            pool_pointer_${{ matrix.target }}.json
           retention-days: 30
           if-no-files-found: warn
 
@@ -412,72 +445,63 @@ jobs:
 
       - name: Print pool summary
         env:
-          # GitHub renders booleans in ${{ }} as bare true/false, which would
-          # break when interpolated into Python source. Pass the string via a
-          # step env var instead; read it with os.environ below.
-          SLICES_SUCCEEDED: ${{ needs.train-slice.result == 'success' }}
           SLICES_RESULT: ${{ needs.train-slice.result }}
           GATE_RESULT: ${{ needs.provider-gate.result }}
+          CAMPAIGN_COMPLETE: ${{ needs.plan-slices.outputs.campaign_complete }}
+          SLICE_COUNT: ${{ needs.plan-slices.outputs.slice_count }}
           PLANNED: ${{ needs.plan-slices.outputs.matrix }}
         run: |
-          # shellcheck disable=SC2140  # Python -c block uses escaped quotes
           python -c "
-          import json, os, sys; sys.path.insert(0, 'src')
-          from gpu_pool import FALLBACK_CHAIN, estimate_cost
+          import os, sys; sys.path.insert(0, 'src')
+          from providers import AUTO_PROVIDERS
           print('=' * 60)
-          print('GPU POOL TRAINING COMPLETE')
+          print('GPU POOL TRAINING SUMMARY')
           print('=' * 60)
-          chain = ' → '.join(p.value for p in FALLBACK_CHAIN)
-          print(f'Fallback chain: {chain}')
-          print(f'Planned slices: {os.environ.get(\"PLANNED\", \"?\")}')
+          print('Automatic free-only provider order: ' + ' → '.join(AUTO_PROVIDERS))
+          print(f'Planned slices: {os.environ.get(\"SLICE_COUNT\", \"?\")}')
+          complete = os.environ.get('CAMPAIGN_COMPLETE', '')
+          if complete == 'true':
+              print('Planned targets: none (global target already reached)')
+          else:
+              print(f'Planned targets: {os.environ.get(\"PLANNED\", \"?\")}')
           print()
-          print('Cost estimates (20k steps):')
-          costs = estimate_cost(20000)
-          for name, info in sorted(costs.items()):
-              flag = '✅ FREE' if info['within_free_tier'] else '⚠️  PAID'
-              print(f'  {info[\"provider\"]:20s} | {info[\"gpu_hours\"]:6.1f}h | \${info[\"estimated_cost\"]:7.2f} | {flag}')
-          print()
-          print('Checkpoints synced via HuggingFace Hub:')
+          print('Checkpoint transport: HuggingFace Hub')
           print('  https://huggingface.co/d4oit/tiny-cats-model/tree/main/checkpoints/pool')
           print()
-          # shellcheck disable=SC2140  # GHA expression, not shell quoting
           gate = os.environ.get('GATE_RESULT', '')
           result = os.environ.get('SLICES_RESULT', '')
-          if gate == 'failed':
+          if complete == 'true':
+              print('Global target already reached; no GPU slice launched.')
+          elif gate == 'failed':
               print('❌ Provider gate failed — no slice was launched (see gate job)')
           elif result == 'skipped':
-              print('ℹ️  No slice ran (unsupported provider or failed gate)')
+              print('ℹ️  No slice ran (plan or provider gate was skipped)')
           elif result == 'success':
               print('✅ Slices completed — provider reports uploaded as artifacts')
               print('   exit reasons are recorded per slice in provider-report-* artifacts')
           else:
-              # The failing slice already failed the workflow; just be explicit
-              # here instead of reporting a vacuous success.
               print('❌ One or more slices failed (see provider-report-* artifacts)')
           "
 
       - name: Sync campaign-stall issue
-        # An unattended stall must reach a human: from 2026-10-03 to 2026-10-16
-        # every scheduled run failed on a Modal spend limit (~50 in a row) and
-        # nothing surfaced it. Healthy runs close the tracker issue; unhealthy
-        # ones open or update it, and GitHub notifies the subscribers.
+        # A failed free-provider chain must reach a human; healthy runs close
+        # the tracker, and unhealthy runs open or update it.
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SLICE_RESULT: ${{ needs.train-slice.result }}
           PLAN_RESULT: ${{ needs.plan-slices.result }}
           GATE_RESULT: ${{ needs.provider-gate.result }}
-          MATRIX: ${{ needs.plan-slices.outputs.matrix }}
+          CAMPAIGN_COMPLETE: ${{ needs.plan-slices.outputs.campaign_complete }}
+          SLICE_COUNT: ${{ needs.plan-slices.outputs.slice_count }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           LABEL="campaign-stall"
           TITLE="Campaign stalled: GPU pool training is not advancing"
-
-          SLICES="$(python3 -c "import json, os; m = os.environ.get('MATRIX') or '{}'; print(len(json.loads(m).get('include', [])))")"
+          SLICES="${SLICE_COUNT:-0}"
 
           close_tracker() {
-            # Best-effort cleanup: a hiccup here must not turn a green run red.
             local numbers
             numbers="$(gh issue list --state open --label "$LABEL" --json number --jq '.[].number')" || return 0
             local number
@@ -488,17 +512,15 @@ jobs:
             done
           }
 
-          # An explicit dispatch with an unsupported provider is a *deliberate*
-          # gate rejection, not a stall.
+          # A deliberate provider-gate rejection is not a campaign stall.
           if [ "$GATE_RESULT" = "failed" ]; then
             echo "Provider gate rejected this dispatch; no stall signal."
             exit 0
           fi
 
-          # Healthy: every slice completed, or the plan found nothing left to
-          # train (global target already reached -> no-op slice).
+          # A successful slice or an explicit completed-target plan is healthy.
           if [ "$SLICE_RESULT" = "success" ] || \
-             { [ "$PLAN_RESULT" = "success" ] && [ "$SLICES" = "0" ]; }; then
+             { [ "$PLAN_RESULT" = "success" ] && [ "$CAMPAIGN_COMPLETE" = "true" ]; }; then
             close_tracker
             echo "Campaign healthy (planned slices=${SLICES}); tracker issue cleared if any."
             exit 0
@@ -511,8 +533,8 @@ jobs:
             "- planned slices: ${SLICES} (plan job: ${PLAN_RESULT})" \
             "- slice result: ${SLICE_RESULT}" \
             "" \
-            "Inspect the failing slice job for the launch/verify error; the raw" \
-            "provider output is attached as the modal-training-log-* artifact." \
+            "Inspect the failing slice job for the launch/verification error; raw" \
+            "provider logs are attached as provider-training-log-* artifacts." \
           )"
 
           gh label create "$LABEL" --color b60205 \
