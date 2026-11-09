@@ -55,49 +55,32 @@ jobs:
           LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
         run: |
           set -euo pipefail
-          if ! lightning-sdk api /v1/memberships \
+          if ! lightning teamspace list --json \
             > "$RUNNER_TEMP/lightning-teamspaces.json" \
             2> "$RUNNER_TEMP/lightning-teamspaces.err"; then
-            echo "::error::Lightning membership lookup failed; CLI details were withheld."
+            echo "::error::Lightning teamspace lookup failed; CLI details were withheld."
             exit 1
           fi
           python - "$RUNNER_TEMP/lightning-teamspaces.json" <<'PY'
           import json
           import sys
+
           with open(sys.argv[1]) as source:
               payload = json.load(source)
-          memberships = payload.get("memberships")
-          if not isinstance(memberships, list):
-              raise SystemExit("Lightning response has no memberships list")
-          if not memberships:
+          teamspaces = payload.get("teamspaces")
+          if not isinstance(teamspaces, list):
+              raise SystemExit("Lightning response has no teamspaces list")
+          if not teamspaces:
               print("No Lightning teamspaces found.")
-          for item in memberships:
+          for item in teamspaces:
               if not isinstance(item, dict):
                   continue
-              owner = (
-                  item.get("ownerName")
-                  or item.get("ownerSlug")
-                  or item.get("owner")
-              )
+              owner = item.get("owner")
               name = item.get("name")
               if isinstance(owner, str) and owner and isinstance(name, str) and name:
                   print(f"{owner}/{name}")
               else:
-                  print(
-                      "unresolved teamspace candidate: "
-                      + json.dumps(
-                          {
-                              key: item.get(key)
-                              for key in (
-                                  "name",
-                                  "ownerType",
-                                  "ownerId",
-                                  "projectId",
-                              )
-                          },
-                          sort_keys=True,
-                      )
-                  )
+                  print("unresolved teamspace candidate (missing owner/name)")
           PY
 
       - name: Fetch and validate canonical EMA checkpoint
