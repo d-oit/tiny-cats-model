@@ -222,9 +222,9 @@ python scripts/tune_dit_configs.py --data-dir data/cats --steps 300 \
 
 ## Production 400k Runbook (issue #163 WP9)
 
-This is the one canonical procedure for a complete 400k DiT run. It is built
-from **bounded, resumable slices**: GitHub Actions is the control plane, real GPU
-providers are the execution plane, and HuggingFace Hub is the state transport.
+This section records the completed 400k milestone and the bounded-slice
+workflow used for it. The manual Modal examples below are a separate,
+potentially paid path; the free-only `train-pool.yml` workflow rejects Modal.
 
 ### 0. Local smoke (CPU, seconds)
 
@@ -235,7 +235,7 @@ python src/train_dit.py \
   --batch-size 8
 ```
 
-### 1. First Modal slice (bounded to fit one runner session)
+### 1. Legacy Modal slice (separate from the free-only pool)
 
 ```bash
 modal run src/train_dit.py \
@@ -251,8 +251,8 @@ modal run src/train_dit.py \
 
 ### 2. Continue the SAME experiment with increasing GLOBAL targets
 
-`--steps` is a global target, never an additional-step count. The examples
-below are the only correct way to advance a 400k run by hand:
+The examples below are manual Modal commands, not the free-only pool
+workflow. `--steps` is a global target, never an additional-step count:
 
 ```bash
 modal run src/train_dit.py --data-dir /data/cats --steps 120000 --batch-size 32 --hub-resume
@@ -263,33 +263,36 @@ modal run src/train_dit.py --data-dir /data/cats --steps 180000 --batch-size 32 
 ### 3. Or let GitHub Actions orchestrate every slice
 
 ```bash
-# Full 400k run, 60k per provider session, sequential + fail-fast
-train-pool.yml -f steps=400000 -f slice_size=60000
-
-# Default schedule: every 6h, 25k per session (fits the runner window on a T4)
-# Single verified production slice through the main workflow
-gh workflow run train.yml -f steps=25000 -f batch_size=32
+# Free-only bounded pool; each provider session targets at most 15k steps
+gh workflow run train-pool.yml \
+  -f steps=615000 \
+  -f slice_size=15000 \
+  -f provider=auto
 ```
 
-The pool workflow plans `[60000, 120000, ..., 400000]`, filters out slices the
-Hub pointer already covers, and runs them with `max-parallel: 1` / `fail-fast:
-true`. Each session resumes exactly to its target, so the plan is idempotent:
-re-running it skips finished work.
+campaign it reports `campaign_complete=true` and `slice_count=0`; the matrix
+keeps a nonempty sentinel entry, but both the provider gate and train job are
+skipped and no provider session is launched.
 
-### Which providers actually train?
+`provider=auto` tries Kaggle, then Lightning only when the operator has
+explicitly verified the Lightning account's free-only billing protections.
+Fallback occurs only on a definite prelaunch refusal. An ambiguous submission
+or a job that started and failed stops the campaign; it is never retried on a
+second provider. For a plan that requires training, `provider=modal` and
+`provider=all` are rejected by this free-only workflow. An already-complete
+target is a successful no-op and skips the provider gate.
 
-| Provider | Control plane | How to run |
-|----------|---------------|------------|
-| Modal | ✅ `providers.py launch --provider modal` | `train-pool.yml` / `train.yml` |
-| Lightning AI | ❌ unsupported (fails clearly) | `python scripts/train_lightning.py --hub-resume` |
-| Kaggle | ❌ unsupported (fails clearly) | `python scripts/train_kaggle.py --hub-resume` |
-| Colab | ❌ unsupported (no headless API) | run the notebook with `--resume` |
-| HF Spaces | ❌ unsupported (no GPU-job API) | `python scripts/train_hf_spaces.py --hub-resume` |
+Lightning requires an explicit teamspace (`LIGHTNING_TEAMSPACE`), the
+`LIGHTNING_API_KEY` secret, and the `LIGHTNING_FREE_ONLY_VERIFIED=true`
+repository variable. Set the attestation only after confirming that
+promotional credits are the sole funding source, auto-reload is off, no
+purchased/subscription credits or BYOC billing can fund the job, and exhausted
+credits stop the workload without a paid charge. Otherwise leave it unset; the
+adapter blocks before loading the SDK or submitting.
 
-Requesting an unsupported provider **exits 2 with instructions** — the control
-plane never falls back to CPU simulation. Because GitHub-hosted runners
-hard-cap a job at 6 hours, any single job is one bounded slice regardless of the
-provider.
+Each successful slice must advance the canonical pointer beyond its recorded
+pre-slice step. Checkpoint verification accepts the requested target or an
+explicitly recorded convergence at the actual completed step.
 
 ### Slice contract
 
@@ -303,15 +306,16 @@ machine-readable provider report.
 
 | Situation | What happens / what to do |
 |-----------|---------------------------|
-| Provider preemption | Checkpoint survives; the slice reports `partial`; re-run the same command or let the next scheduled pool run resume from the Hub pointer |
-| GitHub Actions cancellation | `hub_push_interval` has already synced a mid-run checkpoint; `train-pool.yml` re-plans from the pointer's `completed_steps` |
-| Modal timeout | Slice reports `partial` with the last completed step; lower `slice_size` and continue |
+| Provider preemption | Checkpoint survives; the slice reports `partial`; re-run only after checking the Hub pointer and the provider report |
+| GitHub Actions cancellation | The canonical mid-run push remains available; the next plan reads the Hub pointer's `completed_steps` |
+| Kaggle or Lightning timeout | Slice reports partial progress; inspect the provider report and canonical pointer before continuing |
 | Corrupt checkpoint | Quarantined to `*.corrupt` locally; a corrupt Hub download is quarantined and validation returns `None` so the previous valid snapshot is used |
-| Missing Hub checkpoint | First run (nothing to resume); training starts at step 0 |
-| Provider handoff | Hub is the only state transport; the next provider resumes from `latest/` regardless of which provider wrote it |
-| Final target already reached | The run is a successful no-op: 0 steps, checkpoint bytes untouched, `exit_reason: completed` |
-| Workflow failed but log looks green | Check the `provider-report-<target>.json` artifact and `exit_reason`; training output is piped through `tee` under `set -o pipefail`, so a failed `modal run` fails the job |
-| `IncompatibleExperimentError` on every slice | `--hub-resume` now prefers the Hub checkpoint, so a stale file left on the Modal volume by an unrelated run can no longer shadow the experiment. If it still fails, the *Hub* checkpoint itself belongs to a different experiment: start a new `--experiment-id` (or re-run with the original hyperparameters) rather than forcing `--allow-experiment-mismatch`, which would silently continue with a different LR horizon |
+| Missing Hub checkpoint | A new campaign may start at step 0; a resume requires an available canonical snapshot |
+| Provider handoff | Hub is the only state transport; the next eligible provider resumes from `latest/` regardless of which provider wrote it |
+| Final target already reached | The plan reports `campaign_complete=true`, `slice_count=0`, and skips the train job without launching a GPU |
+| Required Hub pointer lookup fails | Planning fails closed; no matrix is emitted and no provider can launch |
+| Workflow failed but log looks green | Check `provider-report-<target>.json`, the before/after pointer evidence, and `exit_reason`; a failed launch step fails the job |
+| `IncompatibleExperimentError` on every slice | Check the canonical Hub checkpoint's experiment manifest and dataset identity; start a new experiment or restore the matching settings instead of forcing a mismatch |
 
 ### Publication gate
 
@@ -352,46 +356,57 @@ Anything short of the target reports `partial` and publishes nothing.
 
 ## Free GPU Pool Training
 
-Train across multiple free GPU providers with automatic checkpoint sync:
+`train-pool.yml` is the free-only control plane. It never trains on the GitHub
+runner and rejects paid-provider selections:
 
 ```bash
-# Check provider status and cost estimates
-python -c "from gpu_pool import estimate_cost; print(estimate_cost(100000))"
+# Free-only default: Kaggle, then Lightning only after its eligibility gate
+gh workflow run train-pool.yml \
+  -f steps=615000 \
+  -f slice_size=15000 \
+  -f provider=auto
 
-# Train on current provider with Hub checkpoint sync
-python -c "from gpu_pool import train_with_fallback; train_with_fallback(steps=50000)"
+# A completed target plans successfully but launches no provider job
+gh workflow run train-pool.yml \
+  -f steps=600000 \
+  -f slice_size=15000 \
+  -f provider=auto
 
-# Print fallback chain
-python -c "from gpu_pool import train_chain; train_chain(steps=20000)"
+# Modal and "all" are rejected; do not use them in this workflow.
 ```
 
-Provider scripts with Hub sync:
+Auto fallback is limited to definite prelaunch refusals. Once a provider may
+have accepted a job, or training has started, failure stops the campaign to
+avoid duplicate GPU work. Every successful slice must advance the canonical
+Hub pointer; early stopping is complete only when the checkpoint state records
+convergence for that slice's target.
+
+The operational workflow runs only on `main` and shares the pool concurrency
+group. Inspection and EMA retrieval do not launch a GPU:
+
 ```bash
-python scripts/train_lightning.py --steps 20000 --hub-resume  # Lightning AI
-python scripts/train_colab.py --steps 20000 --resume           # Google Colab
-python scripts/train_kaggle.py --steps 20000 --hub-resume      # Kaggle
-python scripts/train_hf_spaces.py --steps 20000 --hub-resume   # HF Spaces
+# List membership candidates; confirm the exact owner/teamspace in the account UI
+gh workflow run gpu-pool-check.yml --ref main -f action=inspect
+
+# Fetch the canonical EMA plus step/SHA evidence as a seven-day artifact
+gh workflow run gpu-pool-check.yml --ref main -f action=fetch-ema
 ```
 
-Pool CI workflow (GitHub Actions = control plane, ADR-065):
+`action=lightning-smoke` is not a generic probe. It is permitted only after
+the account's free-only protections have been verified and
+`LIGHTNING_FREE_ONLY_VERIFIED=true` is deliberately set. Never infer
+eligibility from the presence of credits or from a successful teamspace lookup.
+
+Control-plane planning and provider gates (no training launch):
+
 ```bash
-# Plan bounded slices toward the global target (default 400k, 25k/session)
-gh workflow run train-pool.yml -f steps=400000 -f slice_size=60000
-
-# Unsupported providers FAIL CLEARLY at the gate (never silent CPU training)
-gh workflow run train-pool.yml -f provider=kaggle   # exits 2 with instructions
-
-# Control-plane primitives (unit-tested; used by train-pool.yml)
-python src/providers.py plan   --steps 400000 --slice-size 60000
-python src/providers.py gate   --provider lightning --strict
-python src/providers.py launch --provider modal --target 60000
+python src/providers.py plan --steps 615000 --slice-size 15000
+python src/providers.py gate --provider auto --strict
 ```
 
-Each slice is one bounded provider session that resumes exactly to its
-global target (`--steps` is never additive), pushes checkpoints to the Hub
-pool, and uploads a machine-readable `provider-report-<target>.json`
-(provider, GPU, VRAM, job id, start/end, completed step, checkpoint URI,
-exit reason).
+Each provider session is bounded, resumes from the canonical Hub pointer, and
+uploads a machine-readable `provider-report-<target>.json` with provider,
+GPU, job id, timestamps, completed step, checkpoint URI, and exit reason.
 
 ## Verification
 

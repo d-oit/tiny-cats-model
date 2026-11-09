@@ -1,0 +1,214 @@
+name: GPU Pool Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "CPU inspection, canonical EMA retrieval, or gated Lightning smoke"
+        required: true
+        default: inspect
+        type: choice
+        options:
+          - inspect
+          - fetch-ema
+          - lightning-smoke
+
+permissions:
+  contents: read
+
+concurrency:
+  group: Train (GPU Pool)-training
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: GPU pool check (${{ inputs.action }})
+    runs-on: ubuntu-latest
+    environment: modal-training
+    timeout-minutes: ${{ inputs.action == 'lightning-smoke' && 360 || 60 }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Require the main ref
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Dispatch this operational workflow with --ref main."
+            exit 1
+          fi
+          echo "Checked-out main SHA: $GITHUB_SHA"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install repository requirements
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Inspect Lightning teamspaces
+        if: inputs.action == 'inspect'
+        env:
+          LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
+        run: |
+          set -euo pipefail
+          if ! lightning-sdk api /v1/memberships \
+            > "$RUNNER_TEMP/lightning-teamspaces.json" \
+            2> "$RUNNER_TEMP/lightning-teamspaces.err"; then
+            echo "::error::Lightning membership lookup failed; CLI details were withheld."
+            exit 1
+          fi
+          python - "$RUNNER_TEMP/lightning-teamspaces.json" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1]) as source:
+              payload = json.load(source)
+          memberships = payload.get("memberships")
+          if not isinstance(memberships, list):
+              raise SystemExit("Lightning response has no memberships list")
+          if not memberships:
+              print("No Lightning teamspaces found.")
+          for item in memberships:
+              if not isinstance(item, dict):
+                  continue
+              owner = (
+                  item.get("ownerName")
+                  or item.get("ownerSlug")
+                  or item.get("owner")
+              )
+              name = item.get("name")
+              if isinstance(owner, str) and owner and isinstance(name, str) and name:
+                  print(f"{owner}/{name}")
+              else:
+                  print(
+                      "unresolved teamspace candidate: "
+                      + json.dumps(
+                          {
+                              key: item.get(key)
+                              for key in (
+                                  "name",
+                                  "ownerType",
+                                  "ownerId",
+                                  "projectId",
+                              )
+                          },
+                          sort_keys=True,
+                      )
+                  )
+          PY
+
+      - name: Fetch and validate canonical EMA checkpoint
+        if: inputs.action == 'fetch-ema'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HF_TOKEN is required to fetch the canonical checkpoint."
+            exit 1
+          fi
+          python src/providers.py fetch-artifacts \
+            --provider kaggle \
+            --name dit_model_ema.pt \
+            --dest checkpoints/eval
+          PYTHONPATH=src python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          from safe_checkpoint import load_torch_checkpoint
+
+          source = Path("checkpoints/eval/dit_model_ema.pt")
+          checkpoint = load_torch_checkpoint(source)
+          step = int(checkpoint["step"])
+          destination = source.with_name(f"step-{step}.pt")
+          if destination.exists():
+              raise SystemExit(f"refusing to overwrite {destination}")
+          source.rename(destination)
+          with destination.open("rb") as stream:
+              digest = hashlib.file_digest(stream, "sha256").hexdigest()
+          evidence = {
+              "checkpoint": destination.name,
+              "completed_step": step,
+              "sha256": digest,
+          }
+          Path("checkpoints/eval/checkpoint-evidence.json").write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + "\n"
+          )
+          print(f"checkpoint_step={step}")
+          print(f"checkpoint_sha256={digest}")
+          PY
+
+      - name: Upload canonical EMA checkpoint evidence
+        if: inputs.action == 'fetch-ema' && success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gpu-pool-eval-checkpoint
+          path: |
+            checkpoints/eval/step-*.pt
+            checkpoints/eval/checkpoint-evidence.json
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Resolve canonical resume step
+        id: remote-target
+        if: inputs.action == 'lightning-smoke'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "src")
+          from providers import fetch_remote_completed
+
+          token = os.environ.get("HF_TOKEN")
+          if not token:
+              raise SystemExit("HF_TOKEN is required to resolve the canonical pointer")
+          try:
+              completed = fetch_remote_completed(
+                  hub_repo="d4oit/tiny-cats-model",
+                  experiment_id="dit-breed-conditioned-v4",
+                  token=token,
+              )
+          except Exception as exc:
+              raise SystemExit(
+                  f"canonical pointer lookup failed ({type(exc).__name__})"
+              ) from None
+          if completed <= 0:
+              raise SystemExit("canonical pointer has no positive completed step")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"target={completed}\n")
+          print(f"Resolved canonical checkpoint step {completed}")
+          PY
+
+      - name: Run gated Lightning smoke
+        if: inputs.action == 'lightning-smoke'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          LIGHTNING_API_KEY: ${{ secrets.LIGHTNING_API_KEY }}
+          LIGHTNING_TEAMSPACE: ${{ vars.LIGHTNING_TEAMSPACE }}
+          LIGHTNING_FREE_ONLY_VERIFIED: ${{ vars.LIGHTNING_FREE_ONLY_VERIFIED }}
+          TARGET: ${{ steps.remote-target.outputs.target }}
+        run: |
+          python src/lightning_provider.py \
+            --target "$TARGET" \
+            --hub-repo d4oit/tiny-cats-model \
+            --experiment-id dit-breed-conditioned-v4 \
+            --hub-resume \
+            --no-hub-push \
+            --git-ref "$GITHUB_SHA" \
+            --log-file lightning-training.log
+
+      - name: Upload Lightning smoke log
+        if: always() && inputs.action == 'lightning-smoke'
+        uses: actions/upload-artifact@v7
+        with:
+          name: lightning-training-log-${{ github.run_id }}
+          path: lightning-training.log
+          retention-days: 7
+          if-no-files-found: warn

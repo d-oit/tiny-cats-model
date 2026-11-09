@@ -1,7 +1,8 @@
 """tests/test_provider_auto.py
 
-The modal→kaggle fallback dispatcher (ADR-067): fall back only on launch
-preconditions, never mask a training failure, and record which provider ran.
+The free-only default is Kaggle → Lightning. Explicit provider lists remain
+available for deliberate manual runs; fallback is only for a confirmed
+prelaunch block, never to mask a training or ambiguous submission failure.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from provider_auto import EXIT_CONFIG, main
+from provider_auto import EXIT_CONFIG, EXIT_LAUNCH_BLOCKED, main, run_provider
 
 BASE_ARGS = ["--target", "15000", "--hub-repo", "d-oit/tiny-cats-model"]
 KAGGLE_ARGS = [*BASE_ARGS, "--kernel-id", "d-oit/tiny-cats-dit-slice"]
@@ -42,7 +43,13 @@ def test_falls_back_when_modal_is_blocked(tmp_path: Path) -> None:
     runner = Runner([(1, True), (0, False)])
 
     code = main(
-        [*KAGGLE_ARGS, "--provider-used-file", str(used)],
+        [
+            *KAGGLE_ARGS,
+            "--providers",
+            "modal,kaggle",
+            "--provider-used-file",
+            str(used),
+        ],
         runner=runner,
     )
 
@@ -53,27 +60,34 @@ def test_falls_back_when_modal_is_blocked(tmp_path: Path) -> None:
     assert used.read_text().strip() == "kaggle"
 
 
-def test_no_fallback_after_a_training_failure(tmp_path: Path) -> None:
+def test_no_fallback_after_a_kaggle_training_failure(tmp_path: Path) -> None:
     used = tmp_path / "used"
-    runner = Runner([(1, False)])
+    runner = Runner([(2, False)])
 
     code = main([*KAGGLE_ARGS, "--provider-used-file", str(used)], runner=runner)
 
-    assert code == 1
-    assert len(runner.commands) == 1  # the kaggle fallback never ran
-    assert used.read_text().strip() == "modal"
+    assert code == 2
+    assert len(runner.commands) == 1
+    assert runner.commands[0][:2] == ["python", "src/kaggle_provider.py"]
+    assert used.read_text().strip() == "kaggle"
 
 
 def test_blocked_with_no_provider_left_returns_the_exit_code(tmp_path: Path) -> None:
     used = tmp_path / "used"
-    runner = Runner([(1, True)])
+    runner = Runner([(EXIT_LAUNCH_BLOCKED, True)])
 
     code = main(
-        [*BASE_ARGS, "--providers", "modal", "--provider-used-file", str(used)],
+        [
+            *BASE_ARGS,
+            "--providers",
+            "kaggle",
+            "--provider-used-file",
+            str(used),
+        ],
         runner=runner,
     )
 
-    assert code == 1
+    assert code == EXIT_LAUNCH_BLOCKED
     assert len(runner.commands) == 1
 
 
@@ -85,12 +99,16 @@ def test_kaggle_is_launchable_without_a_configured_kernel_id(
     monkeypatch.delenv("KAGGLE_KERNEL_ID", raising=False)
 
     code = main(
-        [*BASE_ARGS, "--providers", "kaggle,modal", "--provider-used-file", str(used)],
+        [
+            *BASE_ARGS,
+            "--providers",
+            "kaggle,lightning",
+            "--provider-used-file",
+            str(used),
+        ],
         runner=runner,
     )
 
-    # ADR-067: the adapter resolves <account>/tiny-cats-dit-slice at run time,
-    # so a fresh repository's fallback is not skipped as "unconfigured".
     assert code == 0
     assert len(runner.commands) == 1
     assert runner.commands[0][:2] == ["python", "src/kaggle_provider.py"]
@@ -116,12 +134,103 @@ def test_provider_is_recorded_before_it_runs(tmp_path: Path) -> None:
     runner = Runner([(1, True), (0, False)])
     runner.used_file = used
 
-    code = main([*KAGGLE_ARGS, "--provider-used-file", str(used)], runner=runner)
+    code = main(
+        [
+            *KAGGLE_ARGS,
+            "--providers",
+            "modal,kaggle",
+            "--provider-used-file",
+            str(used),
+        ],
+        runner=runner,
+    )
 
     assert code == 0
-    # The artifact steps read this file even when the run fails, so it must be
-    # written before the provider starts, not after it exits.
     assert runner.used_at_call == ["modal", "kaggle"]
+
+
+def test_default_free_chain_falls_back_from_kaggle_refusal_to_lightning(
+    tmp_path: Path,
+) -> None:
+    used = tmp_path / "used"
+    runner = Runner([(EXIT_LAUNCH_BLOCKED, True), (0, False)])
+
+    code = main([*BASE_ARGS, "--provider-used-file", str(used)], runner=runner)
+
+    assert code == 0
+    assert [command[1] for command in runner.commands] == [
+        "src/kaggle_provider.py",
+        "src/lightning_provider.py",
+    ]
+    assert used.read_text().strip() == "lightning"
+
+
+def test_both_free_providers_block_without_modal_fallback(tmp_path: Path) -> None:
+    runner = Runner([(EXIT_LAUNCH_BLOCKED, True), (EXIT_LAUNCH_BLOCKED, True)])
+
+    code = main([*BASE_ARGS], runner=runner)
+
+    assert code == EXIT_LAUNCH_BLOCKED
+    assert [command[0] for command in runner.commands] == ["python", "python"]
+    assert [command[1] for command in runner.commands] == [
+        "src/kaggle_provider.py",
+        "src/lightning_provider.py",
+    ]
+
+
+def test_ambiguous_kaggle_failure_does_not_fall_back(tmp_path: Path) -> None:
+    runner = Runner([(5, False)])
+
+    code = main([*BASE_ARGS], runner=runner)
+
+    assert code == 5
+    assert len(runner.commands) == 1
+    assert runner.commands[0][1] == "src/kaggle_provider.py"
+
+
+def test_modal_spend_text_is_not_a_kaggle_or_lightning_block(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    import provider_auto
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdout = iter(["Workspace has exceeded its spend limit\n"])
+
+        def wait(self) -> int:
+            return 1
+
+    monkeypatch.setattr(
+        provider_auto.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: FakeProcess(),
+    )
+    assert run_provider(["python", "src/kaggle_provider.py"]) == (1, False)
+    assert run_provider(["python", "src/lightning_provider.py"]) == (1, False)
+    assert run_provider(["modal", "run", "src/train_dit.py"]) == (1, True)
+    capsys.readouterr()
+
+
+def test_exit_six_is_a_definite_prelaunch_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import provider_auto
+
+    class FakeProcess:
+        stdout = iter([])
+
+        def wait(self) -> int:
+            return EXIT_LAUNCH_BLOCKED
+
+    monkeypatch.setattr(
+        provider_auto.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: FakeProcess(),
+    )
+    assert run_provider(["python", "src/lightning_provider.py"]) == (
+        EXIT_LAUNCH_BLOCKED,
+        True,
+    )
 
 
 def test_campaign_flags_reach_the_provider_commands(tmp_path: Path) -> None:
@@ -131,6 +240,8 @@ def test_campaign_flags_reach_the_provider_commands(tmp_path: Path) -> None:
     code = main(
         [
             *KAGGLE_ARGS,
+            "--providers",
+            "modal,kaggle",
             "--min-lr",
             "1e-5",
             "--schedule-steps",

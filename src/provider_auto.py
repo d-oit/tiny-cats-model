@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """Provider fallback dispatcher for the GPU pool (ADR-067).
 
-Runs the first launchable provider in the chain and falls back to the next
-one **only** when an attempt fails on a launch precondition — concretely, a
-provider-side billing/quota block that never reached training. A slice that
-actually started and then failed is *not* retried on another provider: the
-failure stays visible (the stall tracker opens an issue) instead of being
-masked by a provider switch.
+Runs the first launchable provider in the free-only chain and falls back to
+the next only when a provider is definitely blocked before launch. A slice
+that actually started and then failed is not retried on another provider.
 
 Usage (printed by ``providers.py launch --provider auto ...``)::
 
-    python src/provider_auto.py --target 540000 --kernel-id owner/slug --hub-resume
+    python src/provider_auto.py --target 540000 --hub-resume
 
-The provider that actually ran is written to ``--provider-used-file`` so the
-workflow's report/verify steps can fetch artifacts from the right source.
+The last provider attempted is written to ``--provider-used-file`` so the
+workflow's report and artifact-fetch steps can identify the final chain member.
 """
 
 from __future__ import annotations
@@ -30,13 +27,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from providers import (
+    AUTO_PROVIDERS,
+    EXIT_LAUNCH_BLOCKED,
     UnsupportedProviderError,
     build_launch_command,
 )
 
 logger = logging.getLogger("provider-auto")
 
-DEFAULT_PROVIDERS = "modal,kaggle"
+DEFAULT_PROVIDERS = ",".join(AUTO_PROVIDERS)
 
 # Launch-precondition failures that justify falling back: the provider never
 # started training, so another provider can run the same slice unchanged.
@@ -49,13 +48,14 @@ EXIT_CONFIG = 5
 
 
 def run_provider(command: list[str]) -> tuple[int, bool]:
-    """Run one provider command, streaming its output.
+    """Run one provider command, streaming output and detecting safe fallback.
 
-    Returns:
-        ``(exit_code, blocked)`` where ``blocked`` is True when a launch
-        precondition pattern appeared in the output (the run never trained).
+    Exit code ``EXIT_LAUNCH_BLOCKED`` is the provider contract for a definite
+    prelaunch refusal. The legacy spend-limit text detector is Modal-only:
+    Kaggle/Lightning logs may contain unrelated Modal prose.
     """
     blocked = False
+    modal_run = command[:2] == ["modal", "run"]
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -67,9 +67,12 @@ def run_provider(command: list[str]) -> tuple[int, bool]:
     for line in process.stdout:
         print(line, end="", flush=True)
         lowered = line.lower()
-        if any(pattern in lowered for pattern in TERMINAL_LAUNCH_PATTERNS):
+        if modal_run and any(
+            pattern in lowered for pattern in TERMINAL_LAUNCH_PATTERNS
+        ):
             blocked = True
-    return process.wait(), blocked
+    exit_code = process.wait()
+    return exit_code, blocked or exit_code == EXIT_LAUNCH_BLOCKED
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

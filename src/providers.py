@@ -8,19 +8,19 @@ and every provider execution writes a machine-readable report:
     provider, GPU model, VRAM, provider job/session ID, start time,
     end time, completed global step, checkpoint URI, exit reason
 
-Training slices (WP6): ``--steps`` is a global target; the control plane
-plans bounded per-session slices (e.g. 0 → 60k → 120k → ... → 400k) and
-runs them as separate provider sessions, each resuming exactly from the
-Hub checkpoint (see ADR-065).
+Training slices: ``--steps`` is a global target; the control plane plans
+bounded per-session slices and resumes from the canonical Hub pointer. A
+completed target produces no provider session.
 
-CLI (used by .github/workflows/train.yml and train-pool.yml):
+CLI (used by ``train-pool.yml``):
 
-    python src/providers.py plan   --steps 400000 --slice-size 60000
-    python src/providers.py gate   --provider lightning --strict
-    python src/providers.py launch --provider modal --target 60000 ...
+    python src/providers.py plan --steps 600000 --slice-size 15000 \
+        --remote-completed --token "$HF_TOKEN"
+    python src/providers.py gate --provider auto --strict
+    python src/providers.py launch --provider auto --target 615000 ...
     python src/providers.py verify --state-file training_state.json \
-        --checkpoint checkpoints/pool/dit_model.pt --target 60000
-    python src/providers.py report --provider modal --job-id ... --target 60000
+        --checkpoint checkpoints/pool/dit_model.pt --target 615000
+    python src/providers.py report --provider kaggle --job-id ... --target 615000
 """
 
 from __future__ import annotations
@@ -46,6 +46,8 @@ from typing import Any
 POOL_ROOT = "checkpoints/pool"
 DEFAULT_EXPERIMENT_ID = "dit-breed-conditioned-v4"
 DEFAULT_HUB_REPO = "d4oit/tiny-cats-model"
+AUTO_PROVIDERS = ("kaggle", "lightning")
+EXIT_LAUNCH_BLOCKED = 6
 
 # VRAM in GB for the GPU models our providers offer.
 VRAM_GB: dict[str, int] = {"T4": 16, "L4": 24, "P100": 16, "A10G": 24, "CPU": 0}
@@ -98,13 +100,9 @@ ADAPTERS: dict[str, ProviderAdapter] = {
     ),
     "lightning": ProviderAdapter(
         name="lightning",
-        supported=False,
+        supported=True,
         gpu_models=["T4"],
-        session_limit_minutes=720,
-        launch_hint=(
-            "run manually on a Lightning studio: "
-            "python scripts/train_lightning.py --hub-resume"
-        ),
+        session_limit_minutes=360,
     ),
     "colab": ProviderAdapter(
         name="colab",
@@ -232,11 +230,10 @@ def _build_auto_command(
     kernel_id: str | None,
     hf_token_dataset: str | None,
 ) -> list[str]:
-    """Command for ``--provider auto``: the modal→kaggle fallback dispatcher.
+    """Command for ``--provider auto``: the Kaggle → Lightning free-only chain.
 
-    The dispatcher walks the chain and only falls back on a *launch
-    precondition* failure (e.g. an exhausted Modal spend limit), never on a
-    training failure — a slice that ran and broke stays visible (ADR-067).
+    The dispatcher falls back only on a definite prelaunch refusal, never on
+    a training failure or an ambiguous submission result.
     """
     command = [
         "python",
@@ -311,10 +308,9 @@ def build_launch_command(
 ) -> list[str]:
     """Build the exact command that launches one bounded provider session.
 
-    Modal runs the trainer directly in a container; Kaggle packages a private
-    script kernel and polls it to completion (ADR-067). Providers with no
-    headless adapter raise :class:`UnsupportedProviderError` — the control
-    plane never falls back to CPU simulation (WP5).
+    Modal runs the trainer in a container, Kaggle submits a script kernel, and
+    Lightning submits a bounded headless Job. Unsupported providers raise
+    :class:`UnsupportedProviderError`; the control plane never simulates on CPU.
     """
     kernel_id = _env_fallback(kernel_id, "KAGGLE_KERNEL_ID")
     hf_token_dataset = _env_fallback(hf_token_dataset, "KAGGLE_HF_TOKEN_DATASET")
@@ -384,6 +380,40 @@ def build_launch_command(
         if allow_experiment_mismatch:
             kaggle_command.append("--allow-experiment-mismatch")
         return kaggle_command
+
+    if adapter.name == "lightning":
+        lightning_command = [
+            "python",
+            "src/lightning_provider.py",
+            "--target",
+            str(target),
+            "--hub-repo",
+            hub_repo,
+            "--experiment-id",
+            experiment_id,
+            "--batch-size",
+            str(batch_size),
+            "--lr",
+            str(lr),
+            "--save-interval",
+            str(save_interval),
+            "--hub-push-interval",
+            str(hub_push_interval),
+        ]
+        for flag, value in (
+            ("--warmup-steps", warmup_steps),
+            ("--min-lr", min_lr),
+            ("--schedule-steps", schedule_steps),
+        ):
+            if value is not None:
+                lightning_command.extend([flag, str(value)])
+        if hub_resume:
+            lightning_command.append("--hub-resume")
+        if no_hub_push:
+            lightning_command.append("--no-hub-push")
+        if allow_experiment_mismatch:
+            lightning_command.append("--allow-experiment-mismatch")
+        return lightning_command
 
     if adapter.name != "modal":
         raise UnsupportedProviderError(
@@ -462,7 +492,7 @@ def fetch_artifact(
     provider report and the checkpoint verifier.
 
     Args:
-        provider: Provider that ran the slice (``modal`` or ``kaggle``).
+        provider: Provider that ran the slice (``modal``, ``kaggle`` or ``lightning``).
         name: Artifact file name, e.g. ``dit_model.pt``.
         dest_dir: Directory to materialise ``name`` into.
         hub_repo: HF Hub repo for Hub-backed providers.
@@ -490,10 +520,10 @@ def fetch_artifact(
         return dest
 
     adapter = get_adapter(provider)  # rejects unsupported providers loudly
-    if adapter.name != "kaggle":
+    if adapter.name not in {"kaggle", "lightning"}:
         raise UnsupportedProviderError(
             f"No artifact source for provider {adapter.name!r}; "
-            "supported: modal (volume), kaggle (Hub)."
+            "supported: modal (volume), kaggle/lightning (Hub)."
         )
 
     from gpu_pool import pull_checkpoint_from_hub
@@ -517,12 +547,11 @@ def fetch_remote_completed(
     hub_repo: str = DEFAULT_HUB_REPO,
     experiment_id: str = DEFAULT_EXPERIMENT_ID,
     token: str | None = None,
-) -> int | None:
-    """Read ``completed_steps`` from the Hub ``latest/manifest.json`` pointer.
+) -> int:
+    """Read ``completed_steps`` from a valid Hub ``latest/manifest.json``.
 
-    Returns None when the pointer does not exist yet (first run). Network or
-    Hub errors propagate so callers can decide (the ``plan`` CLI treats them
-    as "unknown" and warns).
+    Missing or malformed pointers and Hub/network errors raise. Control-plane
+    planning must fail closed instead of treating an unknown remote step as 0.
     """
     from huggingface_hub import hf_hub_download  # local import: optional dep
 
@@ -537,7 +566,9 @@ def fetch_remote_completed(
     if not isinstance(document, dict):
         raise ValueError(f"Hub pointer {filename} is not a JSON object")
     completed = document.get("completed_steps")
-    return int(completed) if completed is not None else None
+    if isinstance(completed, bool) or not isinstance(completed, int) or completed < 0:
+        raise ValueError(f"Hub pointer {filename} has an invalid completed_steps value")
+    return completed
 
 
 @dataclass
@@ -936,10 +967,14 @@ def _cmd_plan(args: argparse.Namespace) -> int:
                 experiment_id=args.experiment_id,
                 token=args.token,
             )
-        except Exception as exc:  # plan must degrade, not die
-            print(f"warning: could not read Hub pointer: {exc}", file=sys.stderr)
-        else:
-            completed = max(completed, remote or 0)
+        except Exception as exc:
+            print(
+                "error: required Hub pointer lookup failed "
+                f"({type(exc).__name__}); refusing to plan resumed slices",
+                file=sys.stderr,
+            )
+            return 1
+        completed = max(completed, remote or 0)
 
     targets = None
     if args.targets:
@@ -950,24 +985,29 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         targets=targets,
         completed=completed,
     )
+    campaign_complete = completed >= args.steps
+    slice_count = 0 if campaign_complete else len(plan)
+    if args.github_output:
+        with open(args.github_output, "a") as output:
+            output.write(f"completed_steps={completed}\n")
+            output.write(f"campaign_complete={str(campaign_complete).lower()}\n")
+            output.write(f"slice_count={slice_count}\n")
     print(json.dumps({"target": plan}))
     return 0
 
 
 def _cmd_gate(args: argparse.Namespace) -> int:
     if args.provider.strip().lower() == "auto":
-        # `auto` walks the launchable chain; the gate confirms every member
-        # has a real adapter, so a fallback can never land on a CPU simulation.
-        for adapter in ADAPTERS.values():
-            if adapter.supported:
-                print(
-                    f"supported: {adapter.name} gpu={adapter.gpu_model} "
-                    f"vram={adapter.vram_gb}GB "
-                    f"session_limit={adapter.session_limit_minutes}min"
-                )
-        chain = " -> ".join(a.name for a in ADAPTERS.values() if a.supported)
-        print(f"auto chain: {chain}")
+        for name in AUTO_PROVIDERS:
+            adapter = ADAPTERS[name]
+            print(
+                f"supported: {adapter.name} gpu={adapter.gpu_model} "
+                f"vram={adapter.vram_gb}GB "
+                f"session_limit={adapter.session_limit_minutes}min"
+            )
+        print(f"auto chain: {' -> '.join(AUTO_PROVIDERS)}")
         return 0
+
     requested = (
         sorted(ADAPTERS) if args.provider == "all" else [args.provider.strip().lower()]
     )
@@ -1136,6 +1176,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--remote-completed",
         action="store_true",
         help="read completed steps from the Hub latest/manifest.json pointer",
+    )
+    plan.add_argument(
+        "--github-output",
+        default=None,
+        help="append completed_steps/campaign_complete/slice_count to this file",
     )
     plan.set_defaults(func=_cmd_plan)
 

@@ -18,3 +18,5 @@ gradio>=6.31.0
 # Kaggle provider adapter (ADR-067): the control plane pushes/polls the slice
 # kernel with the Kaggle SDK, authenticated by the KAGGLE_API_TOKEN secret.
 kaggle>=1.7.4.5
+# Lightning provider adapter: headless Job lifecycle pinned for reproducible launches.
+lightning-sdk==2026.11.6

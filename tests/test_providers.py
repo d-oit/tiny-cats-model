@@ -18,6 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from providers import (
+    AUTO_PROVIDERS,
     DEFAULT_EXPERIMENT_ID,
     EXIT_REASONS,
     VERIFY_INVALID,
@@ -95,23 +96,28 @@ class TestProviderGate:
         assert adapter.vram_gb == 16
         assert adapter.session_limit_minutes > 0
 
-    @pytest.mark.parametrize("provider", ["lightning", "colab", "hf_spaces", "local"])
+    @pytest.mark.parametrize("provider", ["colab", "hf_spaces", "local"])
     def test_unsupported_providers_raise_loudly(self, provider: str) -> None:
         with pytest.raises(UnsupportedProviderError) as excinfo:
             get_adapter(provider)
         message = str(excinfo.value)
         assert provider in message
-        # The failure must name the CPU-simulation refusal and the fallback.
         assert "CPU" in message
+
+    def test_lightning_is_a_bounded_t4_adapter(self) -> None:
+        adapter = get_adapter("lightning")
+        assert adapter.gpu_model == "T4"
+        assert adapter.vram_gb == 16
+        assert adapter.session_limit_minutes == 360
 
     def test_unknown_provider_lists_valid_options(self) -> None:
         with pytest.raises(UnsupportedProviderError, match="Valid providers"):
             get_adapter("some-tpu-farm")
 
-    def test_gate_cli_fails_with_exit_code_2(
+    def test_gate_cli_fails_for_unsupported_provider(
         self, capsys: pytest.CaptureFixture
     ) -> None:
-        assert main(["gate", "--provider", "lightning", "--strict"]) == 2
+        assert main(["gate", "--provider", "colab", "--strict"]) == 2
         captured = capsys.readouterr()
         assert "not supported" in captured.err
 
@@ -295,15 +301,37 @@ class TestKaggleAndAutoLaunch:
         assert "--kernel-id" in command
         assert "--hub-resume" in command
 
+    def test_lightning_launch_builds_the_campaign_command(self) -> None:
+        command = build_launch_command(
+            "lightning",
+            615_000,
+            hub_resume=True,
+            no_hub_push=True,
+            min_lr="1e-5",
+            schedule_steps="615000",
+            allow_experiment_mismatch=True,
+        )
+        assert command[:2] == ["python", "src/lightning_provider.py"]
+        joined = " ".join(command)
+        assert "--target 615000" in joined
+        assert "--min-lr 1e-5" in joined
+        assert "--schedule-steps 615000" in joined
+        assert "--hub-resume" in command
+        assert "--no-hub-push" in command
+        assert "--allow-experiment-mismatch" in command
+
     def test_gate_cli_kaggle_succeeds(self, capsys: pytest.CaptureFixture) -> None:
         assert main(["gate", "--provider", "kaggle", "--strict"]) == 0
         assert "supported: kaggle" in capsys.readouterr().out
 
-    def test_gate_cli_auto_lists_the_chain(self, capsys: pytest.CaptureFixture) -> None:
+    def test_gate_cli_auto_lists_only_the_free_chain(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        assert AUTO_PROVIDERS == ("kaggle", "lightning")
         assert main(["gate", "--provider", "auto"]) == 0
         out = capsys.readouterr().out
-        assert "auto chain:" in out
-        assert "modal" in out and "kaggle" in out
+        assert "auto chain: kaggle -> lightning" in out
+        assert "modal" not in out
 
 
 class TestFetchArtifact:
@@ -313,8 +341,12 @@ class TestFetchArtifact:
         with pytest.raises(UnsupportedProviderError):
             fetch_artifact(provider="colab", name="dit_model.pt", dest_dir=tmp_path)
 
-    def test_kaggle_pulls_from_the_hub_pointer(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize("provider", ["kaggle", "lightning"])
+    def test_hub_backed_provider_pulls_from_the_pointer(
+        self,
+        provider: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import gpu_pool
 
@@ -331,7 +363,7 @@ class TestFetchArtifact:
             return path
 
         monkeypatch.setattr(gpu_pool, "pull_checkpoint_from_hub", fake_pull)
-        dest = fetch_artifact(provider="kaggle", name="dit_model.pt", dest_dir=tmp_path)
+        dest = fetch_artifact(provider=provider, name="dit_model.pt", dest_dir=tmp_path)
         assert dest is not None
         assert dest.read_bytes() == b"checkpoint-bytes"
 
@@ -342,7 +374,7 @@ class TestFetchArtifact:
 
         monkeypatch.setattr(gpu_pool, "pull_checkpoint_from_hub", lambda **_kw: None)
         assert (
-            fetch_artifact(provider="kaggle", name="dit_model.pt", dest_dir=tmp_path)
+            fetch_artifact(provider="lightning", name="dit_model.pt", dest_dir=tmp_path)
             is None
         )
 
@@ -1240,21 +1272,72 @@ class TestPlanCLI:
         assert code == 0
         assert json.loads(capsys.readouterr().out)["target"][0] == 120_000
 
-    def test_plan_unknown_remote_degrades_with_warning(
-        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    def test_plan_remote_pointer_failure_has_no_matrix(
+        self,
+        capsys: pytest.CaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
-        # No network in CI: --remote-completed must warn, not crash.
         def boom(*_args, **_kwargs):
-            raise RuntimeError("no network")
+            raise RuntimeError("must not expose provider response details")
 
-        monkeypatch.setattr("huggingface_hub.hf_hub_download", boom, raising=False)
-        assert (
-            main(["plan", "--steps", "100", "--slice-size", "30", "--remote-completed"])
-            == 0
+        monkeypatch.setattr("providers.fetch_remote_completed", boom)
+        output_file = tmp_path / "github-output"
+        code = main(
+            [
+                "plan",
+                "--steps",
+                "600000",
+                "--remote-completed",
+                "--github-output",
+                str(output_file),
+            ]
         )
         captured = capsys.readouterr()
-        assert "warning" in captured.err
-        assert json.loads(captured.out) == {"target": [30, 60, 90, 100]}
+        assert code == 1
+        assert captured.out == ""
+        assert "refusing to plan resumed slices" in captured.err
+        assert "must not expose" not in captured.err
+        assert not output_file.exists()
+
+    @pytest.mark.parametrize(
+        ("completed", "campaign_complete", "slice_count"),
+        [(599_999, "false", 1), (600_000, "true", 0)],
+    )
+    def test_plan_reports_completion_without_changing_stdout_matrix(
+        self,
+        completed: int,
+        campaign_complete: str,
+        slice_count: int,
+        capsys: pytest.CaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        output_file = tmp_path / "github-output"
+        assert (
+            main(
+                [
+                    "plan",
+                    "--steps",
+                    "600000",
+                    "--slice-size",
+                    "15000",
+                    "--completed",
+                    str(completed),
+                    "--github-output",
+                    str(output_file),
+                ]
+            )
+            == 0
+        )
+        assert json.loads(capsys.readouterr().out) == {"target": [600_000]}
+        outputs = dict(
+            line.split("=", 1) for line in output_file.read_text().splitlines()
+        )
+        assert outputs == {
+            "completed_steps": str(completed),
+            "campaign_complete": campaign_complete,
+            "slice_count": str(slice_count),
+        }
 
 
 class TestRemotePointer:
@@ -1271,6 +1354,20 @@ class TestRemotePointer:
             huggingface_hub, "hf_hub_download", lambda **_kwargs: str(target)
         )
         assert fetch_remote_completed() == 120_000
+
+    def test_fetch_remote_completed_rejects_pointer_without_step(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "manifest.json"
+        target.write_text(json.dumps({"experiment_id": DEFAULT_EXPERIMENT_ID}))
+
+        import huggingface_hub
+
+        monkeypatch.setattr(
+            huggingface_hub, "hf_hub_download", lambda **_kwargs: str(target)
+        )
+        with pytest.raises(ValueError, match="invalid completed_steps"):
+            fetch_remote_completed()
 
     def test_fetch_remote_completed_missing_pointer(
         self, monkeypatch: pytest.MonkeyPatch

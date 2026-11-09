@@ -118,54 +118,45 @@ and verifies artifacts; it never trains on CPU. `--steps` is always the *global*
 target, and GitHub-hosted runners cap a job at 6h, so one job is one slice.
 
 ```bash
-# Single verified production slice (Modal, <= 6h)
-gh workflow run train.yml -f steps=25000 -f batch_size=32
+# Free-only bounded slices (Kaggle → eligibility-approved Lightning)
+gh workflow run train-pool.yml -f steps=615000 -f slice_size=15000 -f provider=auto
 
-# Full 400k run as bounded slices (sequential, fail-fast, resumable)
-gh workflow run train-pool.yml -f steps=400000 -f slice_size=60000
+# Target already reached: plan succeeds, no provider session launches
+gh workflow run train-pool.yml -f steps=600000 -f slice_size=15000 -f provider=auto
 
-# Fallback chain (ADR-067): Modal first, Kaggle when Modal is launch-blocked
-gh workflow run train-pool.yml -f provider=auto
-
-# Kaggle only (needs KAGGLE_KERNEL_ID + KAGGLE_HF_TOKEN_DATASET, see ADR-067)
-gh workflow run train-pool.yml -f provider=kaggle
-
-# Gated providers (lightning/colab/hf_spaces) fail clearly at the gate
+# Lightning requires explicit free-only account verification
 gh workflow run train-pool.yml -f provider=lightning
 
 # Control plane without launching anything
-python src/providers.py gate   --provider all
-python src/providers.py plan   --steps 400000 --slice-size 60000
+python src/providers.py gate --provider auto
+python src/providers.py plan --steps 615000 --slice-size 15000
 python src/providers.py verify --state-file checkpoints/pool/training_state.json \
   --checkpoint checkpoints/pool/dit_model.pt --target 60000
 
-# Monitor runs
+# Monitor runs and list secret names only
 gh run list
 gh run view <run-id>
 gh run watch
-
-# Check secrets
 gh secret list
 ```
 
-> **Provider fallback (ADR-067):** scheduled runs use `provider=auto` — Modal
-> first, then Kaggle (packaged as a private script kernel) when Modal is
-> blocked on billing/quota. Kaggle requires the `KAGGLE_API_TOKEN` secret and
-> the `KAGGLE_KERNEL_ID` / `KAGGLE_HF_TOKEN_DATASET` repo variables (setup in
-> the ADR). Fallback happens **only** on launch preconditions: a slice that
-> started and then failed never switches providers.
+> **Provider fallback (ADR-067):** scheduled `train-pool.yml` runs use the
+> free-only order Kaggle → Lightning. Lightning runs only after
+> `LIGHTNING_FREE_ONLY_VERIFIED=true` has been set following explicit account
+> billing verification; Modal is never part of this automatic chain.
+> Kaggle requires the `KAGGLE_API_TOKEN` secret and optional
+> `KAGGLE_KERNEL_ID` / `KAGGLE_HF_TOKEN_DATASET` repository variables. Fallback
+> happens only on a definite prelaunch refusal; a slice that started and then
+> failed never switches providers.
 
-> **Note:** The `Speed: X steps/s` log line reports the current logging interval, not
-> wall-clock throughput. Measured T4 throughput on 2026-09-12 was 1.16 steps/s at batch 32,
-> 0.45 at batch 64, and 0.17 at batch 128 (128x128, AMP) — the planning baseline
-> `gpu_pool.T4_STEPS_PER_SECOND = 0.06` (batch-512-equivalent) reflects those and is
-> confirmed by `python scripts/benchmark_estimates.py --tune`. Also: scheduled
-> `train-pool.yml` runs before 2026-09-12 exited immediately without training (flags were
-> passed as a single argument, masked by a missing `pipefail`), so always check
-> `modal-training.log` for real training output. See
-> `plans/ADR-057-modal-cli-verification-and-best-practices-2026.md` for the container
-> overhead diagnosis and mitigation options (`@modal.enter`, `single_use_containers=True`,
-> larger `save_interval`, GH-Action container reuse).
+> **Note:** `Speed: X steps/s` reports the current logging interval, not wall-clock
+> throughput. T4 measurements from 2026-09-12 were 1.16 steps/s at batch 32,
+> 0.45 at batch 64, and 0.17 at batch 128 (128x128, AMP); the planning baseline
+> `gpu_pool.T4_STEPS_PER_SECOND = 0.06` (batch-512-equivalent) reflects them and
+> is confirmed by `python scripts/benchmark_estimates.py --tune`. Current
+> free-only `train-pool.yml` output is attached as `provider-training-log-*`;
+> inspect those logs rather than relying on workflow status alone. Modal-specific
+> overhead guidance in ADR-057 applies only to the separate Modal path.
 
 ## Authentication
 

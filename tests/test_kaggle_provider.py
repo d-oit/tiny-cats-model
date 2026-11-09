@@ -32,9 +32,11 @@ from kaggle_provider import (
     EXIT_COMPLETE,
     EXIT_CONFIG,
     EXIT_KERNEL_ERROR,
+    EXIT_LAUNCH_BLOCKED,
     EXIT_TIMEOUT,
     KERNEL_METADATA_FILE,
     KaggleLaunchError,
+    KaggleSubmissionRejected,
     build_kernel_workspace,
     build_slice_args,
     ensure_hf_token_dataset,
@@ -360,15 +362,19 @@ class TestPush:
         assert info["ref"] == "d-oit/tiny-cats-dit-slice"
         assert api.push_calls == [(str(tmp_path), "21600")]
 
-    def test_server_error_is_loud(self, tmp_path: Path) -> None:
-        api = FakeApi(push_error="invalid kernel")
-        with pytest.raises(KaggleLaunchError, match="invalid kernel"):
+    def test_server_rejection_is_classified_without_response_body(
+        self, tmp_path: Path
+    ) -> None:
+        api = FakeApi(push_error="response body might contain credentials")
+        with pytest.raises(KaggleSubmissionRejected) as excinfo:
             push_kernel(api, tmp_path)
+        assert not excinfo.value.retryable_sources
 
-    def test_invalid_sources_are_loud(self, tmp_path: Path) -> None:
+    def test_invalid_sources_are_marked_retryable(self, tmp_path: Path) -> None:
         api = FakeApi(invalid_sources=["d-oit/missing-dataset"])
-        with pytest.raises(KaggleLaunchError, match="invalid sources"):
+        with pytest.raises(KaggleSubmissionRejected) as excinfo:
             push_kernel(api, tmp_path)
+        assert excinfo.value.retryable_sources
 
     def test_fresh_dataset_source_is_retried_until_ready(self, tmp_path: Path) -> None:
         class Api:
@@ -403,18 +409,36 @@ class TestPush:
         assert api.calls == 3
         assert info["version"] == 9
 
-    def test_other_push_errors_are_not_retried(self, tmp_path: Path) -> None:
+    def test_other_push_rejections_are_not_retried(self, tmp_path: Path) -> None:
         api = FakeApi(push_error="invalid kernel")
-        with pytest.raises(KaggleLaunchError, match="invalid kernel"):
+        with pytest.raises(KaggleSubmissionRejected):
             push_kernel_with_retry(
                 api, tmp_path, attempts=3, delay_seconds=0, sleep=lambda _s: None
             )
         assert len(api.push_calls) == 1
 
-    def test_missing_version_is_rejected(self, tmp_path: Path) -> None:
+    def test_missing_version_is_ambiguous(self, tmp_path: Path) -> None:
         api = FakeApi(version=None)
-        with pytest.raises(KaggleLaunchError, match="no version number"):
+        with pytest.raises(KaggleLaunchError) as excinfo:
             push_kernel(api, tmp_path)
+        assert not isinstance(excinfo.value, KaggleSubmissionRejected)
+
+    def test_bad_kernel_id_exits_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KAGGLE_API_TOKEN", "test-token")
+        code = main(
+            [
+                "--target",
+                "15000",
+                "--kernel-id",
+                "not-a-slug",
+                "--workspace",
+                str(tmp_path / "kernel"),
+                "--no-hub-push",
+            ]
+        )
+        assert code == EXIT_CONFIG
 
 
 class TestLogs:
@@ -593,7 +617,10 @@ class TestCli:
         assert "KAGGLE_DRY_RUN" in out
         assert (tmp_path / "kernel" / KERNEL_METADATA_FILE).is_file()
 
-    def test_bad_kernel_id_exits_config(self, tmp_path: Path) -> None:
+    def test_bad_kernel_id_exits_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("KAGGLE_API_TOKEN", "test-token")
         code = main(
             [
                 "--target",
@@ -602,6 +629,7 @@ class TestCli:
                 "not-a-slug",
                 "--workspace",
                 str(tmp_path / "kernel"),
+                "--no-hub-push",
             ]
         )
         assert code == EXIT_CONFIG
@@ -638,12 +666,13 @@ class TestCli:
         metadata = json.loads((tmp_path / "kernel" / KERNEL_METADATA_FILE).read_text())
         assert metadata["id"] == "env-owner/slice"
 
-    def test_auth_failure_exits_config(
+    def test_auth_failure_without_http_refusal_is_ambiguous(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def boom() -> object:
-            raise RuntimeError("no credentials")
+            raise RuntimeError("response body must not be logged")
 
+        monkeypatch.setenv("KAGGLE_API_TOKEN", "test-token")
         monkeypatch.setattr(kaggle_provider, "_load_api", boom)
         code = main(
             [
@@ -653,6 +682,121 @@ class TestCli:
                 "d-oit/slice",
                 "--workspace",
                 str(tmp_path / "kernel"),
+                "--no-hub-push",
+            ]
+        )
+        assert code == EXIT_CONFIG
+
+    def test_missing_credentials_are_definitely_prelaunch_unavailable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("KAGGLE_CONFIG_DIR", str(tmp_path / "empty-kaggle"))
+        monkeypatch.delenv("KAGGLE_API_TOKEN", raising=False)
+        monkeypatch.delenv("KAGGLE_USERNAME", raising=False)
+        monkeypatch.delenv("KAGGLE_KEY", raising=False)
+        monkeypatch.setattr(
+            kaggle_provider,
+            "_load_api",
+            lambda: pytest.fail("missing credentials must be rejected before API load"),
+        )
+
+        code = main(
+            [
+                "--target",
+                "15000",
+                "--kernel-id",
+                "d-oit/slice",
+                "--workspace",
+                str(tmp_path / "kernel"),
+                "--no-hub-push",
+            ]
+        )
+
+        assert code == EXIT_LAUNCH_BLOCKED
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 404, 422, 429])
+    def test_explicit_submission_refusal_is_prelaunch_blocked(
+        self,
+        status: int,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        class ApiStatusError(Exception):
+            def __init__(self) -> None:
+                self.status = status
+
+            def __str__(self) -> str:
+                return "private response body"
+
+        class FailingApi:
+            def kernels_push(self, *_args: object, **_kwargs: object) -> object:
+                raise ApiStatusError()
+
+        monkeypatch.setenv("KAGGLE_API_TOKEN", "test-token")
+        monkeypatch.setattr(kaggle_provider, "_load_api", FailingApi)
+        code = main(
+            [
+                "--target",
+                "15000",
+                "--kernel-id",
+                "d-oit/slice",
+                "--workspace",
+                str(tmp_path / "kernel"),
+                "--no-hub-push",
+            ]
+        )
+        assert code == EXIT_LAUNCH_BLOCKED
+        assert "private response body" not in capsys.readouterr().err
+
+    @pytest.mark.parametrize("status", [408, 500, 503])
+    def test_ambiguous_http_submission_failure_does_not_block_fallback(
+        self,
+        status: int,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class ApiStatusError(Exception):
+            status_code = status
+
+        class FailingApi:
+            def kernels_push(self, *_args: object, **_kwargs: object) -> object:
+                raise ApiStatusError()
+
+        monkeypatch.setenv("KAGGLE_API_TOKEN", "test-token")
+        monkeypatch.setattr(kaggle_provider, "_load_api", FailingApi)
+        code = main(
+            [
+                "--target",
+                "15000",
+                "--kernel-id",
+                "d-oit/slice",
+                "--workspace",
+                str(tmp_path / "kernel"),
+                "--no-hub-push",
+            ]
+        )
+        assert code == EXIT_CONFIG
+
+    def test_transport_timeout_is_not_prelaunch_blocked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class FailingApi:
+            def kernels_push(self, *_args: object, **_kwargs: object) -> object:
+                raise TimeoutError("submission outcome is unknown")
+
+        monkeypatch.setenv("KAGGLE_API_TOKEN", "test-token")
+        monkeypatch.setattr(kaggle_provider, "_load_api", FailingApi)
+        code = main(
+            [
+                "--target",
+                "15000",
+                "--kernel-id",
+                "d-oit/slice",
+                "--workspace",
+                str(tmp_path / "kernel"),
+                "--no-hub-push",
             ]
         )
         assert code == EXIT_CONFIG
@@ -660,6 +804,7 @@ class TestCli:
     def test_terminal_mapping(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("KAGGLE_API_TOKEN", "test-token")
         monkeypatch.setattr(
             kaggle_provider,
             "_load_api",
@@ -682,13 +827,15 @@ class TestCli:
                 str(tmp_path / "out"),
                 "--log-file",
                 str(tmp_path / "kaggle-training.log"),
+                "--no-hub-push",
             ]
         )
         assert code == EXIT_COMPLETE
 
-    def test_error_status_maps_to_kernel_error(
+    def test_terminal_kernel_error_remains_training_failure(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("KAGGLE_API_TOKEN", "test-token")
         monkeypatch.setattr(
             kaggle_provider, "_load_api", lambda: FakeApi(statuses=["ERROR"])
         )
@@ -704,6 +851,7 @@ class TestCli:
                 str(tmp_path / "out"),
                 "--log-file",
                 str(tmp_path / "kaggle-training.log"),
+                "--no-hub-push",
             ]
         )
         assert code == EXIT_KERNEL_ERROR
@@ -711,6 +859,7 @@ class TestCli:
     def test_timeout_maps_to_timeout_exit(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("KAGGLE_API_TOKEN", "test-token")
         api = FakeApi(statuses=["RUNNING"] * 5)
         monkeypatch.setattr(kaggle_provider, "_load_api", lambda: api)
         code = main(
@@ -731,6 +880,7 @@ class TestCli:
                 str(tmp_path / "out"),
                 "--log-file",
                 str(tmp_path / "kaggle-training.log"),
+                "--no-hub-push",
             ]
         )
         assert code == EXIT_TIMEOUT

@@ -46,6 +46,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from providers import EXIT_LAUNCH_BLOCKED
+
 logger = logging.getLogger("kaggle-provider")
 
 KERNEL_METADATA_FILE = "kernel-metadata.json"
@@ -65,6 +67,8 @@ EXIT_KERNEL_ERROR = 2
 EXIT_CANCELLED = 3
 EXIT_TIMEOUT = 4
 EXIT_CONFIG = 5
+LAUNCH_REFUSAL_STATUSES = frozenset({400, 401, 403, 404, 422, 429})
+
 
 # Default kernel slug: the owner is resolved from the authenticated Kaggle
 # account, so a fresh repository only needs KAGGLE_API_TOKEN (ADR-067).
@@ -155,6 +159,42 @@ if __name__ == "__main__":
 
 class KaggleLaunchError(RuntimeError):
     """Raised when the kernel cannot be packaged, pushed or confirmed."""
+
+
+class KaggleSubmissionRejected(KaggleLaunchError):
+    """An explicit API response rejected the push before accepting a kernel."""
+
+    def __init__(self, *, retryable_sources: bool = False) -> None:
+        super().__init__("Kaggle explicitly rejected the kernel submission")
+        self.retryable_sources = retryable_sources
+
+
+def _has_kaggle_credentials() -> bool:
+    """Check supported credential sources without reading or logging values."""
+    if os.environ.get("KAGGLE_API_TOKEN") or (
+        os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY")
+    ):
+        return True
+    config_dir = Path(os.environ.get("KAGGLE_CONFIG_DIR", str(Path.home() / ".kaggle")))
+    return (config_dir / "access_token").is_file() or (
+        config_dir / "kaggle.json"
+    ).is_file()
+
+
+def _http_status(exc: BaseException) -> int | None:
+    """Return a structured HTTP status, never one guessed from exception text."""
+    for value in (
+        getattr(exc, "status", None),
+        getattr(exc, "status_code", None),
+        getattr(getattr(exc, "response", None), "status_code", None),
+    ):
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def _is_definite_refusal(exc: BaseException) -> bool:
+    return _http_status(exc) in LAUNCH_REFUSAL_STATUSES
 
 
 @dataclass(frozen=True)
@@ -518,7 +558,7 @@ def push_kernel(
         f"invalid sources: {invalid_sources}" if invalid_sources else None
     )
     if problem:
-        raise KaggleLaunchError(f"Kaggle rejected the kernel push: {problem}")
+        raise KaggleSubmissionRejected(retryable_sources=bool(invalid_sources))
     if info["version"] is None:
         raise KaggleLaunchError(
             "Kaggle accepted the push but reported no version number; "
@@ -549,7 +589,9 @@ def push_kernel_with_retry(
                 api, workspace, session_timeout_seconds=session_timeout_seconds
             )
         except Exception as exc:
-            retryable = "invalid sources" in str(exc).lower()
+            retryable = (
+                isinstance(exc, KaggleSubmissionRejected) and exc.retryable_sources
+            )
             if not retryable or attempt == attempts:
                 raise
             logger.info(
@@ -759,19 +801,46 @@ def main(argv: list[str] | None = None) -> int:
     kernel_id: str | None = args.kernel_id or os.environ.get("KAGGLE_KERNEL_ID")
     hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
     api: Any | None = None
+    if not args.dry_run:
+        if not _has_kaggle_credentials():
+            logger.error(
+                "Kaggle launch unavailable: no KAGGLE_API_TOKEN or Kaggle API "
+                "credential file is configured"
+            )
+            return EXIT_LAUNCH_BLOCKED
+        if (args.hub_resume or not args.no_hub_push) and not (
+            hf_token or hf_token_dataset
+        ):
+            logger.error(
+                "Kaggle launch unavailable: Hub resume/publication requires "
+                "HF_TOKEN or KAGGLE_HF_TOKEN_DATASET"
+            )
+            return EXIT_LAUNCH_BLOCKED
+
     if not args.dry_run and (not kernel_id or (hf_token and not hf_token_dataset)):
         # Resolving the owner / publishing the token dataset need an
         # authenticated client, which a dry run deliberately avoids touching.
         try:
             api = _load_api()
         except Exception as exc:
-            logger.error("Kaggle authentication failed (%s)", exc)
+            status = _http_status(exc)
+            if _is_definite_refusal(exc):
+                logger.error("Kaggle authentication refused (HTTP %s)", status)
+                return EXIT_LAUNCH_BLOCKED
+            logger.error("Kaggle authentication failed (%s)", type(exc).__name__)
             return EXIT_CONFIG
         if not kernel_id:
             try:
                 kernel_id = resolve_kernel_id(api, None)
             except Exception as exc:
-                logger.error("could not resolve the Kaggle kernel id (%s)", exc)
+                status = _http_status(exc)
+                if _is_definite_refusal(exc):
+                    logger.error("Kaggle account lookup refused (HTTP %s)", status)
+                    return EXIT_LAUNCH_BLOCKED
+                logger.error(
+                    "could not resolve the Kaggle kernel id (%s)",
+                    type(exc).__name__,
+                )
                 return EXIT_CONFIG
             logger.info(
                 "resolved kernel id %s from the authenticated account", kernel_id
@@ -780,9 +849,16 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 hf_token_dataset = ensure_hf_token_dataset(api, hf_token)
             except Exception as exc:
-                # A slice without the token cannot resume from or push to the
-                # Hub, so burning GPU time on it is worse than failing here.
-                logger.error("could not publish the HF token dataset (%s)", exc)
+                status = _http_status(exc)
+                if _is_definite_refusal(exc):
+                    logger.error(
+                        "Kaggle HF-token dataset request refused (HTTP %s)", status
+                    )
+                    return EXIT_LAUNCH_BLOCKED
+                logger.error(
+                    "could not publish the HF token dataset (%s)",
+                    type(exc).__name__,
+                )
                 return EXIT_CONFIG
             logger.info("HF token dataset ready: %s", hf_token_dataset)
 
@@ -815,11 +891,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             api = _load_api()
         except Exception as exc:
-            logger.error(
-                "Kaggle authentication failed (%s); set KAGGLE_API_TOKEN or "
-                "~/.kaggle/access_token",
-                exc,
-            )
+            status = _http_status(exc)
+            if _is_definite_refusal(exc):
+                logger.error("Kaggle authentication refused (HTTP %s)", status)
+                return EXIT_LAUNCH_BLOCKED
+            logger.error("Kaggle authentication failed (%s)", type(exc).__name__)
             return EXIT_CONFIG
 
     try:
@@ -829,7 +905,14 @@ def main(argv: list[str] | None = None) -> int:
             session_timeout_seconds=args.session_timeout_seconds,
         )
     except Exception as exc:
-        logger.error("kernel push failed: %s", exc)
+        status = _http_status(exc)
+        if isinstance(exc, KaggleSubmissionRejected):
+            logger.error("Kaggle explicitly rejected the kernel before acceptance")
+            return EXIT_LAUNCH_BLOCKED
+        if _is_definite_refusal(exc):
+            logger.error("Kaggle API refused kernel submission (HTTP %s)", status)
+            return EXIT_LAUNCH_BLOCKED
+        logger.error("Kaggle submission outcome is ambiguous (%s)", type(exc).__name__)
         return EXIT_CONFIG
     logger.info(
         "pushed %s version %s%s",
