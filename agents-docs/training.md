@@ -382,7 +382,10 @@ Hub pointer; early stopping is complete only when the checkpoint state records
 convergence for that slice's target.
 
 The operational workflow runs only on `main` and shares the pool concurrency
-group. Inspection and EMA retrieval do not launch a GPU:
+group. Inspection and EMA retrieval do not launch a GPU. The `inspect` action
+also reads the current Kaggle kernel status without modifying it; if it reports
+`QUEUED`, `RUNNING`, or `NEW_SCRIPT`, do not dispatch another slice until the
+kernel reaches a terminal status.
 
 ```bash
 # List membership candidates; confirm the exact owner/teamspace in the account UI
