@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "CPU inspection, canonical EMA retrieval, or gated Lightning smoke"
+        description: "CPU provider inspection, canonical EMA retrieval, or gated Lightning smoke"
         required: true
         default: inspect
         type: choice
@@ -81,6 +81,37 @@ jobs:
                   print(f"{owner}/{name}")
               else:
                   print("unresolved teamspace candidate (missing owner/name)")
+          PY
+
+      - name: Inspect Kaggle kernel status
+        if: always() && inputs.action == 'inspect'
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+          KAGGLE_KERNEL_ID: ${{ vars.KAGGLE_KERNEL_ID }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import sys
+          sys.path.insert(0, "src")
+          from kaggle_provider import _load_api, resolve_kernel_id, status_name
+
+          if not os.environ.get("KAGGLE_API_TOKEN"):
+              raise SystemExit("KAGGLE_API_TOKEN is required for status inspection")
+          try:
+              api = _load_api()
+              kernel_id = resolve_kernel_id(api, None)
+              status = status_name(api.kernels_status(kernel_id))
+          except Exception as exc:
+              raise SystemExit(
+                  f"Kaggle kernel status lookup failed ({type(exc).__name__})"
+              ) from None
+          print(f"kaggle_kernel_id={kernel_id}")
+          print(f"kaggle_kernel_status={status}")
+          if status in {"QUEUED", "RUNNING", "NEW_SCRIPT"}:
+              print(
+                  "::warning::Kaggle kernel is nonterminal; do not launch another slice."
+              )
           PY
 
       - name: Fetch and validate canonical EMA checkpoint
