@@ -26,6 +26,7 @@ from release_pool_checkpoint_helpers import (  # noqa: E402
     verify_classifier,
     verify_graph,
     verify_package_manifest,
+    verify_published_pointer,
     write_evidence,
 )
 
@@ -409,6 +410,14 @@ def _build_release(
     evidence["revision"] = revision
     write_evidence(evidence_path, evidence)
     print(f"Published immutable Hub revision: {revision}")
+
+    verify_published_pointer(
+        outputs / "source-pointer.json",
+        revision=revision,
+        repo_id=REPO_ID,
+        remote_path=f"{POOL_BASE}/{experiment_id}/latest/manifest.json",
+        token=token,
+    )
 
     frontend_models = ROOT / "frontend/public/models"
     shutil.copy2(

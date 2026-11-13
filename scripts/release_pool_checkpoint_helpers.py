@@ -147,6 +147,35 @@ def write_evidence(path: Path, evidence: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def verify_published_pointer(
+    source_pointer: Path,
+    *,
+    revision: str,
+    repo_id: str,
+    remote_path: str,
+    token: str,
+) -> None:
+    from huggingface_hub import hf_hub_download
+
+    published = Path(
+        hf_hub_download(
+            repo_id=repo_id,
+            filename=remote_path,
+            repo_type="model",
+            revision=revision,
+            token=token,
+        )
+    )
+    expected = sha256_file(source_pointer)
+    actual = sha256_file(published)
+    if actual != expected:
+        raise ValueError(
+            f"Pool pointer changed in published revision {revision}: "
+            f"source={expected}, published={actual}"
+        )
+    print(f"Pool pointer unchanged at published revision {revision}: {actual}")
+
+
 def assert_frontend_promotion(
     revision: str,
     target: int,
