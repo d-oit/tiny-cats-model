@@ -1,4 +1,30 @@
 {
-  "releases": [],
+  "releases": [
+    {
+      "created_at": "2026-11-13T14:44:23+00:00",
+      "models": {
+        "classifier": {
+          "artifact": "cats_quantized.onnx",
+          "contractHash": "1268027b9300cae6158dc6ba118e2ee4c8869ee5638ce290637c0eb637d7c9a0",
+          "hubPath": "classifier/model_quantized.onnx",
+          "sha256": "6fa0ca5d0242d8ec1532811db2183f208118b695a161567f428df51e5f977df3",
+          "size": 11232526
+        },
+        "generator": {
+          "artifact": "generator_quantized.onnx",
+          "contractHash": "98def2aca471a2b5860c00b8b553936fcee633b361ff1b67f168e5e798ace82e",
+          "hubPath": "generator/model_quantized.onnx",
+          "sha256": "692c9779cd7871283ae66b87026083576a0a44f5d5d88d925e8bf597e74d2dd4",
+          "size": 34161922
+        }
+      },
+      "package_manifest": {
+        "completed_steps": 600000,
+        "path": "/home/runner/work/tiny-cats-model/tiny-cats-model/outputs/artifacts/manifest.json",
+        "sha256": "c16a45a5370bdc63b1df42f0994f2817b9ac9843f61aa19e5b74ad4208b87211"
+      },
+      "revision": "e204fdd0b905de7cdd6807c27487896c0159413d"
+    }
+  ],
   "schemaVersion": 1
 }
