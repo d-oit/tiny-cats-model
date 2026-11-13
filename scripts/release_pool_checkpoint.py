@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import shutil
@@ -22,6 +21,7 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 from release_pool_checkpoint_helpers import (  # noqa: E402
     assert_frontend_promotion,
+    read_json_object,
     resolve_source_revision,
     verify_classifier,
     verify_graph,
@@ -106,16 +106,6 @@ def validate_snapshot(
     _require_equal(manifest, "experiment_id", experiment_id, "checkpoint.manifest")
 
 
-def _read_json_object(path: Path, label: str) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"Cannot read {label} at {path}: {error}") from error
-    if not isinstance(value, dict):
-        raise ValueError(f"{label} at {path} must be a JSON object")
-    return value
-
-
 def _download(
     hf_hub_download: Any,
     *,
@@ -170,7 +160,7 @@ def _load_source(
         token=token,
         outputs=outputs,
     )
-    pointer = _read_json_object(pointer_download, "pool pointer")
+    pointer = read_json_object(pointer_download, "pool pointer")
     pointer_path = _copy_download(pointer_download, outputs / "source-pointer.json")
     step_dir = _validate_pointer(pointer, target, experiment_id)
     pool = pool_paths(outputs)
