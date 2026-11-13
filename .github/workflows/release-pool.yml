@@ -1,0 +1,106 @@
+name: Release Pool Checkpoint
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Global completed-step target to publish
+        required: true
+        default: "600000"
+        type: string
+      source_revision:
+        description: Optional immutable source Hub commit SHA
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-pool
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish pinned pool snapshot
+    runs-on: ubuntu-latest
+    environment:
+      name: modal-training
+    timeout-minutes: 180
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install release dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt huggingface_hub safetensors
+
+      - name: Build, verify, publish, and promote release
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RELEASE_TARGET: ${{ inputs.target }}
+          RELEASE_SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          bash .agents/skills/token_safe_exec.sh \
+            'if [ -z "$HF_TOKEN" ]; then echo "::error::HF_TOKEN is not configured"; exit 1; fi; SOURCE_FLAGS=(); if [ -n "$RELEASE_SOURCE_REVISION" ]; then SOURCE_FLAGS+=(--source-revision "$RELEASE_SOURCE_REVISION"); fi; python scripts/release_pool_checkpoint.py --target "$RELEASE_TARGET" --experiment-id dit-breed-conditioned-v4 --outputs outputs --publish "${SOURCE_FLAGS[@]}"'
+
+      - name: Write release summary
+        if: success()
+        env:
+          RELEASE_TARGET: ${{ inputs.target }}
+          RELEASE_ARTIFACT: release-${{ inputs.target }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = json.loads(Path("outputs/release-evidence.json").read_text())
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write(f"- Source Hub SHA: `{evidence['source_revision']}`\n")
+              summary.write(f"- Published Hub SHA: `{evidence['revision']}`\n")
+              summary.write(f"- Artifact: `{os.environ['RELEASE_ARTIFACT']}`\n")
+          PY
+
+      - name: Upload successful release artifact
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ inputs.target }}
+          path: |
+            outputs/artifacts/
+            outputs/source-pointer.json
+            outputs/release-evidence.json
+            frontend/public/models/generator_quantized.onnx
+            frontend/public/models/cats_quantized.onnx
+            frontend/src/generated/modelContract.json
+            frontend/src/generated/modelManifest.json
+            frontend/src/generated/modelReleases.json
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Retain failed release evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-failure-${{ github.run_id }}
+          path: |
+            outputs/artifacts/
+            outputs/source-pointer.json
+            outputs/release-evidence.json
+            frontend/public/models/generator_quantized.onnx
+            frontend/public/models/cats_quantized.onnx
+            frontend/src/generated/modelContract.json
+            frontend/src/generated/modelManifest.json
+            frontend/src/generated/modelReleases.json
+          retention-days: 30
+          if-no-files-found: warn
