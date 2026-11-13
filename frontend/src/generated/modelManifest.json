@@ -2,9 +2,9 @@
   "contractVersion": "1.0.0",
   "hub": {
     "baseUrl": "https://huggingface.co/d4oit/tiny-cats-model/resolve/",
-    "immutable": false,
+    "immutable": true,
     "repoId": "d4oit/tiny-cats-model",
-    "revision": null
+    "revision": "e204fdd0b905de7cdd6807c27487896c0159413d"
   },
   "models": {
     "classifier": {
@@ -85,7 +85,7 @@
       },
       "contractHash": "1268027b9300cae6158dc6ba118e2ee4c8869ee5638ce290637c0eb637d7c9a0",
       "hubPath": "classifier/model_quantized.onnx",
-      "hubRevision": null,
+      "hubRevision": "e204fdd0b905de7cdd6807c27487896c0159413d",
       "localPath": "models/cats_quantized.onnx",
       "onnx": {
         "inputs": [
@@ -220,7 +220,7 @@
       },
       "contractHash": "98def2aca471a2b5860c00b8b553936fcee633b361ff1b67f168e5e798ace82e",
       "hubPath": "generator/model_quantized.onnx",
-      "hubRevision": null,
+      "hubRevision": "e204fdd0b905de7cdd6807c27487896c0159413d",
       "localPath": "models/generator_quantized.onnx",
       "onnx": {
         "inputs": [
@@ -263,8 +263,8 @@
           }
         ]
       },
-      "sha256": "9bc1ec5f9409dab23d8284bbc731d3102821769a9a2347659c9906331fe6ef5d",
-      "size": 33784433
+      "sha256": "692c9779cd7871283ae66b87026083576a0a44f5d5d88d925e8bf597e74d2dd4",
+      "size": 34161922
     }
   },
   "policy": {
@@ -301,5 +301,11 @@
       "wasm"
     ]
   },
-  "schemaVersion": 1
+  "schemaVersion": 1,
+  "source": {
+    "completedSteps": 600000,
+    "experimentId": "dit-breed-conditioned-v4",
+    "gitSha": "unknown",
+    "packageManifest": "/home/runner/work/tiny-cats-model/tiny-cats-model/outputs/artifacts/manifest.json"
+  }
 }
