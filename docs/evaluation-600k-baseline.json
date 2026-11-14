@@ -1,0 +1,23 @@
+{
+  "fid": 263.56637437215534,
+  "inception_score": {
+    "mean": 1.5683199167251587,
+    "std": 0.05481218174099922
+  },
+  "precision": 0.5,
+  "recall": 0.43916666666666665,
+  "metadata": {
+    "step": 600000,
+    "loss": 0.5879713714122772,
+    "timestamp": "2026-11-03T04:40:53.212863",
+    "config": {
+      "image_size": 128,
+      "patch_size": 16,
+      "embed_dim": 384,
+      "depth": 12,
+      "num_heads": 6,
+      "num_classes": 13
+    },
+    "num_samples_generated": 988
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "checkpoint_sha256": "30a7bfa439a670140be47c2307c33c8f192fcd4f438107a1556e69022a568dae",
+  "completed_steps": 600000,
+  "experiment_id": "dit-breed-conditioned-v4",
+  "package_manifest_sha256": "c16a45a5370bdc63b1df42f0994f2817b9ac9843f61aa19e5b74ad4208b87211",
+  "revision": "e204fdd0b905de7cdd6807c27487896c0159413d",
+  "source_revision": "6d2a2ca12496bfba6a89f7c1f5bb34712758eeee"
+}

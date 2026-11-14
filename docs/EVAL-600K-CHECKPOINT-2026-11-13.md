@@ -17,7 +17,7 @@ The release exporter uses the raw `dit_model.pt` for the generator export. The p
 
 ## Historical statistical results
 
-The historical reports are `eval_out/samples-531k/report.json` and `eval_out/samples-600k-baseline/report.json`. The original reports and generated samples were left intact; the 600k report is copied here verbatim:
+The historical reports are `eval_out/samples-436k/report.json`, `eval_out/samples-480k/report.json`, `eval_out/samples-531k/report.json`, and `eval_out/samples-600k-baseline/report.json`. The table includes rounded values for the 436k and 480k runs and report values for 531,238 and 600k. The exact 600k JSON is copied verbatim to `docs/evaluation-600k-baseline.json`; the 531,238-step report is also copied verbatim below:
 
 ```json
 {
@@ -73,17 +73,16 @@ The 531,238-step reference report, also copied verbatim:
 }
 ```
 
-| Metric | 531,238 steps | 600,000 steps | Change (600k − 531k) |
-|---|---:|---:|---:|
-| FID (lower is better) | 262.9978 | 263.5664 | +0.5686 |
-| Inception Score mean | 1.5942 | 1.5683 | −0.0259 |
-| Inception Score std | 0.0619 | 0.0548 | −0.0071 |
-| Precision | 0.5000 | 0.5000 | 0.0000 |
-| Recall | 0.4679 | 0.4392 | −0.0288 |
+| Metric | 436k | 480k | 531,238 | 600k | Change (600k − 531,238) |
+|---|---:|---:|---:|---:|---:|
+| FID (lower is better) | 263.31 | 261.72 | 262.997793 | 263.566374 | +0.568581 |
+| Inception Score mean | 1.60 | 1.59 | 1.594185 | 1.568320 | −0.025865 |
+| Precision | 0.50 | 0.50 | 0.500000 | 0.500000 | 0.000000 |
+| Recall | 0.48 | 0.47 | 0.467917 | 0.439167 | −0.028750 |
 
-These results are broadly flat, with unchanged precision and lower recall at 600k; FID is slightly higher and Inception Score mean slightly lower. The reports provide no significance test or confidence interval for FID, precision, or recall. No improvement or regression claim is warranted.
+Across the four checkpoints, results are broadly flat. Relative to 531,238, 600k has slightly higher FID, lower Inception Score mean, unchanged precision, and lower recall. The 436k and 480k figures are rounded, while 531,238 and 600k are report values. The reports provide no significance test or confidence interval for FID, precision, or recall; no improvement or regression claim is warranted.
 
-Both reports record 988 generated samples and the same 128×128, 13-class architecture. The documented sampling protocol was 76 samples for each of 13 conditions, 30 Euler steps, CFG 1.5, and seed 42. The report JSON itself does not store the sampler, per-condition counts, step count, CFG scale, or seed, so these settings cannot be reconstructed from the reports alone. Neither historical report records a checkpoint filename or hash, nor whether raw or EMA weights were evaluated; the statistical results therefore cannot be attributed to the exact checkpoint in this release.
+The 531,238- and 600k-step reports both record 988 generated samples and the same 128×128, 13-class architecture. The documented sampling protocol was 76 samples for each of 13 conditions, 30 Euler steps, CFG 1.5, and seed 42. The report JSON itself does not store the sampler, per-condition counts, step count, CFG scale, or seed, so these settings cannot be reconstructed from the reports alone. Neither historical report records a checkpoint filename or hash, nor whether raw or EMA weights were evaluated; the statistical results therefore cannot be attributed to the exact checkpoint in this release.
 
 ## Separate release smoke and timing results
 
@@ -111,4 +110,4 @@ These are CPU PyTorch timings, not browser ONNX or end-to-end generation timings
 
 ## Artifacts
 
-The release artifact contains `outputs/release-evidence.json`, `outputs/source-pointer.json`, and the package under `outputs/artifacts/`. The release evidence records the source and published revisions, 600,000 completed steps, experiment ID, raw checkpoint SHA-256, and canonical package-manifest SHA-256. The downloaded artifact digest and every package file size/SHA-256 were independently verified before copying the browser bundle files.
+The release artifact contains `outputs/release-evidence.json`, `outputs/source-pointer.json`, and the package under `outputs/artifacts/`. The exact 600k report is tracked as `docs/evaluation-600k-baseline.json`, and the workflow evidence is tracked as `docs/release-600k-evidence.json`. The release evidence records the source and published revisions, 600,000 completed steps, experiment ID, raw checkpoint SHA-256, and canonical package-manifest SHA-256. The downloaded artifact digest and every package file size/SHA-256 were independently verified before copying the browser bundle files.
