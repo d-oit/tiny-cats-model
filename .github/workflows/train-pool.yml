@@ -127,6 +127,10 @@ jobs:
           TARGET_STEPS: ${{ inputs.steps || vars.TRAINING_TARGET_STEPS || '600000' }}
         run: |
           set -euo pipefail
+          PLANFLAGS=()
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            PLANFLAGS+=(--continuous)
+          fi
           if ! [[ "$TARGET_STEPS" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::TRAINING_TARGET_STEPS (or the manual steps override) must be a positive integer"
             exit 1
@@ -142,7 +146,8 @@ jobs:
             --hub-repo d4oit/tiny-cats-model \
             --remote-completed \
             --token "$HF_TOKEN" \
-            --github-output "$GITHUB_OUTPUT")"
+            --github-output "$GITHUB_OUTPUT" \
+            "${PLANFLAGS[@]}")"
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           echo "Planned slices: $MATRIX"
 
@@ -243,7 +248,8 @@ jobs:
         env:
           PROVIDER: ${{ inputs.provider || 'auto' }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          TARGET_STEPS: ${{ inputs.steps || vars.TRAINING_TARGET_STEPS || '600000' }}
+          # Use the planner's effective target (including continuous schedule advancement).
+          TARGET_STEPS: ${{ needs.plan-slices.outputs.target_steps }}
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
           KAGGLE_KERNEL_ID: ${{ vars.KAGGLE_KERNEL_ID }}
           KAGGLE_HF_TOKEN_DATASET: ${{ vars.KAGGLE_HF_TOKEN_DATASET }}
@@ -458,6 +464,7 @@ jobs:
           PLANNED: ${{ needs.plan-slices.outputs.matrix }}
           GLOBAL_TARGET: ${{ needs.plan-slices.outputs.target_steps }}
           COMPLETED_STEPS: ${{ needs.plan-slices.outputs.completed_steps }}
+          CONTINUOUS: ${{ github.event_name == 'schedule' }}
         run: |
           python -c "
           import os, sys; sys.path.insert(0, 'src')
@@ -467,6 +474,7 @@ jobs:
           print('=' * 60)
           print('Automatic free-only provider order: ' + ' → '.join(AUTO_PROVIDERS))
           print(f'Global target: {int(os.environ.get("GLOBAL_TARGET", "0") or 0):,}')
+          print('Continuous scheduled training: ' + ('enabled' if os.environ.get('CONTINUOUS') == 'true' else 'disabled'))
           print(f'Hub completed steps: {int(os.environ.get("COMPLETED_STEPS", "0") or 0):,}')
           remaining = max(0, int(os.environ.get("GLOBAL_TARGET", "0") or 0) - int(os.environ.get("COMPLETED_STEPS", "0") or 0))
           print(f'Remaining steps: {remaining:,}')
