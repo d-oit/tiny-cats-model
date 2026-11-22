@@ -136,7 +136,7 @@ jobs:
             exit 1
           fi
           MATRIX="$(python src/providers.py plan \
-            --steps ${{ github.event.inputs.steps || '600000' }} \
+            --steps "$TARGET_STEPS" \
             --slice-size ${{ github.event.inputs.slice_size || '15000' }} \
             --experiment-id dit-breed-conditioned-v4 \
             --hub-repo d4oit/tiny-cats-model \
@@ -280,7 +280,7 @@ jobs:
             --save-interval 2500 \
             --hub-push-interval ${{ inputs.hub_push_interval || '5000' }} \
             --experiment-id dit-breed-conditioned-v4 \
-            --schedule-steps ${{ inputs.steps || '600000' }} \
+            --schedule-steps "$TARGET_STEPS" \
             "${HUBFLAGS[@]}" "${MIGRATEFLAGS[@]}" "${LRFLAGS[@]}")"
           if [ -z "$CMD" ]; then
             echo "::error::could not build a launch command for provider '$PROVIDER'"
@@ -466,6 +466,10 @@ jobs:
           print('GPU POOL TRAINING SUMMARY')
           print('=' * 60)
           print('Automatic free-only provider order: ' + ' → '.join(AUTO_PROVIDERS))
+          print(f'Global target: {int(os.environ.get("GLOBAL_TARGET", "0") or 0):,}')
+          print(f'Hub completed steps: {int(os.environ.get("COMPLETED_STEPS", "0") or 0):,}')
+          remaining = max(0, int(os.environ.get("GLOBAL_TARGET", "0") or 0) - int(os.environ.get("COMPLETED_STEPS", "0") or 0))
+          print(f'Remaining steps: {remaining:,}')
           print(f'Planned slices: {os.environ.get(\"SLICE_COUNT\", \"?\")}')
           complete = os.environ.get('CAMPAIGN_COMPLETE', '')
           if complete == 'true':
