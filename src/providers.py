@@ -990,6 +990,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     if args.github_output:
         with open(args.github_output, "a") as output:
             output.write(f"completed_steps={completed}\n")
+            output.write(f"target_steps={args.steps}\n")
             output.write(f"campaign_complete={str(campaign_complete).lower()}\n")
             output.write(f"slice_count={slice_count}\n")
     print(json.dumps({"target": plan}))
