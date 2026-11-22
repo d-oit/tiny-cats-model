@@ -1355,7 +1355,7 @@ class TestPlanCLI:
                     "--slice-size",
                     "15000",
                     "--completed",
-                    "600000",
+                    "600123",
                     "--continuous",
                     "--github-output",
                     str(output_file),
@@ -1363,13 +1363,13 @@ class TestPlanCLI:
             )
             == 0
         )
-        assert json.loads(capsys.readouterr().out) == {"target": [615_000]}
+        assert json.loads(capsys.readouterr().out) == {"target": [615_123]}
         outputs = dict(
             line.split("=", 1) for line in output_file.read_text().splitlines()
         )
         assert outputs == {
-            "completed_steps": "600000",
-            "target_steps": "615000",
+            "completed_steps": "600123",
+            "target_steps": "615123",
             "campaign_complete": "false",
             "slice_count": "1",
             "continuous": "true",
