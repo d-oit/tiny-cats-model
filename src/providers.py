@@ -976,23 +976,33 @@ def _cmd_plan(args: argparse.Namespace) -> int:
             return 1
         completed = max(completed, remote or 0)
 
+    effective_steps = args.steps
+    if args.continuous:
+        if args.slice_size is None or args.slice_size <= 0:
+            raise ValueError("--continuous requires a positive --slice-size")
+        # Scheduled runs always have at least one bounded slice of work to do.
+        # Keep the configured campaign target as a floor, then advance one
+        # slice beyond the canonical Hub progress once that floor is reached.
+        effective_steps = max(args.steps, completed + args.slice_size)
+
     targets = None
     if args.targets:
         targets = [int(t) for t in args.targets.split(",") if t.strip()]
     plan = parse_slice_targets(
-        steps=args.steps,
+        steps=effective_steps,
         slice_size=args.slice_size,
         targets=targets,
         completed=completed,
     )
-    campaign_complete = completed >= args.steps
+    campaign_complete = completed >= effective_steps
     slice_count = 0 if campaign_complete else len(plan)
     if args.github_output:
         with open(args.github_output, "a") as output:
             output.write(f"completed_steps={completed}\n")
-            output.write(f"target_steps={args.steps}\n")
+            output.write(f"target_steps={effective_steps}\n")
             output.write(f"campaign_complete={str(campaign_complete).lower()}\n")
             output.write(f"slice_count={slice_count}\n")
+            output.write(f"continuous={str(args.continuous).lower()}\n")
     print(json.dumps({"target": plan}))
     return 0
 
@@ -1170,6 +1180,11 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--slice-size", type=int, default=None)
     plan.add_argument("--targets", type=str, default=None, help="explicit a,b,c list")
     plan.add_argument("--completed", type=int, default=0)
+    plan.add_argument(
+        "--continuous",
+        action="store_true",
+        help="on scheduled runs, keep at least one slice ahead of canonical Hub progress",
+    )
     plan.add_argument("--experiment-id", default=DEFAULT_EXPERIMENT_ID)
     plan.add_argument("--hub-repo", default=DEFAULT_HUB_REPO)
     plan.add_argument("--token", default=None)
