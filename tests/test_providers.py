@@ -1341,7 +1341,6 @@ class TestPlanCLI:
             "continuous": "false",
         }
 
-
     def test_continuous_plan_advances_one_slice_after_base_target(
         self, capsys: pytest.CaptureFixture, tmp_path: Path
     ) -> None:
