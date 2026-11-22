@@ -988,6 +988,11 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     targets = None
     if args.targets:
         targets = [int(t) for t in args.targets.split(",") if t.strip()]
+    if args.continuous and completed >= args.steps:
+        # Progress may not land exactly on a slice-size boundary. In continuous
+        # mode, schedule one precise next target rather than adding a grid
+        # boundary plus a tiny trailing slice.
+        targets = [effective_steps]
     plan = parse_slice_targets(
         steps=effective_steps,
         slice_size=args.slice_size,
