@@ -1338,6 +1338,41 @@ class TestPlanCLI:
             "target_steps": "600000",
             "campaign_complete": campaign_complete,
             "slice_count": str(slice_count),
+            "continuous": "false",
+        }
+
+
+    def test_continuous_plan_advances_one_slice_after_base_target(
+        self, capsys: pytest.CaptureFixture, tmp_path: Path
+    ) -> None:
+        output_file = tmp_path / "github-output"
+        assert (
+            main(
+                [
+                    "plan",
+                    "--steps",
+                    "600000",
+                    "--slice-size",
+                    "15000",
+                    "--completed",
+                    "600000",
+                    "--continuous",
+                    "--github-output",
+                    str(output_file),
+                ]
+            )
+            == 0
+        )
+        assert json.loads(capsys.readouterr().out) == {"target": [615_000]}
+        outputs = dict(
+            line.split("=", 1) for line in output_file.read_text().splitlines()
+        )
+        assert outputs == {
+            "completed_steps": "600000",
+            "target_steps": "615000",
+            "campaign_complete": "false",
+            "slice_count": "1",
+            "continuous": "true",
         }
 
 
