@@ -1335,6 +1335,7 @@ class TestPlanCLI:
         )
         assert outputs == {
             "completed_steps": str(completed),
+            "target_steps": "600000",
             "campaign_complete": campaign_complete,
             "slice_count": str(slice_count),
         }
