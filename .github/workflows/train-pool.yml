@@ -466,24 +466,24 @@ jobs:
           COMPLETED_STEPS: ${{ needs.plan-slices.outputs.completed_steps }}
           CONTINUOUS: ${{ github.event_name == 'schedule' }}
         run: |
-          python -c "
+          python - <<'PY'
           import os, sys; sys.path.insert(0, 'src')
           from providers import AUTO_PROVIDERS
           print('=' * 60)
           print('GPU POOL TRAINING SUMMARY')
           print('=' * 60)
           print('Automatic free-only provider order: ' + ' → '.join(AUTO_PROVIDERS))
-          print(f'Global target: {int(os.environ.get("GLOBAL_TARGET", "0") or 0):,}')
+          print(f"Global target: {int(os.environ.get('GLOBAL_TARGET', '0') or 0):,}")
           print('Continuous scheduled training: ' + ('enabled' if os.environ.get('CONTINUOUS') == 'true' else 'disabled'))
-          print(f'Hub completed steps: {int(os.environ.get("COMPLETED_STEPS", "0") or 0):,}')
-          remaining = max(0, int(os.environ.get("GLOBAL_TARGET", "0") or 0) - int(os.environ.get("COMPLETED_STEPS", "0") or 0))
-          print(f'Remaining steps: {remaining:,}')
-          print(f'Planned slices: {os.environ.get(\"SLICE_COUNT\", \"?\")}')
+          print(f"Hub completed steps: {int(os.environ.get('COMPLETED_STEPS', '0') or 0):,}")
+          remaining = max(0, int(os.environ.get('GLOBAL_TARGET', '0') or 0) - int(os.environ.get('COMPLETED_STEPS', '0') or 0))
+          print(f"Remaining steps: {remaining:,}")
+          print(f"Planned slices: {os.environ.get('SLICE_COUNT', '?')}")
           complete = os.environ.get('CAMPAIGN_COMPLETE', '')
           if complete == 'true':
               print('Planned targets: none (global target already reached)')
           else:
-              print(f'Planned targets: {os.environ.get(\"PLANNED\", \"?\")}')
+              print(f"Planned targets: {os.environ.get('PLANNED', '?')}")
           print()
           print('Checkpoint transport: HuggingFace Hub')
           print('  https://huggingface.co/d4oit/tiny-cats-model/tree/main/checkpoints/pool')
@@ -501,7 +501,7 @@ jobs:
               print('   exit reasons are recorded per slice in provider-report-* artifacts')
           else:
               print('❌ One or more slices failed (see provider-report-* artifacts)')
-          "
+          PY
 
       - name: Sync campaign-stall issue
         # A failed free-provider chain must reach a human; healthy runs close
